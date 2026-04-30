@@ -110,4 +110,26 @@ describe('createTeamRoom', () => {
     expect(room.getState().roles[0]).toMatchObject({ status: 'sending' })
     expect(room.getState().roles[0]).not.toHaveProperty('lastError')
   })
+
+  it('routes iframe roles by tab and frame id inside the host tab', () => {
+    const room = createTeamRoom('room-1', 10, 7000)
+    const role = room.addOpeningRole('A', 10, '__pending__', 7001)
+
+    const readyRole = room.markRoleFrameReady(role.id, 10, 4, 'conv-a', 7002)
+    const result = room.sendUserMessage('@A iframe hello', 7003)
+    const reply = room.recordRoleReplyFromFrame(10, 4, 'iframe reply', 7004, 'msg-7003-1')
+
+    expect(readyRole).toMatchObject({ id: role.id, tabId: 10, frameId: 4, status: 'online' })
+    expect(result).toEqual({
+      ok: true,
+      messageId: 'msg-7003-1',
+      deliveries: [{ roleId: role.id, tabId: 10, frameId: 4, content: 'iframe hello' }],
+    })
+    expect(reply).toMatchObject({
+      from: 'role',
+      roleId: role.id,
+      roleName: 'A',
+      content: 'iframe reply',
+    })
+  })
 })

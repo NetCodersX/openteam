@@ -7,7 +7,11 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src *;"
+  },
   "action": {
     "default_title": "OpenTeam"
   },
@@ -15,7 +19,17 @@
     {
       "matches": ["*://gemini.google.com/*", "*://*.gemini.google.com/*"],
       "js": ["content.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
-  ]
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "gemini_iframe_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
 }

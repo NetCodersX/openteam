@@ -11,6 +11,7 @@ export interface TeamRole {
   id: string
   name: string
   tabId: number
+  frameId?: number
   conversationId: string
   status: TeamRoleStatus
   createdAt: number
@@ -41,6 +42,7 @@ export interface TeamRoomState {
 export interface TeamDelivery {
   roleId: string
   tabId: number
+  frameId?: number
   content: string
 }
 
@@ -78,8 +80,9 @@ export type ParsedTeamMention =
 
 export type HostToBackgroundMessage =
   | { type: 'TEAM_CONTENT_READY'; conversationId: string }
-  | { type: 'TEAM_HOST_READY' }
-  | { type: 'TEAM_CREATE_ROLE'; name: string }
+  | { type: 'TEAM_HOST_READY'; hostTabId?: number }
+  | { type: 'TEAM_GET_STATE' }
+  | { type: 'TEAM_CREATE_ROLE'; name: string; container?: 'tab' | 'iframe'; hostTabId?: number }
   | { type: 'TEAM_REMOVE_ROLE'; roleId: string }
   | { type: 'TEAM_SEND_MESSAGE'; raw: string }
 
@@ -94,5 +97,6 @@ export type BackgroundToRoleMessage =
 
 export type RoleToBackgroundMessage =
   | { type: 'TEAM_ROLE_READY'; conversationId: string }
+  | { type: 'TEAM_FRAME_ROLE_READY'; roleId: string; conversationId: string }
   | { type: 'TEAM_ROLE_STATUS'; status: TeamRoleStatus; error?: string }
   | { type: 'TEAM_ROLE_REPLY'; messageId?: string; content: string }

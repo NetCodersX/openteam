@@ -32,6 +32,7 @@ interface AssignedRole {
 
 const OPEN_TEAM_LOADED_KEY = '__OPENTEAM_LOADED__'
 const PANEL_ID = '__openteam_team_panel__'
+const FRAME_ASSIGN_MESSAGE = 'OPENTEAM_ASSIGN_FRAME_ROLE'
 const RESPONSE_DEBOUNCE_MS = 800
 const RESPONSE_MAX_WAIT_MS = 3000
 const INPUT_TIMEOUT_MS = 9000
@@ -99,6 +100,14 @@ function getSiteConfig(): SiteConfig {
 function getConversationId(): string {
   const match = location.pathname.match(/\/chat\/([^/?#]+)/)
   return match ? match[1] : '__default__'
+}
+
+function isEmbeddedFrame(): boolean {
+  try {
+    return window.top !== window
+  } catch {
+    return true
+  }
 }
 
 function querySelectorFirst(selectors: string): HTMLElement | null {
@@ -823,10 +832,50 @@ async function identifyPage(): Promise<void> {
   }
 }
 
+function registerFrameRoleHandshake(): void {
+  window.addEventListener('message', event => {
+    if (!event.data || typeof event.data !== 'object') return
+    if (event.data.type !== FRAME_ASSIGN_MESSAGE) return
+
+    const roleId = typeof event.data.roleId === 'string' ? event.data.roleId : ''
+    if (!roleId) return
+
+    log.info('frame-role:assignment-received', { roleId, conversationId: getConversationId() })
+    sendRuntimeMessage<{
+      ok: boolean
+      role?: TeamRole
+      state?: TeamRoomState
+      error?: string
+    }>({
+      type: 'TEAM_FRAME_ROLE_READY',
+      roleId,
+      conversationId: getConversationId(),
+    })
+      .then(response => {
+        if (!response.ok || !response.role) {
+          log.warn('frame-role:ready-failed', { roleId, error: response.error })
+          return
+        }
+
+        assignRole({
+          roleId: response.role.id,
+          roleName: response.role.name,
+          roomId: response.state?.roomId || currentState?.roomId || '',
+        })
+      })
+      .catch(error => log.warn('frame-role:ready-error', { roleId, error: error instanceof Error ? error.message : String(error) }))
+  })
+}
+
 function startOpenTeam(): void {
   log.info('boot', { href: location.href, conversationId: getConversationId() })
   registerMessageHandlers()
   startReplyReporting()
+  if (isEmbeddedFrame()) {
+    registerFrameRoleHandshake()
+    return
+  }
+
   identifyPage().catch(error => log.warn('boot:failed', { error: error instanceof Error ? error.message : String(error) }))
 }
 

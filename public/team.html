@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenTeam</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 980px;
+        background: #f4f7fb;
+        color: #121820;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        grid-template-rows: auto 1fr;
+        min-height: 100vh;
+      }
+
+      header {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 14px 18px;
+        border-bottom: 1px solid #dfe6ee;
+        background: #ffffff;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.2;
+      }
+
+      #summary {
+        color: #637083;
+        font-size: 13px;
+      }
+
+      form {
+        display: flex;
+        gap: 8px;
+      }
+
+      input,
+      textarea {
+        border: 1px solid #cfd8e3;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #121820;
+        font: inherit;
+        outline: none;
+      }
+
+      input {
+        width: 180px;
+        height: 36px;
+        padding: 0 10px;
+      }
+
+      textarea {
+        min-height: 80px;
+        max-height: 180px;
+        resize: vertical;
+        padding: 10px;
+      }
+
+      button {
+        height: 36px;
+        border: 0;
+        border-radius: 8px;
+        padding: 0 14px;
+        background: #1f6feb;
+        color: #ffffff;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 700;
+      }
+
+      button:hover {
+        background: #195bc4;
+      }
+
+      #roles {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+        align-content: start;
+        gap: 12px;
+        padding: 12px;
+        overflow: auto;
+      }
+
+      .role-card {
+        display: grid;
+        grid-template-rows: auto minmax(520px, calc(100vh - 112px));
+        min-height: 580px;
+        overflow: hidden;
+        border: 1px solid #d9e2ec;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .role-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #e4ebf2;
+      }
+
+      .role-header div {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .role-header strong {
+        overflow: hidden;
+        font-size: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .role-header span {
+        color: #637083;
+        font-size: 12px;
+      }
+
+      .role-header button {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        background: #eef2f6;
+        color: #344052;
+      }
+
+      .role-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #ffffff;
+      }
+
+      aside {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 0;
+        border-left: 1px solid #dfe6ee;
+        background: #ffffff;
+      }
+
+      .side-title {
+        padding: 14px;
+        border-bottom: 1px solid #e4ebf2;
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      #messages {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        gap: 10px;
+        overflow: auto;
+        padding: 12px;
+        background: #fbfcfe;
+      }
+
+      .empty {
+        margin: auto;
+        color: #6b7788;
+        font-size: 13px;
+      }
+
+      .message {
+        max-width: 92%;
+        padding: 9px 10px;
+        border: 1px solid #dbe4ee;
+        border-radius: 8px;
+        background: #ffffff;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .message.user {
+        align-self: flex-end;
+        background: #eaf3ff;
+      }
+
+      .message.system {
+        align-self: center;
+        background: #fff1ed;
+        color: #7a261f;
+      }
+
+      .message-title {
+        margin-bottom: 4px;
+        color: #5e6b7c;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      #composer {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        padding: 12px;
+        border-top: 1px solid #e4ebf2;
+      }
+
+      #error {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        max-width: 420px;
+        padding: 10px 12px;
+        border: 1px solid #f2b8aa;
+        border-radius: 8px;
+        background: #fff1ed;
+        color: #8a261c;
+        box-shadow: 0 14px 30px rgba(18, 24, 32, 0.16);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div>
+          <h1>OpenTeam</h1>
+          <div id="summary">0 个角色 · 0 条消息</div>
+        </div>
+        <form id="add-role">
+          <input id="role-name" type="text" placeholder="角色名，例如 A" autocomplete="off" />
+          <button type="submit">添加角色</button>
+        </form>
+      </header>
+      <main id="roles"></main>
+      <aside>
+        <div class="side-title">群聊</div>
+        <div id="messages"></div>
+        <form id="composer">
+          <textarea id="prompt" placeholder="@A 分析这个方案，或 @all 一起回答"></textarea>
+          <button type="submit">发送</button>
+        </form>
+      </aside>
+    </div>
+    <div id="error" hidden></div>
+    <script type="module" src="team.js"></script>
+  </body>
+</html>

@@ -1,13 +1,18 @@
-export const RENDER_WAKE_DELAYS_MS = [5000, 15000, 30000]
+export const RENDER_WAKE_INTERVAL_MS = 6000
 export const RENDER_WAKE_VISIBLE_MS = 1800
+
+interface RenderWakeTab {
+  id?: number
+}
 
 interface RenderWakeTabsApi {
   update(tabId: number, updateProperties: { active: boolean }): Promise<unknown>
+  query(queryInfo: { active: boolean; currentWindow: boolean }): Promise<RenderWakeTab[]>
 }
 
 interface ScheduledWake {
   cancelled: boolean
-  timers: ReturnType<typeof setTimeout>[]
+  timer?: ReturnType<typeof setTimeout>
 }
 
 function wait(ms: number): Promise<void> {
@@ -18,29 +23,44 @@ function wait(ms: number): Promise<void> {
 
 export function createRenderWakeScheduler(tabs: RenderWakeTabsApi) {
   const scheduledByTab = new Map<number, ScheduledWake>()
+  let wakeQueue = Promise.resolve()
 
   async function wakeOnce(tabId: number, hostTabId: number, scheduled: ScheduledWake): Promise<void> {
     if (scheduled.cancelled) return
+    const [activeTab] = await tabs.query({ active: true, currentWindow: true })
+    const restoreTabId = activeTab?.id ?? (hostTabId >= 0 ? hostTabId : undefined)
+
     await tabs.update(tabId, { active: true })
     await wait(RENDER_WAKE_VISIBLE_MS)
-    if (!scheduled.cancelled && hostTabId >= 0 && hostTabId !== tabId) {
-      await tabs.update(hostTabId, { active: true })
+    if (restoreTabId !== undefined && restoreTabId !== tabId) {
+      await tabs.update(restoreTabId, { active: true })
     }
+  }
+
+  function enqueueWake(tabId: number, hostTabId: number, scheduled: ScheduledWake): Promise<void> {
+    const nextWake = wakeQueue.then(() => wakeOnce(tabId, hostTabId, scheduled)).catch(() => undefined)
+    wakeQueue = nextWake
+    return nextWake
+  }
+
+  function scheduleNext(tabId: number, hostTabId: number, scheduled: ScheduledWake): void {
+    if (scheduled.cancelled) return
+
+    scheduled.timer = setTimeout(() => {
+      scheduled.timer = undefined
+      enqueueWake(tabId, hostTabId, scheduled).then(() => {
+        scheduleNext(tabId, hostTabId, scheduled)
+      })
+    }, RENDER_WAKE_INTERVAL_MS)
   }
 
   return {
     schedule(tabId: number, hostTabId: number): void {
       this.cancel(tabId)
 
-      const scheduled: ScheduledWake = { cancelled: false, timers: [] }
+      const scheduled: ScheduledWake = { cancelled: false }
       scheduledByTab.set(tabId, scheduled)
-
-      for (const delay of RENDER_WAKE_DELAYS_MS) {
-        const timer = setTimeout(() => {
-          wakeOnce(tabId, hostTabId, scheduled).catch(() => undefined)
-        }, delay)
-        scheduled.timers.push(timer)
-      }
+      scheduleNext(tabId, hostTabId, scheduled)
     },
 
     cancel(tabId: number): void {
@@ -48,7 +68,7 @@ export function createRenderWakeScheduler(tabs: RenderWakeTabsApi) {
       if (!scheduled) return
 
       scheduled.cancelled = true
-      for (const timer of scheduled.timers) clearTimeout(timer)
+      if (scheduled.timer) clearTimeout(scheduled.timer)
       scheduledByTab.delete(tabId)
     },
   }

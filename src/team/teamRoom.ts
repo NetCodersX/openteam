@@ -65,13 +65,43 @@ export function createTeamRoom(roomId: string, hostTabId: number, _createdAt: nu
     if (parsed.target === 'role') {
       const role = state.roles.find(item => item.id === parsed.roleId)
       return role && isDeliverable(role)
-        ? [{ roleId: role.id, tabId: role.tabId, content: parsed.content }]
+        ? [{ roleId: role.id, tabId: role.tabId, frameId: role.frameId, content: parsed.content }]
         : []
     }
 
     return state.roles
       .filter(isDeliverable)
-      .map(role => ({ roleId: role.id, tabId: role.tabId, content: parsed.content }))
+      .map(role => ({ roleId: role.id, tabId: role.tabId, frameId: role.frameId, content: parsed.content }))
+  }
+
+  function roleMatchesFrame(role: TeamRole, tabId: number, frameId?: number): boolean {
+    return role.tabId === tabId && role.frameId === frameId
+  }
+
+  function recordRoleReply(role: TeamRole, content: string, createdAt: number): TeamMessage | undefined {
+    const trimmed = content.trim()
+    if (!trimmed) return undefined
+
+    const replyKey = `${role.id}:${trimmed}`
+    if (seenRoleReplyKeys.has(replyKey)) return undefined
+    seenRoleReplyKeys.add(replyKey)
+
+    const message: TeamMessage = {
+      id: nextMessageId('reply', createdAt),
+      roomId,
+      roleId: role.id,
+      roleName: role.name,
+      from: 'role',
+      target: 'none',
+      content: trimmed,
+      createdAt,
+      status: 'received',
+    }
+    state.messages.push(message)
+    role.status = 'idle'
+    role.lastMessageAt = createdAt
+    delete role.lastError
+    return { ...message }
   }
 
   return {
@@ -116,7 +146,7 @@ export function createTeamRoom(roomId: string, hostTabId: number, _createdAt: nu
     },
 
     markRoleReady(tabId: number, conversationId: string, createdAt: number): TeamRole | undefined {
-      const role = state.roles.find(item => item.tabId === tabId)
+      const role = state.roles.find(item => item.tabId === tabId && item.frameId === undefined)
       if (!role) return undefined
 
       role.conversationId = conversationId
@@ -126,8 +156,21 @@ export function createTeamRoom(roomId: string, hostTabId: number, _createdAt: nu
       return { ...role }
     },
 
-    markRoleStatus(tabId: number, status: TeamRoleStatus, createdAt: number, error?: string): TeamRole | undefined {
-      const role = state.roles.find(item => item.tabId === tabId)
+    markRoleFrameReady(roleId: string, tabId: number, frameId: number, conversationId: string, createdAt: number): TeamRole | undefined {
+      const role = state.roles.find(item => item.id === roleId)
+      if (!role) return undefined
+
+      role.tabId = tabId
+      role.frameId = frameId
+      role.conversationId = conversationId
+      role.status = 'online'
+      role.lastMessageAt = createdAt
+      delete role.lastError
+      return { ...role }
+    },
+
+    markRoleStatus(tabId: number, status: TeamRoleStatus, createdAt: number, error?: string, frameId?: number): TeamRole | undefined {
+      const role = state.roles.find(item => roleMatchesFrame(item, tabId, frameId))
       if (!role) return undefined
 
       role.status = status
@@ -180,32 +223,17 @@ export function createTeamRoom(roomId: string, hostTabId: number, _createdAt: nu
     },
 
     recordRoleReply(tabId: number, content: string, createdAt: number, _messageId?: string): TeamMessage | undefined {
-      const role = state.roles.find(item => item.tabId === tabId)
+      const role = state.roles.find(item => item.tabId === tabId && item.frameId === undefined)
       if (!role) return undefined
 
-      const trimmed = content.trim()
-      if (!trimmed) return undefined
+      return recordRoleReply(role, content, createdAt)
+    },
 
-      const replyKey = `${role.id}:${trimmed}`
-      if (seenRoleReplyKeys.has(replyKey)) return undefined
-      seenRoleReplyKeys.add(replyKey)
+    recordRoleReplyFromFrame(tabId: number, frameId: number, content: string, createdAt: number, _messageId?: string): TeamMessage | undefined {
+      const role = state.roles.find(item => roleMatchesFrame(item, tabId, frameId))
+      if (!role) return undefined
 
-      const message: TeamMessage = {
-        id: nextMessageId('reply', createdAt),
-        roomId,
-        roleId: role.id,
-        roleName: role.name,
-        from: 'role',
-        target: 'none',
-        content: trimmed,
-        createdAt,
-        status: 'received',
-      }
-      state.messages.push(message)
-      role.status = 'idle'
-      role.lastMessageAt = createdAt
-      delete role.lastError
-      return { ...message }
+      return recordRoleReply(role, content, createdAt)
     },
   }
 }
