@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GroupChat, GroupRole } from '../group/types'
-import { formatChatListTime, getAvatarInitial, getChatStartupNotice, getVisibleThinkingRoles, isThinkingBubbleVisible, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
+import { formatChatListTime, getAvatarInitial, getChatStartupNotice, getVisibleThinkingRoles, isThinkingBubbleVisible, isUnavailableRolesError, shouldAutoReconnectRole, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
 
 const baseRole: GroupRole = {
   id: 'role-1',
@@ -60,6 +60,22 @@ describe('chat experience helpers', () => {
     expect(isThinkingBubbleVisible(visibleRole, 10_000 + THINKING_TIMEOUT_MS - 1)).toBe(true)
     expect(isThinkingBubbleVisible(timedOutRole, 10_000)).toBe(false)
     expect(getVisibleThinkingRoles([visibleRole, timedOutRole, readyRole], 10_000).map(role => role.id)).toEqual(['role-visible'])
+  })
+
+  it('auto-reconnects unavailable roles without interrupting active thinking roles', () => {
+    const now = 10_000
+
+    expect(shouldAutoReconnectRole({ ...baseRole, status: 'pending', updatedAt: now }, now)).toBe(true)
+    expect(shouldAutoReconnectRole({ ...baseRole, status: 'loading', updatedAt: now }, now)).toBe(true)
+    expect(shouldAutoReconnectRole({ ...baseRole, status: 'error', updatedAt: now }, now)).toBe(true)
+    expect(shouldAutoReconnectRole({ ...baseRole, status: 'ready', updatedAt: now }, now)).toBe(false)
+    expect(shouldAutoReconnectRole({ ...baseRole, status: 'thinking', updatedAt: now }, now + THINKING_TIMEOUT_MS - 1)).toBe(false)
+    expect(shouldAutoReconnectRole({ ...baseRole, status: 'thinking', updatedAt: now }, now + THINKING_TIMEOUT_MS)).toBe(true)
+  })
+
+  it('detects unavailable-role delivery errors for automatic reconnect', () => {
+    expect(isUnavailableRolesError('以下人员不可用，请等待或恢复：程序员')).toBe(true)
+    expect(isUnavailableRolesError('Gemini 发送按钮暂不可用，请稍后重试')).toBe(false)
   })
 
   it('shows a startup notice while a chat is initializing roles', () => {

@@ -355,6 +355,32 @@ async function handleChatUpdate(message: RuntimeMessage) {
   return { ok: true, chat: result.chat, store }
 }
 
+async function handleChatDelete(message: RuntimeMessage) {
+  const chatId = requireString(message.chatId, '缺少群聊 ID')
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, chatId)
+    const roleIds = [...chat.roleIds]
+    const messageIds = [...chat.messageIds]
+
+    for (const roleId of roleIds) {
+      delete store.rolesById[roleId]
+      runtimeFrames.removeRole(chat.id, roleId)
+    }
+    for (const messageId of messageIds) delete store.messagesById[messageId]
+
+    store.chatOrder = store.chatOrder.filter(id => id !== chat.id)
+    delete store.chatsById[chat.id]
+    if (store.currentChatId === chat.id) store.currentChatId = store.chatOrder[0]
+    if (store.viewState?.chatReadSeqById) delete store.viewState.chatReadSeqById[chat.id]
+    if (store.viewState?.chatHasNewMessageById) delete store.viewState.chatHasNewMessageById[chat.id]
+
+    return { chatId: chat.id, roleIds, messageIds }
+  })
+  log.info('chat-delete:stored', { chatId: result.chatId, roleCount: result.roleIds.length, messageCount: result.messageIds.length })
+  await broadcastStoreUpdated(store)
+  return { ok: true, chatId: result.chatId, store }
+}
+
 async function handleChatMarkRead(message: RuntimeMessage) {
   const { store } = await mutateStore(store => {
     const chat = requireChat(store, message.chatId)
@@ -563,6 +589,7 @@ async function handleMessageSend(message: RuntimeMessage) {
       type: 'user',
       content: parsed.content,
       targetRoleIds: parsed.targetRoleIds,
+      mentionedRoleIds: parsed.mentionedRoleIds.length > 0 ? parsed.mentionedRoleIds : undefined,
       references: reference ? [reference] : undefined,
       createdAt: timestamp,
       status: 'pending',
@@ -999,6 +1026,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         return handleChatSwitch(message, sender)
       case 'GROUP_CHAT_UPDATE':
         return handleChatUpdate(message)
+      case 'GROUP_CHAT_DELETE':
+        return handleChatDelete(message)
       case 'GROUP_CHAT_MARK_READ':
         return handleChatMarkRead(message)
       case 'ROLE_TEMPLATE_CREATE':

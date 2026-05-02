@@ -148,6 +148,27 @@ describe('background group chat experience handlers', () => {
     expect(prompt.content).not.toContain('这是一段很长的人设')
   })
 
+  it('stores explicit mentions for display while sending the cleaned message content', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师')
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/test' })
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '@工程师 请评估这个方案' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(response.ok).toBe(true)
+    const messageId = response.store.chatsById['chat-1'].messageIds[0]
+    expect(response.store.messagesById[messageId]).toMatchObject({
+      type: 'user',
+      content: '请评估这个方案',
+      targetRoleIds: ['role-1'],
+      mentionedRoleIds: ['role-1'],
+    })
+  })
+
   it('renames chats, marks background replies as new, and clears new-message state when read', async () => {
     const store = makeStore()
     store.currentChatId = 'chat-1'
@@ -171,6 +192,45 @@ describe('background group chat experience handlers', () => {
     expect(markedRead.ok).toBe(true)
     expect(markedRead.store.viewState?.chatReadSeqById?.['chat-2']).toBe(markedRead.store.chatsById['chat-2'].nextMessageSeq - 1)
     expect(markedRead.store.viewState?.chatHasNewMessageById?.['chat-2']).toBeUndefined()
+  })
+
+  it('deletes a chat with its roles, messages, read state, and runtime bindings', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1'], nextMessageSeq: 2 }
+    store.chatsById['chat-2'] = makeChat('chat-2')
+    store.chatOrder = ['chat-1', 'chat-2']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '程序员')
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'assistant',
+      roleId: 'role-1',
+      roleName: '程序员',
+      content: '历史消息',
+      createdAt: 1,
+      status: 'received',
+    }
+    store.viewState = {
+      chatReadSeqById: { 'chat-1': 1 },
+      chatHasNewMessageById: { 'chat-1': true },
+    }
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/test' })
+    const deleted = await harness.invoke({ type: 'GROUP_CHAT_DELETE', chatId: 'chat-1' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(deleted.ok).toBe(true)
+    expect(deleted.store.chatsById['chat-1']).toBeUndefined()
+    expect(deleted.store.rolesById['role-1']).toBeUndefined()
+    expect(deleted.store.messagesById['msg-1']).toBeUndefined()
+    expect(deleted.store.chatOrder).toEqual(['chat-2'])
+    expect(deleted.store.currentChatId).toBe('chat-2')
+    expect(deleted.store.viewState?.chatReadSeqById?.['chat-1']).toBeUndefined()
+    expect(deleted.store.viewState?.chatHasNewMessageById?.['chat-1']).toBeUndefined()
+    const snapshot = await harness.invoke({ type: 'GROUP_STORE_GET' }) as { bindings: unknown[] }
+    expect(snapshot.bindings).toEqual([])
   })
 
   it('does not push the switched store back to the tab that already receives the command response', async () => {

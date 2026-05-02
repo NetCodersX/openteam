@@ -78,6 +78,7 @@ export interface GroupMessage {
   roleId?: string
   roleName?: string
   targetRoleIds?: string[]
+  mentionedRoleIds?: string[]
   references?: MessageReference[]
   createdAt: number
   status: DeliveryStatus

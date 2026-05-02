@@ -501,6 +501,7 @@
       }
 
       .chat-item {
+        position: relative;
         display: grid;
         grid-template-columns: 44px minmax(0, 1fr) auto;
         gap: 12px;
@@ -543,14 +544,27 @@
       }
 
       .chat-action-menu {
+        position: absolute;
+        top: 38px;
+        right: 14px;
+        z-index: 8;
         display: grid;
-        grid-column: 2 / 4;
         gap: 6px;
-        margin-top: -2px;
+        min-width: 116px;
         border: 1px solid rgba(132, 153, 171, 0.18);
         border-radius: 8px;
         padding: 8px;
         background: rgba(8, 16, 24, 0.92);
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+      }
+
+      .chat-action-menu .btn {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .chat-action-menu .btn-danger {
+        color: #ff9a9a;
       }
 
       .chat-item:hover,
@@ -773,7 +787,18 @@
       }
 
       .message.user {
-        align-self: flex-start;
+        grid-template-columns: minmax(0, 1fr) 42px;
+        align-self: flex-end;
+      }
+
+      .message.user .message-avatar {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .message.user .message-content {
+        grid-column: 1;
+        grid-row: 1;
       }
 
       .message.system {
@@ -837,7 +862,33 @@
       }
 
       .message.user .message-content {
-        background: rgba(16, 25, 37, 0.88);
+        border-color: rgba(47, 216, 204, 0.24);
+        background: rgba(20, 70, 68, 0.78);
+      }
+
+      .message.user .message-meta {
+        color: #dffbf7;
+        text-align: right;
+      }
+
+      .message.user .message-body {
+        color: #e7fffb;
+      }
+
+      .message-mentions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+
+      .message-mention {
+        color: #9af4d0;
+        font-weight: 820;
+      }
+
+      .message.user .message-mention {
+        color: #b9ffd8;
       }
 
       .message-body {
@@ -946,7 +997,7 @@
 
       .reference-draft {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: space-between;
         gap: 12px;
         position: absolute;
@@ -959,12 +1010,32 @@
         background: rgba(9, 19, 28, 0.96);
       }
 
+      .reference-draft[hidden] {
+        display: none;
+      }
+
+      .reference-draft-preview {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .reference-draft .btn {
+        min-height: 24px;
+        flex: 0 0 auto;
+        padding: 0 8px;
+      }
+
       .mention-panel {
         position: absolute;
-        right: 78px;
-        bottom: 68px;
+        left: 12px;
+        bottom: calc(100% + 8px);
         z-index: 2;
-        width: 240px;
+        width: min(280px, calc(100% - 24px));
         max-height: 260px;
         overflow: auto;
         border: 1px solid rgba(132, 153, 171, 0.26);

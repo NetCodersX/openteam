@@ -107,13 +107,72 @@ describe('team.html chat creation UI', () => {
   })
 
   it('renders chat actions through a three-dot menu that updates chat names', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
 
     expect(source).toContain("menuButton.className = 'icon-btn chat-menu-btn'")
     expect(source).toContain("menuButton.textContent = '⋯'")
     expect(source).toContain("menu.className = 'chat-action-menu'")
     expect(source).toContain("rename.textContent = '编辑名称'")
+    expect(source).toContain("remove.textContent = '删除群聊'")
     expect(source).toContain("runCommand('GROUP_CHAT_UPDATE'")
+    expect(source).toContain("sendRuntimeMessage('GROUP_CHAT_DELETE'")
+    expect(source).toContain("response.error === 'Unknown OpenTeam message'")
+    expect(source).toContain('deleteChatFromLocalStore(chatId)')
+    expect(html).toMatch(/\.chat-action-menu\s*{[^}]*position:\s*absolute;/s)
+    expect(html).toMatch(/\.chat-action-menu\s*{[^}]*right:\s*14px;/s)
+    expect(html).not.toMatch(/\.chat-action-menu\s*{[^}]*grid-column:\s*2 \/ 4;/s)
+  })
+
+  it('switches chats from the whole chat row while keeping row menus isolated', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(source).toContain("item.addEventListener('click', () => switchChat(chat.id))")
+    expect(source).toContain("item.addEventListener('keydown'")
+    expect(source).toContain("item.tabIndex = 0")
+    expect(source).toContain("item.setAttribute('role', 'button')")
+    expect(source).toContain("menu.addEventListener('click', event => event.stopPropagation())")
+  })
+
+  it('hides the reference draft until quoting and keeps quoted text to one line', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(html).toMatch(/\.reference-draft\[hidden\]\s*{[^}]*display:\s*none;/s)
+    expect(html).toMatch(/\.reference-draft-preview\s*{[^}]*white-space:\s*nowrap;/s)
+    expect(html).toMatch(/\.reference-draft-preview\s*{[^}]*text-overflow:\s*ellipsis;/s)
+    expect(source).toContain("preview.className = 'reference-draft-preview'")
+    expect(source).not.toContain("title.textContent = `引用 ${selectedReference.roleName || '人员'} 的观点`")
+  })
+
+  it('positions the mention panel next to the composer input instead of the right action area', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+
+    expect(html).toMatch(/\.mention-panel\s*{[^}]*left:\s*12px;/s)
+    expect(html).toMatch(/\.mention-panel\s*{[^}]*bottom:\s*calc\(100% \+ 8px\);/s)
+    expect(html).toMatch(/\.mention-panel\s*{[^}]*width:\s*min\(280px,\s*calc\(100% - 24px\)\);/s)
+    expect(html).not.toMatch(/\.mention-panel\s*{[^}]*right:\s*78px;/s)
+  })
+
+  it('places user messages on the right like a conversation app', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+
+    expect(html).toMatch(/\.message\.user\s*{[^}]*align-self:\s*flex-end;/s)
+    expect(html).toMatch(/\.message\.user\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 42px;/s)
+    expect(html).toMatch(/\.message\.user \.message-avatar\s*{[^}]*grid-column:\s*2;/s)
+    expect(html).toMatch(/\.message\.user \.message-content\s*{[^}]*grid-column:\s*1;/s)
+    expect(html).toMatch(/\.message\.user \.message-meta\s*{[^}]*text-align:\s*right;/s)
+  })
+
+  it('renders explicit mentions inside user message bubbles', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(source).toContain('renderMessageMentions(message)')
+    expect(source).toContain('message.mentionedRoleIds')
+    expect(source).toContain("mention.textContent = `@${name}`")
+    expect(html).toMatch(/\.message-mentions\s*{[^}]*display:\s*flex;/s)
+    expect(html).toMatch(/\.message-mention\s*{[^}]*font-weight:\s*820;/s)
   })
 
   it('keeps chat titles as plain text and omits chat status from list rows', () => {

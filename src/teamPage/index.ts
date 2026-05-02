@@ -1,8 +1,8 @@
 import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RoleStatus, RoleTemplate, RoomMode } from '../group/types'
-import { createDefaultStore } from '../group/store'
+import { createDefaultStore, loadStore, saveStore } from '../group/store'
 import { parseGroupMentions } from '../group/mentionParser'
 import { createIframeHost } from './iframeHost'
-import { formatChatListTime, getAvatarInitial, getChatStartupNotice, getVisibleThinkingRoles, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
+import { formatChatListTime, getAvatarInitial, getChatStartupNotice, getVisibleThinkingRoles, isUnavailableRolesError, shouldAutoReconnectRole, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
 import { renderMarkdown } from './markdown'
 
 interface RuntimeResponse<T = unknown> {
@@ -25,6 +25,15 @@ type CachedMessageNode = { signature: string; node: HTMLElement }
 
 const GEMINI_URL = 'https://gemini.google.com/'
 const MAX_CACHED_MESSAGE_NODES = 400
+const AUTO_RECONNECT_TIMEOUT_MS = 20_000
+
+interface RoleReadyWaiter {
+  chatId: string
+  roleIds: Set<string>
+  resolve: () => void
+  reject: (error: Error) => void
+  timeoutId: number
+}
 
 let store: OpenTeamStore = createDefaultStore()
 let selectedChatId: string | undefined
@@ -39,6 +48,8 @@ let pendingSwitchAnimationFrame: number | undefined
 let thinkingTimeoutTimers: ReturnType<typeof window.setTimeout>[] = []
 const loggedThinkingTimeoutRoleIds = new Set<string>()
 const messageNodeCache = new Map<string, CachedMessageNode>()
+const reconnectingRoleKeys = new Set<string>()
+const roleReadyWaiters = new Set<RoleReadyWaiter>()
 
 const appShellEl = requireElement<HTMLElement>('#app')
 const floatingDragHandleEl = requireElement<HTMLElement>('#floating-drag-handle')
@@ -164,6 +175,7 @@ function applyStore(nextStore: OpenTeamStore): void {
   }
   syncIframeHost()
   render()
+  notifyRoleReadyWaiters()
 }
 
 function pickCurrentChatId(): string | undefined {
@@ -192,6 +204,53 @@ function getCurrentMessages(): GroupMessage[] {
 
 function getTemplates(): RoleTemplate[] {
   return store.roleTemplateOrder.map(templateId => store.roleTemplatesById[templateId]).filter((template): template is RoleTemplate => Boolean(template))
+}
+
+function teamRoleKey(chatId: string, roleId: string): string {
+  return `${chatId}:${roleId}`
+}
+
+function resolveMessageTargets(raw: string, roles: GroupRole[]): { ok: true; roles: GroupRole[] } | { ok: false; error: string } {
+  const parsed = parseGroupMentions(raw, roles)
+  if (!parsed.ok) return { ok: false, error: parsed.error }
+  const targets = roles.filter(role => parsed.targetRoleIds.includes(role.id))
+  if (targets.length === 0) return { ok: false, error: '当前群聊没有可投递人员' }
+  return { ok: true, roles: targets }
+}
+
+function areRolesReady(chatId: string, roleIds: string[]): boolean {
+  return roleIds.every(roleId => {
+    const role = store.rolesById[roleId]
+    return role?.chatId === chatId && role.status === 'ready'
+  })
+}
+
+function notifyRoleReadyWaiters(): void {
+  for (const waiter of [...roleReadyWaiters]) {
+    if (!areRolesReady(waiter.chatId, [...waiter.roleIds])) continue
+    window.clearTimeout(waiter.timeoutId)
+    roleReadyWaiters.delete(waiter)
+    waiter.resolve()
+  }
+}
+
+function waitForRolesReady(chatId: string, roleIds: string[], timeoutMs = AUTO_RECONNECT_TIMEOUT_MS): Promise<void> {
+  const uniqueRoleIds = [...new Set(roleIds)]
+  if (areRolesReady(chatId, uniqueRoleIds)) return Promise.resolve()
+
+  return new Promise((resolve, reject) => {
+    const waiter: RoleReadyWaiter = {
+      chatId,
+      roleIds: new Set(uniqueRoleIds),
+      resolve,
+      reject,
+      timeoutId: window.setTimeout(() => {
+        roleReadyWaiters.delete(waiter)
+        reject(new Error('自动连接人员超时，请稍后重试或手动恢复会话'))
+      }, timeoutMs),
+    }
+    roleReadyWaiters.add(waiter)
+  })
 }
 
 function syncIframeHost(): void {
@@ -234,6 +293,15 @@ function renderChatList(): void {
     const item = document.createElement('section')
     const hasActivity = chat.id !== selectedChatId && Boolean(store.viewState?.chatHasNewMessageById?.[chat.id])
     item.className = `chat-item${chat.id === selectedChatId ? ' active' : ''}${hasActivity ? ' has-activity' : ''}`
+    item.tabIndex = 0
+    item.setAttribute('role', 'button')
+    item.setAttribute('aria-label', `切换到 ${chat.name}`)
+    item.addEventListener('click', () => switchChat(chat.id))
+    item.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      switchChat(chat.id)
+    })
 
     const avatar = document.createElement('div')
     avatar.className = `chat-avatar ${roleToneClass(chat.name)}`
@@ -248,7 +316,6 @@ function renderChatList(): void {
     name.type = 'button'
     name.className = 'chat-name'
     name.textContent = chat.name
-    name.addEventListener('click', () => switchChat(chat.id))
     const menuButton = document.createElement('button')
     menuButton.type = 'button'
     menuButton.className = 'icon-btn chat-menu-btn'
@@ -283,6 +350,7 @@ function renderChatList(): void {
 function chatActionMenu(chat: GroupChat): HTMLElement {
   const menu = document.createElement('div')
   menu.className = 'chat-action-menu'
+  menu.addEventListener('click', event => event.stopPropagation())
   const rename = document.createElement('button')
   rename.type = 'button'
   rename.className = 'btn btn-ghost'
@@ -296,8 +364,50 @@ function chatActionMenu(chat: GroupChat): HTMLElement {
     }
     runCommand('GROUP_CHAT_UPDATE', { chatId: chat.id, patch: { name: nextName } }).catch(error => showError(error.message))
   })
-  menu.append(rename)
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.className = 'btn btn-ghost btn-danger'
+  remove.textContent = '删除群聊'
+  remove.addEventListener('click', () => {
+    chatMenuChatId = undefined
+    renderChatList()
+    if (!window.confirm(`确定删除「${chat.name}」吗？删除后这个群聊的消息和角色都会移除。`)) return
+    deleteChat(chat.id).catch(error => showError(error.message))
+  })
+  menu.append(rename, remove)
   return menu
+}
+
+async function deleteChat(chatId: string): Promise<void> {
+  const response = await sendRuntimeMessage('GROUP_CHAT_DELETE', { chatId })
+  if (response.ok === false) {
+    if (response.error === 'Unknown OpenTeam message') {
+      log.warn('chat-delete:fallback-local-store', { chatId, error: response.error })
+      await deleteChatFromLocalStore(chatId)
+      return
+    }
+    throw new Error(response.error || '删除群聊失败')
+  }
+  iframeHost.removeChat(chatId)
+  applyStore(response.store ?? createDefaultStore())
+}
+
+async function deleteChatFromLocalStore(chatId: string): Promise<void> {
+  const nextStore = await loadStore()
+  const chat = nextStore.chatsById[chatId]
+  if (!chat) throw new Error(`找不到群聊：${chatId}`)
+
+  for (const roleId of chat.roleIds) delete nextStore.rolesById[roleId]
+  for (const messageId of chat.messageIds) delete nextStore.messagesById[messageId]
+  nextStore.chatOrder = nextStore.chatOrder.filter(id => id !== chat.id)
+  delete nextStore.chatsById[chat.id]
+  if (nextStore.currentChatId === chat.id) nextStore.currentChatId = nextStore.chatOrder[0]
+  if (nextStore.viewState?.chatReadSeqById) delete nextStore.viewState.chatReadSeqById[chat.id]
+  if (nextStore.viewState?.chatHasNewMessageById) delete nextStore.viewState.chatHasNewMessageById[chat.id]
+
+  await saveStore(nextStore)
+  iframeHost.removeChat(chatId)
+  applyStore(nextStore)
 }
 
 function renderChatHeader(): void {
@@ -362,6 +472,10 @@ function renderMessageNode(message: GroupMessage): HTMLElement {
 
   const body = document.createElement('div')
   body.className = 'message-body markdown-body'
+  if (message.type === 'user') {
+    const mentions = renderMessageMentions(message)
+    if (mentions) body.append(mentions)
+  }
   body.append(renderMarkdown(message.content))
 
   if (message.type === 'system') {
@@ -415,7 +529,24 @@ function messageSignature(message: GroupMessage): string {
     status: message.status,
     references: message.references,
     targetRoleIds: message.targetRoleIds,
+    mentionedRoleIds: message.mentionedRoleIds,
   })
+}
+
+function renderMessageMentions(message: GroupMessage): HTMLElement | undefined {
+  if (!message.mentionedRoleIds?.length) return undefined
+  const names = message.mentionedRoleIds.map(roleId => store.rolesById[roleId]?.name).filter((name): name is string => Boolean(name))
+  if (names.length === 0) return undefined
+
+  const mentions = document.createElement('div')
+  mentions.className = 'message-mentions'
+  for (const name of names) {
+    const mention = document.createElement('span')
+    mention.className = 'message-mention'
+    mention.textContent = `@${name}`
+    mentions.append(mention)
+  }
+  return mentions
 }
 
 function scheduleThinkingTimeouts(): void {
@@ -474,6 +605,7 @@ function renderComposerState(): void {
   const targetRoleIds = raw && parsed.ok ? parsed.targetRoleIds : roles.map(role => role.id)
   const targets = roles.filter(role => targetRoleIds.includes(role.id))
   const unavailable = targets.filter(role => role.status !== 'ready')
+  const reconnecting = targets.filter(role => reconnectingRoleKeys.has(teamRoleKey(role.chatId, role.id)))
   const thinking = getVisibleThinkingRoles(roles)
 
   if (!chat) {
@@ -488,9 +620,18 @@ function renderComposerState(): void {
   } else if (!parsed.ok) {
     targetPreviewEl.textContent = parsed.error
     sendButtonEl.disabled = true
-  } else if (unavailable.length > 0) {
-    targetPreviewEl.textContent = `不可发送：${unavailable.map(role => role.name).join('、')} 未 ready`
+  } else if (reconnecting.length > 0) {
+    targetPreviewEl.textContent = `正在自动连接：${reconnecting.map(role => role.name).join('、')}`
     sendButtonEl.disabled = true
+  } else if (unavailable.length > 0) {
+    const waiting = unavailable.filter(role => !shouldAutoReconnectRole(role))
+    if (waiting.length > 0) {
+      targetPreviewEl.textContent = `请稍等：${waiting.map(role => role.name).join('、')} 正在回复`
+      sendButtonEl.disabled = true
+    } else {
+      targetPreviewEl.textContent = `将先自动连接：${unavailable.map(role => role.name).join('、')}`
+      sendButtonEl.disabled = false
+    }
   } else {
     targetPreviewEl.textContent = `将发送给：${targets.map(role => role.name).join('、') || '全部人员'}`
     sendButtonEl.disabled = false
@@ -507,24 +648,20 @@ function renderReferenceDraft(): void {
   }
 
   referenceDraftEl.hidden = false
-  const content = document.createElement('div')
-  const title = document.createElement('div')
-  title.className = 'tiny'
-  title.textContent = `引用 ${selectedReference.roleName || '人员'} 的观点`
-  const body = document.createElement('div')
-  body.className = 'summary-line'
-  body.textContent = selectedReference.contentSnapshot
-  content.append(title, body)
+  const preview = document.createElement('div')
+  preview.className = 'reference-draft-preview'
+  preview.textContent = `引用 ${selectedReference.roleName || '人员'}：${selectedReference.contentSnapshot}`
 
   const cancel = document.createElement('button')
   cancel.type = 'button'
   cancel.className = 'btn btn-ghost'
-  cancel.textContent = '取消引用'
+  cancel.setAttribute('aria-label', '取消引用')
+  cancel.textContent = '×'
   cancel.addEventListener('click', () => {
     selectedReference = undefined
     renderComposerState()
   })
-  referenceDraftEl.append(content, cancel)
+  referenceDraftEl.append(preview, cancel)
 }
 
 function renderMentionPanel(): void {
@@ -772,6 +909,69 @@ function switchChat(chatId: string): void {
     runCommand('GROUP_CHAT_SWITCH', { chatId })
       .catch(error => showError(error.message))
   })
+}
+
+async function reconnectRolesForSend(chat: GroupChat, roles: GroupRole[]): Promise<void> {
+  const uniqueRoles = [...new Map(roles.map(role => [role.id, role])).values()]
+  if (uniqueRoles.length === 0) return
+
+  for (const role of uniqueRoles) reconnectingRoleKeys.add(teamRoleKey(chat.id, role.id))
+  renderComposerState()
+
+  try {
+    log.info('roles:auto-reconnect:start', { chatId: chat.id, roleIds: uniqueRoles.map(role => role.id) })
+    await Promise.all(uniqueRoles.map(role => runCommand('GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id })))
+    for (const role of uniqueRoles) iframeHost.recoverRole(role)
+    await waitForRolesReady(chat.id, uniqueRoles.map(role => role.id))
+    log.info('roles:auto-reconnect:ready', { chatId: chat.id, roleIds: uniqueRoles.map(role => role.id) })
+  } finally {
+    for (const role of uniqueRoles) reconnectingRoleKeys.delete(teamRoleKey(chat.id, role.id))
+    renderComposerState()
+  }
+}
+
+async function sendMessageAfterReconnect(chat: GroupChat, raw: string, reference: MessageReference | undefined, targetRoles: GroupRole[], retryOnUnavailable = true): Promise<void> {
+  try {
+    await runCommand('GROUP_MESSAGE_SEND', { chatId: chat.id, raw, reference })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!retryOnUnavailable || !isUnavailableRolesError(message)) throw error
+    const reconnectableRoles = targetRoles.filter(role => role.status === 'ready' || shouldAutoReconnectRole(role))
+    if (reconnectableRoles.length === 0) throw error
+    await reconnectRolesForSend(chat, reconnectableRoles)
+    await sendMessageAfterReconnect(chat, raw, reference, targetRoles, false)
+  }
+}
+
+function clearComposerAfterSend(raw: string, reference: MessageReference | undefined): void {
+  if (messageInputEl.value.trim() === raw) messageInputEl.value = ''
+  if (selectedReference === reference) selectedReference = undefined
+  renderComposerState()
+}
+
+async function submitComposerMessage(): Promise<void> {
+  const chat = getCurrentChat()
+  const raw = messageInputEl.value.trim()
+  if (!chat || !raw) return
+
+  const targetResult = resolveMessageTargets(raw, getCurrentRoles())
+  if (!targetResult.ok) {
+    showError(targetResult.error)
+    return
+  }
+
+  const waitingRoles = targetResult.roles.filter(role => role.status === 'thinking' && !shouldAutoReconnectRole(role))
+  if (waitingRoles.length > 0) {
+    showError(`请等待人员回复完成：${waitingRoles.map(role => role.name).join('、')}`)
+    return
+  }
+
+  const reference = selectedReference
+  const reconnectableRoles = targetResult.roles.filter(role => role.status !== 'ready' && shouldAutoReconnectRole(role))
+  if (reconnectableRoles.length > 0) await reconnectRolesForSend(chat, reconnectableRoles)
+
+  await sendMessageAfterReconnect(chat, raw, reference, targetResult.roles)
+  clearComposerAfterSend(raw, reference)
 }
 
 function setReference(message: GroupMessage): void {
@@ -1044,6 +1244,10 @@ function registerUi(): void {
       settingsMenuEl.hidden = true
       settingsButtonEl.setAttribute('aria-expanded', 'false')
     }
+    if (chatMenuChatId && !(event.target as Element | null)?.closest('.chat-action-menu, .chat-menu-btn')) {
+      chatMenuChatId = undefined
+      renderChatList()
+    }
   })
 
   document.addEventListener('keydown', event => {
@@ -1084,14 +1288,8 @@ function registerUi(): void {
 
   requireElement<HTMLFormElement>('#composer').addEventListener('submit', event => {
     event.preventDefault()
-    const chat = getCurrentChat()
-    const raw = messageInputEl.value.trim()
-    if (!chat || !raw || sendButtonEl.disabled) return
-    const reference = selectedReference
-    messageInputEl.value = ''
-    selectedReference = undefined
-    renderComposerState()
-    runCommand('GROUP_MESSAGE_SEND', { chatId: chat.id, raw, reference }).catch(error => showError(error.message))
+    if (sendButtonEl.disabled && reconnectingRoleKeys.size > 0) return
+    submitComposerMessage().catch(error => showError(error instanceof Error ? error.message : String(error)))
   })
 
   messageInputEl.addEventListener('input', () => {

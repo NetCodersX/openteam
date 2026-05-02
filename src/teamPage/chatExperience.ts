@@ -42,6 +42,16 @@ export function getVisibleThinkingRoles(roles: GroupRole[], now = Date.now()): G
   return roles.filter(role => isThinkingBubbleVisible(role, now))
 }
 
+export function shouldAutoReconnectRole(role: Pick<GroupRole, 'status' | 'updatedAt'>, now = Date.now()): boolean {
+  if (role.status === 'ready') return false
+  if (role.status !== 'thinking') return true
+  return now - role.updatedAt >= THINKING_TIMEOUT_MS
+}
+
+export function isUnavailableRolesError(message: string): boolean {
+  return message.includes('以下人员不可用，请等待或恢复')
+}
+
 export interface ChatStartupNotice {
   title: string
   body: string

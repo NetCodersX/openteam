@@ -216,6 +216,26 @@ describe('IframeHost', () => {
     expect(host.getRoleFrame('chat-2', 'role-2')?.parentElement?.parentElement).toBe(host.getChatGroup('chat-2'))
   })
 
+  it('removes a deleted chat group and all of its role frames', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const onEvent = vi.fn()
+    const host = createIframeHost({ visibleHost, onEvent })
+
+    host.activateChat(makeChat('chat-1', ['role-1', 'role-2']), [makeRole('chat-1', 'role-1'), makeRole('chat-1', 'role-2')])
+    host.activateChat(makeChat('chat-2', ['role-3']), [makeRole('chat-2', 'role-3')])
+
+    host.removeChat('chat-1')
+
+    expect(host.getChatGroup('chat-1')).toBeUndefined()
+    expect(host.getRoleFrame('chat-1', 'role-1')).toBeUndefined()
+    expect(host.getRoleFrame('chat-1', 'role-2')).toBeUndefined()
+    expect(host.getChatGroup('chat-2')).toBeInstanceOf(HTMLElement)
+    expect(visibleHost.querySelectorAll('[data-chat-id="chat-1"]')).toHaveLength(0)
+    expect(onEvent).toHaveBeenCalledWith({ type: 'role-disposed', chatId: 'chat-1', roleId: 'role-1' })
+    expect(onEvent).toHaveBeenCalledWith({ type: 'role-disposed', chatId: 'chat-1', roleId: 'role-2' })
+  })
+
   it('lists chat groups with active state and role ids', () => {
     const visibleHost = document.createElement('div')
     document.body.append(visibleHost)

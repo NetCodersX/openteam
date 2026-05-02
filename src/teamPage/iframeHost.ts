@@ -140,6 +140,23 @@ export class IframeHost {
       .map(record => this.toState(record))
   }
 
+  removeChat(chatId: string): void {
+    this.assertNotDisposed()
+    for (const record of [...this.framesByRoleKey.values()]) {
+      if (record.chatId !== chatId) continue
+      this.stopAssignLoop(record)
+      record.shell.remove()
+      this.framesByRoleKey.delete(roleKey(record.chatId, record.roleId))
+      this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
+    }
+    this.groupsByChatId.get(chatId)?.remove()
+    this.groupsByChatId.delete(chatId)
+    if (this.activeChatId === chatId) {
+      this.activeChatId = undefined
+      this.activeChatSignature = undefined
+    }
+  }
+
   activateChat(chat: IframeHostChat, roles: IframeHostRole[]): RoleFrameState[] {
     this.assertNotDisposed()
     const activationSignature = chatActivationSignature(chat, roles)
