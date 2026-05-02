@@ -3,7 +3,7 @@ import { extractGeminiConversationId, getSafeGeminiUrl, isSafeGeminiUrl } from '
 import { buildUnsyncedContext, getContextCursorAfterAck, getUnsyncedMessagesForRole } from './contextSync'
 import { parseGroupMentions } from './mentionParser'
 import { buildInitPrompt, buildPrompt } from './promptBuilder'
-import { createGroupRole, createRoleTemplate, deleteRoleTemplate, updateRoleTemplate, validateRoleName } from './roleTemplates'
+import { createGroupRole, createGroupRolesBatch, createRoleTemplate, deleteRoleTemplate, updateGroupRole, updateRoleTemplate, validateRoleName } from './roleTemplates'
 import { createDefaultStore } from './store'
 import type { GroupChat, GroupMessage, GroupRole } from './types'
 
@@ -27,17 +27,69 @@ describe('role template utilities', () => {
     expect(role).toMatchObject({ name: '架构师', systemPrompt: '关注架构', templateId: 'template-1' })
     expect(store.chatsById['chat-1'].roleIds).toEqual(['role-1'])
 
-    deleteRoleTemplate(store, 'template-1')
-    expect(store.roleTemplateOrder).toEqual([])
+    expect(() => deleteRoleTemplate(store, 'template-1')).toThrow('该人员库人员已被群聊使用，不能删除')
+    expect(store.roleTemplateOrder).toEqual(['template-1'])
     expect(store.rolesById['role-1']).toBe(role)
   })
 
+  it('deletes unused templates', () => {
+    const store = createDefaultStore()
+    createRoleTemplate(store, { name: '工程师', systemPrompt: '从工程角度分析' }, 'template-1', 1)
+
+    deleteRoleTemplate(store, 'template-1')
+
+    expect(store.roleTemplateOrder).toEqual([])
+    expect(store.roleTemplatesById['template-1']).toBeUndefined()
+  })
+
+  it('creates group roles in a validated batch without saving temporary people as templates', () => {
+    const store = createDefaultStore()
+    store.chatsById['chat-1'] = makeChat('chat-1')
+    createRoleTemplate(store, { name: '工程师', systemPrompt: '从工程角度分析' }, 'template-1', 1)
+
+    const roles = createGroupRolesBatch(store, 'chat-1', [
+      { source: 'library', roleTemplateId: 'template-1' },
+      { source: 'temporary', name: '法务', description: '关注合规', systemPrompt: '从法务角度分析' },
+    ], () => `role-${store.chatsById['chat-1'].roleIds.length + 1}`, 2)
+
+    expect(roles).toHaveLength(2)
+    expect(roles[0]).toMatchObject({ templateId: 'template-1', name: '工程师', systemPrompt: '从工程角度分析' })
+    expect(roles[1]).toMatchObject({ name: '法务', systemPrompt: '从法务角度分析' })
+    expect(roles[1].templateId).toBeUndefined()
+    expect(store.roleTemplateOrder).toEqual(['template-1'])
+    expect(Object.keys(store.roleTemplatesById)).toEqual(['template-1'])
+  })
+
+  it('validates an entire role batch before writing', () => {
+    const store = createDefaultStore()
+    store.chatsById['chat-1'] = makeChat('chat-1')
+    createRoleTemplate(store, { name: '工程师', systemPrompt: '从工程角度分析' }, 'template-1', 1)
+
+    expect(() => createGroupRolesBatch(store, 'chat-1', [
+      { source: 'library', roleTemplateId: 'template-1' },
+      { source: 'temporary', name: '', systemPrompt: 'invalid' },
+    ], () => 'role-new', 2)).toThrow('人员名称不能为空')
+
+    expect(store.chatsById['chat-1'].roleIds).toEqual([])
+    expect(store.rolesById).toEqual({})
+  })
+
+  it('prevents direct persona edits on existing group people', () => {
+    const store = createDefaultStore()
+    store.chatsById['chat-1'] = makeChat('chat-1')
+    const role = createGroupRole(store, { chatId: 'chat-1', name: '法务', systemPrompt: '从法务角度分析' }, 'role-1', 1)
+
+    expect(() => updateGroupRole(store, 'role-1', { systemPrompt: '修改后的人设' }, 2)).toThrow('群聊内人员人设不可编辑')
+    expect(role.systemPrompt).toBe('从法务角度分析')
+  })
+
   it('validates role names', () => {
-    expect(validateRoleName('')).toBe('角色名称不能为空')
-    expect(validateRoleName('A B')).toBe('角色名称不能包含空白字符')
-    expect(validateRoleName('@A')).toBe('角色名称不能包含 @')
-    expect(validateRoleName('all')).toBe('角色名称不能是 all')
-    expect(validateRoleName('工程师', ['工程师'])).toBe('角色名称已存在：工程师')
+    expect(validateRoleName('')).toBe('人员名称不能为空')
+    expect(validateRoleName('超过十个字符的人员名称')).toBe('人员名称不能超过 10 个字')
+    expect(validateRoleName('A B')).toBe('人员名称不能包含空白字符')
+    expect(validateRoleName('@A')).toBe('人员名称不能包含 @')
+    expect(validateRoleName('all')).toBe('人员名称不能是 all')
+    expect(validateRoleName('工程师', ['工程师'])).toBe('人员名称已存在：工程师')
     expect(validateRoleName('工程师')).toBeUndefined()
   })
 })
@@ -142,6 +194,20 @@ describe('prompt builder', () => {
     expect(prompt).toContain('用户引用了「产品经理」的观点')
     expect(prompt).toContain('你怎么看？')
     expect(prompt).not.toContain('群聊成员')
+  })
+
+  it('skips persona in ordinary prompts when requested', () => {
+    const chat = makeChat('chat-1')
+    const role = makeRole('role-a', '工程师')
+    role.description = '关注技术风险'
+    role.systemPrompt = '这是完整人设'
+    const userMessage = makeMessage('msg-1', 1, 'user', '你怎么看？')
+
+    const prompt = buildPrompt({ chat, role, userMessage, roles: [role], includePersona: false })
+
+    expect(prompt).toContain('你是「工程师」')
+    expect(prompt).toContain('你的职责')
+    expect(prompt).not.toContain('这是完整人设')
   })
 
   it('builds collaborative init and message prompts with members and truncated context', () => {

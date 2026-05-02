@@ -10,6 +10,7 @@ export interface BuildPromptInput {
   unsyncedMessages?: GroupMessage[]
   maxContextChars?: number
   reference?: MessageReference
+  includePersona?: boolean
 }
 
 export function buildPrompt(input: BuildPromptInput): string {
@@ -22,7 +23,7 @@ export function buildIndependentPrompt(input: BuildPromptInput): string {
   const reference = input.reference ?? input.userMessage.references?.[0]
   return joinSections([
     `你是「${input.role.name}」。`,
-    buildRoleBlock(input.role),
+    buildRoleBlock(input.role, input.includePersona ?? true),
     buildReferenceBlock(reference),
     `用户消息：\n${input.userMessage.content}`,
     `请以「${input.role.name}」身份回复。${reference ? '请明确说明你同意或不同意哪里，以及下一步建议。' : ''}`,
@@ -36,7 +37,7 @@ export function buildCollaborativePrompt(input: BuildPromptInput): string {
     '你正在一个 AI 群聊中。',
     buildMemberList(input.roles),
     `你的身份是「${input.role.name}」。`,
-    buildRoleBlock(input.role),
+    buildRoleBlock(input.role, input.includePersona ?? true),
     buildContextBlock(input),
     buildReferenceBlock(reference),
     `用户最新消息：\n${input.userMessage.content}`,
@@ -50,15 +51,15 @@ export function buildInitializationPrompt(chat: GroupChat, role: GroupRole, role
       '你正在一个 AI 群聊中。',
       buildMemberList(roles),
       `你的身份是「${role.name}」。`,
-      buildRoleBlock(role),
-      '请保持你的角色视角。你可以回应、补充或反驳其他成员的观点。当用户引用某位成员的发言时，请明确回应那条观点。',
+      buildRoleBlock(role, true),
+      '请保持你的人员视角。你可以回应、补充或反驳其他成员的观点。当用户引用某位成员的发言时，请明确回应那条观点。',
     ])
   }
 
   return joinSections([
     `你是「${role.name}」。`,
-    buildRoleBlock(role),
-    '用户会给你任务。请始终保持你的角色视角，独立回答，不需要假设还有其他 AI 成员。',
+    buildRoleBlock(role, true),
+    '用户会给你任务。请始终保持你的人员视角，独立回答，不需要假设还有其他 AI 成员。',
   ])
 }
 
@@ -79,10 +80,10 @@ export function buildMemberList(roles: GroupRole[]): string {
   return `群聊成员：\n${members}`
 }
 
-function buildRoleBlock(role: GroupRole): string {
+function buildRoleBlock(role: GroupRole, includePersona: boolean): string {
   return joinSections([
     role.description ? `你的职责：\n${role.description}` : undefined,
-    role.systemPrompt ? `角色设定：\n${role.systemPrompt}` : undefined,
+    includePersona && role.systemPrompt ? `人设：\n${role.systemPrompt}` : undefined,
   ])
 }
 

@@ -33,6 +33,10 @@ describe('group store', () => {
         defaultMode: 'independent',
         maxContextChars: 6000,
       },
+      viewState: {
+        chatReadSeqById: {},
+        chatHasNewMessageById: {},
+      },
     })
   })
 

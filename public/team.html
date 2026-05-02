@@ -89,7 +89,7 @@
         display: grid;
         width: min(1500px, calc(100vw - 56px));
         height: min(900px, calc(100vh - 34px));
-        grid-template-columns: 54px minmax(220px, 260px) minmax(520px, 1fr) minmax(328px, 380px);
+        grid-template-columns: 54px minmax(220px, 260px) minmax(520px, 1fr);
         border: 1px solid rgba(132, 153, 171, 0.24);
         border-radius: 18px;
         background:
@@ -104,17 +104,32 @@
       }
 
       .app-shell.minimized {
-        display: block;
-        width: 284px;
-        height: auto;
-        border-radius: 16px;
-      }
-
-      .app-shell.minimized .panel {
         display: none;
       }
 
-      .app-shell.minimized .rail {
+      .launcher {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        z-index: 4;
+        display: grid;
+        place-items: center;
+        width: 64px;
+        height: 64px;
+        border: 1px solid rgba(47, 216, 204, 0.46);
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 35% 22%, rgba(122, 240, 210, 0.32), transparent 38%),
+          rgba(8, 17, 26, 0.94);
+        color: #eaffff;
+        cursor: pointer;
+        font-size: 24px;
+        font-weight: 780;
+        box-shadow: var(--shadow), var(--glow);
+        backdrop-filter: blur(18px);
+      }
+
+      .launcher[hidden] {
         display: none;
       }
 
@@ -135,11 +150,6 @@
         transform: none;
         backdrop-filter: blur(18px);
         pointer-events: auto;
-      }
-
-      .app-shell.minimized .floating-toolbar {
-        position: static;
-        transform: none;
       }
 
       .drag-handle {
@@ -380,6 +390,29 @@
         opacity: 0.45;
       }
 
+      .settings-menu {
+        position: absolute;
+        left: 52px;
+        bottom: 18px;
+        z-index: 8;
+        width: 148px;
+        border: 1px solid rgba(132, 153, 171, 0.24);
+        border-radius: 10px;
+        padding: 8px;
+        background: rgba(9, 17, 25, 0.96);
+        box-shadow: var(--shadow), var(--glow);
+        backdrop-filter: blur(18px);
+      }
+
+      .settings-menu[hidden] {
+        display: none;
+      }
+
+      .settings-menu button {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
       .chat-create {
         position: absolute;
         top: 142px;
@@ -510,6 +543,33 @@
         cursor: pointer;
         text-align: left;
         transition: 0.16s ease;
+      }
+
+      .chat-item.has-activity .chat-name::before {
+        color: var(--warning);
+      }
+
+      .chat-menu-btn {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        color: var(--muted);
+        opacity: 0;
+      }
+
+      .chat-item:hover .chat-menu-btn,
+      .chat-item:focus-within .chat-menu-btn {
+        opacity: 1;
+      }
+
+      .chat-action-menu {
+        display: grid;
+        gap: 6px;
+        margin-top: 8px;
+        border: 1px solid rgba(132, 153, 171, 0.18);
+        border-radius: 8px;
+        padding: 8px;
+        background: rgba(8, 16, 24, 0.92);
       }
 
       .chat-item:hover,
@@ -691,6 +751,25 @@
         color: #ffe0a6;
       }
 
+      .message.thinking .message-content {
+        border-color: rgba(248, 184, 78, 0.26);
+        background: rgba(33, 27, 15, 0.72);
+      }
+
+      .thinking-dots::after {
+        content: "...";
+        display: inline-block;
+        width: 28px;
+        animation: pulseDots 1.2s steps(4, end) infinite;
+      }
+
+      @keyframes pulseDots {
+        0% { content: ""; }
+        25% { content: "."; }
+        50% { content: ".."; }
+        75%, 100% { content: "..."; }
+      }
+
       .message-avatar {
         display: grid;
         place-items: center;
@@ -700,8 +779,11 @@
         border: 1px solid rgba(255, 255, 255, 0.24);
         border-radius: 50%;
         color: white;
+        overflow: hidden;
         font-size: 14px;
         font-weight: 780;
+        line-height: 1;
+        white-space: nowrap;
         box-shadow: 0 0 24px rgba(47, 216, 204, 0.18);
       }
 
@@ -731,6 +813,69 @@
         font-size: 14px;
         line-height: 1.62;
       }
+
+      .markdown-body {
+        white-space: normal;
+      }
+
+      .markdown-body p,
+      .markdown-body ul,
+      .markdown-body ol,
+      .markdown-body blockquote,
+      .markdown-body pre,
+      .markdown-body table {
+        margin: 0 0 10px;
+      }
+
+      .markdown-body > :last-child {
+        margin-bottom: 0;
+      }
+
+      .markdown-body pre,
+      .markdown-table-scroll {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+
+      .markdown-body pre {
+        border: 1px solid rgba(132, 153, 171, 0.16);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(2, 7, 12, 0.72);
+      }
+
+      .markdown-body code {
+        border-radius: 4px;
+        padding: 1px 4px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .markdown-body pre code {
+        padding: 0;
+        background: transparent;
+      }
+
+      .markdown-body table {
+        min-width: 100%;
+        border-collapse: collapse;
+      }
+
+      .markdown-body th,
+      .markdown-body td {
+        border: 1px solid rgba(132, 153, 171, 0.2);
+        padding: 6px 8px;
+      }
+
+      .markdown-body blockquote {
+        border-left: 3px solid rgba(47, 216, 204, 0.42);
+        padding-left: 10px;
+        color: #d2e2eb;
+      }
+
+      .token.keyword { color: #7aa7ff; }
+      .token.string { color: #76eaa8; }
+      .token.comment { color: #7e909d; }
+      .token.number { color: #ffc25d; }
 
       .reference-box {
         margin: 0;
@@ -860,9 +1005,32 @@
         padding: 14px 14px 22px;
       }
 
+      .role-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 4;
+        width: min(380px, calc(100% - 54px));
+        height: 100%;
+        border-left: 1px solid var(--line);
+        background: rgba(7, 14, 22, 0.96);
+        box-shadow: -26px 0 60px rgba(0, 0, 0, 0.34);
+        transform: translateX(100%);
+        transition: transform 0.18s ease;
+      }
+
+      .role-panel.open {
+        transform: translateX(0);
+      }
+
+      .drawer-summary {
+        white-space: nowrap;
+      }
+
       .role-card,
       .template-card,
-      .editor-card {
+      .editor-card,
+      .modal-card {
         border: 1px solid rgba(132, 153, 171, 0.14);
         border-radius: 8px;
         padding: 12px;
@@ -893,9 +1061,13 @@
         height: 38px;
         border: 1px solid rgba(255, 255, 255, 0.22);
         border-radius: 50%;
+        flex: 0 0 auto;
+        overflow: hidden;
         color: white;
         font-size: 14px;
         font-weight: 780;
+        line-height: 1;
+        white-space: nowrap;
       }
 
       .mention-avatar {
@@ -928,10 +1100,69 @@
         line-height: 1.45;
       }
 
-      .role-editor {
+      .role-editor,
+      .modal-form {
         display: grid;
         gap: 12px;
         margin-top: 12px;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 9;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: rgba(1, 5, 12, 0.58);
+        backdrop-filter: blur(10px);
+      }
+
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .modal {
+        width: min(820px, 100%);
+        max-height: min(760px, calc(100vh - 48px));
+        overflow: auto;
+        border: 1px solid rgba(132, 153, 171, 0.24);
+        border-radius: 16px;
+        padding: 20px;
+        background: rgba(9, 17, 25, 0.98);
+        box-shadow: var(--shadow), var(--glow);
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .modal-grid {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.9fr) minmax(280px, 1.1fr);
+        gap: 14px;
+      }
+
+      .select-list {
+        display: grid;
+        gap: 8px;
+        max-height: 360px;
+        overflow: auto;
+      }
+
+      .select-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        border: 1px solid rgba(132, 153, 171, 0.14);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(14, 24, 35, 0.46);
       }
 
       #role-editor {
@@ -948,13 +1179,6 @@
 
       #role-editor h3 {
         font-size: 16px;
-      }
-
-      #template-form,
-      .template-list,
-      .template-section-title,
-      #template-summary {
-        display: none;
       }
 
       #add-role-form {
@@ -995,11 +1219,12 @@
         inset: 0;
         z-index: 0;
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-        grid-auto-rows: minmax(360px, 1fr);
-        gap: 8px;
-        overflow: hidden;
-        padding: 8px;
+        grid-template-columns: minmax(540px, 1fr) minmax(280px, 0.38fr);
+        grid-auto-rows: minmax(260px, 1fr);
+        grid-auto-flow: dense;
+        gap: 10px;
+        overflow: auto;
+        padding: 10px;
         background:
           radial-gradient(circle at 20% -10%, rgba(47, 216, 204, 0.14), transparent 34%),
           radial-gradient(circle at 85% 0%, rgba(71, 103, 255, 0.16), transparent 30%),
@@ -1011,23 +1236,49 @@
         position: fixed;
         inset: 0;
         z-index: 1;
-        background: rgba(2, 6, 23, 0.28);
+        background: rgba(2, 6, 23, 0.2);
         pointer-events: none;
+      }
+
+      #iframe-host .chat-frame-group {
+        position: relative;
+        z-index: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        grid-auto-rows: minmax(240px, 1fr);
+        gap: 8px;
+        min-height: 260px;
+        border: 1px solid rgba(132, 153, 171, 0.18);
+        border-radius: 16px;
+        padding: 8px;
+        overflow: hidden;
+        background: rgba(8, 15, 24, 0.58);
+        opacity: 0.52;
+        transform: scale(0.98);
+        transform-origin: center;
+        transition: opacity 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+      }
+
+      #iframe-host .chat-frame-group.active {
+        grid-column: span 1;
+        grid-row: span 2;
+        border-color: rgba(47, 216, 204, 0.48);
+        opacity: 1;
+        transform: scale(1);
+        box-shadow: var(--glow);
+      }
+
+      #iframe-host .chat-frame-group.background {
+        opacity: 0.46;
       }
 
       #iframe-host .role-frame {
         width: 100%;
         height: 100%;
-        min-height: 360px;
+        min-height: 240px;
         border: 0;
         border-radius: 12px;
         background: white;
-      }
-
-      [data-openteam-iframe-hidden-host="true"] .role-frame {
-        width: 420px;
-        height: 720px;
-        border: 0;
       }
 
       @media (max-width: 1120px) {
@@ -1042,7 +1293,7 @@
         }
 
         .role-panel {
-          display: none;
+          width: min(360px, calc(100% - 48px));
         }
 
         .workspace {
@@ -1074,7 +1325,10 @@
           <button class="rail-btn" type="button" aria-label="实验">⌬</button>
         </div>
         <div class="rail-bottom">
-          <button class="rail-btn" type="button" aria-label="设置">⚙</button>
+          <button id="settings-button" class="rail-btn" type="button" aria-label="设置" aria-expanded="false" aria-controls="settings-menu">⚙</button>
+          <div id="settings-menu" class="settings-menu" hidden>
+            <button id="open-people-library" class="btn btn-ghost" type="button">人员库</button>
+          </div>
         </div>
       </nav>
       <aside class="panel sidebar">
@@ -1139,8 +1393,9 @@
             <p id="chat-subtitle" class="chat-subtitle">创建或选择一个群聊开始协作</p>
           </div>
           <div class="chat-row">
+            <button id="toggle-people-drawer" class="btn drawer-summary" type="button" aria-expanded="false">群聊人员 0 人</button>
             <span id="chat-status" class="status-pill">空</span>
-            <button id="restore-chat" class="btn" type="button">恢复聊天</button>
+            <button id="restore-chat" class="btn" type="button">恢复会话</button>
           </div>
         </header>
 
@@ -1149,7 +1404,7 @@
         <form id="composer" class="composer">
           <div id="reference-draft" class="reference-draft" hidden></div>
           <div id="mention-panel" class="mention-panel" hidden></div>
-          <textarea id="message-input" placeholder="输入任务；键入 @ 选择一个或多个角色。无 @ 时发送给全部角色。"></textarea>
+          <textarea id="message-input" placeholder="输入任务；键入 @ 选择一个或多个人员。无 @ 时发送给全部人员。"></textarea>
           <div class="composer-actions">
             <div>
               <div id="target-preview" class="muted tiny">选择群聊后可发送</div>
@@ -1163,33 +1418,28 @@
       <aside class="panel role-panel">
         <div class="panel-header">
           <div>
-            <h2>群聊成员与角色</h2>
-            <p id="role-summary" class="tiny">0 个角色</p>
+            <h2>群聊成员与人员</h2>
+            <p id="role-summary" class="tiny">0 个人员</p>
           </div>
           <button id="open-gemini-login" class="icon-btn" type="button" aria-label="Gemini 登录">◇</button>
         </div>
         <div class="role-scroll">
           <div class="section-title">
-            <h3>当前群聊角色</h3>
-            <button id="initialize-role" class="btn" type="button">初始化/重新初始化</button>
+            <h3>当前群聊人员</h3>
+            <button id="close-people-drawer" class="btn" type="button">收起</button>
           </div>
           <div id="role-list" class="role-list"></div>
 
           <form id="add-role-form" class="editor-card role-editor">
-            <h3>添加角色</h3>
-            <div class="field">
-              <label for="role-template-select">从模板选择</label>
-              <select id="role-template-select"></select>
-            </div>
-            <div class="field">
-              <label for="new-role-name">角色名</label>
-              <input id="new-role-name" type="text" placeholder="模板为空时必填" autocomplete="off" />
-            </div>
-            <button class="btn btn-primary" type="submit">加入当前群聊</button>
+            <h3>添加人员</h3>
+            <p class="tiny">从人员库批量选择，或临时添加只属于当前群聊的人员。</p>
+            <select id="role-template-select" hidden></select>
+            <input id="new-role-name" type="text" hidden autocomplete="off" />
+            <button class="btn btn-primary" type="submit">打开添加人员</button>
           </form>
 
           <form id="role-editor" class="editor-card role-editor">
-            <h3>角色配置</h3>
+            <h3>人员设置</h3>
             <div class="field">
               <label for="edit-role-name">名称</label>
               <input id="edit-role-name" type="text" autocomplete="off" />
@@ -1199,44 +1449,98 @@
               <textarea id="edit-role-description"></textarea>
             </div>
             <div class="field">
-              <label for="edit-role-prompt">System Prompt</label>
+              <label for="edit-role-prompt">人设</label>
               <textarea id="edit-role-prompt"></textarea>
             </div>
+            <p class="tiny">群聊内人员的人设只读；人员库修改不会影响已加入群聊的人员。</p>
             <div class="two-col">
-              <button class="btn btn-primary" type="submit">保存角色</button>
-              <button id="recover-role" class="btn" type="button">恢复角色</button>
-            </div>
-          </form>
-
-          <div class="section-title template-section-title">
-            <h3>角色模板库</h3>
-            <span id="template-summary" class="tiny">0 个模板</span>
-          </div>
-          <div id="template-list" class="template-list"></div>
-
-          <form id="template-form" class="editor-card role-editor">
-            <h3 id="template-form-title">创建模板</h3>
-            <div class="field">
-              <label for="template-name">模板名称</label>
-              <input id="template-name" type="text" autocomplete="off" />
-            </div>
-            <div class="field">
-              <label for="template-description">模板描述</label>
-              <textarea id="template-description"></textarea>
-            </div>
-            <div class="field">
-              <label for="template-prompt">模板 System Prompt</label>
-              <textarea id="template-prompt"></textarea>
-            </div>
-            <div class="template-actions">
-              <button class="btn btn-primary" type="submit">保存模板</button>
-              <button id="reset-template-form" class="btn" type="button">新建</button>
-              <button id="delete-template" class="btn btn-danger" type="button">删除</button>
+              <button id="recover-role" class="btn" type="button">恢复会话</button>
+              <button id="initialize-role" class="btn" type="button">重新唤醒</button>
             </div>
           </form>
         </div>
       </aside>
     </div>
+    <span id="template-summary" hidden></span>
+    <div id="template-list" hidden></div>
+    <button id="window-launcher" class="launcher" type="button" aria-label="打开 OpenTeam" hidden>⌁</button>
+
+    <div id="people-library-modal" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="people-library-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="people-library-title">人员库</h2>
+            <p class="tiny">维护可复用人员人设；加入群聊后会复制为独立人员。</p>
+          </div>
+          <button id="close-people-library" class="icon-btn" type="button" aria-label="关闭人员库">×</button>
+        </div>
+        <div class="modal-grid">
+          <div>
+            <div class="section-title">
+              <h3>人员列表</h3>
+              <span id="people-library-summary" class="tiny">0 人</span>
+            </div>
+            <div id="people-library-list" class="template-list"></div>
+          </div>
+          <form id="people-library-form" class="modal-form modal-card">
+            <h3 id="template-form-title">新建人员</h3>
+            <div class="field">
+              <label for="template-name">人员名称</label>
+              <input id="template-name" type="text" maxlength="10" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="template-description">描述</label>
+              <textarea id="template-description"></textarea>
+            </div>
+            <div class="field">
+              <label for="template-prompt">人设</label>
+              <textarea id="template-prompt"></textarea>
+            </div>
+            <div class="template-actions">
+              <button class="btn btn-primary" type="submit">保存人员</button>
+              <button id="reset-template-form" class="btn" type="button">新建</button>
+              <button id="delete-template" class="btn btn-danger" type="button">删除</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <div id="add-person-modal" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="add-person-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="add-person-title">添加人员</h2>
+            <p class="tiny">可从人员库批量添加，也可只为当前群聊临时添加。</p>
+          </div>
+          <button id="close-add-person" class="icon-btn" type="button" aria-label="关闭添加人员">×</button>
+        </div>
+        <div class="modal-grid">
+          <form id="add-library-people-form" class="modal-form modal-card">
+            <h3>从人员库添加</h3>
+            <div id="add-library-people-list" class="select-list"></div>
+            <button class="btn btn-primary" type="submit">加入选中人员</button>
+          </form>
+          <form id="add-temporary-person-form" class="modal-form modal-card">
+            <h3>临时添加</h3>
+            <div class="field">
+              <label for="temporary-person-name">人员名称</label>
+              <input id="temporary-person-name" type="text" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="temporary-person-description">描述</label>
+              <textarea id="temporary-person-description"></textarea>
+            </div>
+            <div class="field">
+              <label for="temporary-person-prompt">人设</label>
+              <textarea id="temporary-person-prompt"></textarea>
+            </div>
+            <button class="btn btn-primary" type="submit">仅加入当前群聊</button>
+          </form>
+        </div>
+      </section>
+    </div>
+
     <div id="iframe-host" class="iframe-host" aria-hidden="true"></div>
     <div id="error" class="toast" hidden></div>
     <script type="module" src="team.js"></script>

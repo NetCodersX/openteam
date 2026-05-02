@@ -16,8 +16,8 @@ docs/prd/2026-05-01-group-chat-experience-prd.md
 - 支持多个群聊后台并行运行。
 - 将 iframe 按群聊分组，并作为 `team.html` 背景层大屏工作区。
 - 前景 OpenTeam 聊天窗口只承载群聊 UI，不承载 iframe 卡片。
-- 补齐新建群聊模式选择，避免加号直接创建默认“独立专家”群聊。
-- 补齐正在回复气泡、Markdown 渲染、输入快捷键、右键改名、右下角缩小态等体验。
+- 验证并保留已实现的新建群聊模式选择，避免加号直接创建默认“独立专家”群聊。
+- 补齐正在回复气泡、Markdown 渲染、输入快捷键、三点菜单改名、右下角缩小态等体验。
 - 增加可诊断日志，方便后续测试和定位问题。
 
 ## 2. 总体架构
@@ -27,7 +27,7 @@ docs/prd/2026-05-01-group-chat-experience-prd.md
 ```text
 team.html / team.js
   - 前景 app-shell：群聊列表、消息流、人员摘要、输入框、弹窗
-  - 背景 iframe-host：按群聊分组的 Gemini iframe 大屏画布
+  - 背景 iframe-host：按群聊分组的 Gemini iframe 大屏画布；已创建的 group 不隐藏、不销毁
   - UI 状态：当前显示群聊、弹窗、菜单、右侧人员区展开状态
 
 background service worker
@@ -61,7 +61,7 @@ team.html 页面
 flowchart LR
   UI["app-shell<br/>前景群聊 UI"] -->|"创建群聊 / 添加人员 / 发送消息"| BG["background<br/>状态与路由中心"]
   BG -->|"读写"| Store["chrome.storage.local<br/>OpenTeamStore"]
-  UI -->|"创建/显示/隐藏"| Host["iframe-host<br/>背景 iframe 群组"]
+  UI -->|"创建/排布/突出当前群聊"| Host["iframe-host<br/>背景 iframe 群组"]
   Host -->|"TEAM_FRAME_ROLE_READY"| BG
   BG -->|"TEAM_SEND_PROMPT<br/>tabId + frameId"| Frame["Gemini iframe<br/>群聊内人员实例"]
   Frame -->|"TEAM_SEND_ACK / TEAM_ROLE_STATUS / TEAM_ROLE_REPLY"| BG
@@ -71,7 +71,8 @@ flowchart LR
 关键原则：
 
 - `currentChatId` 只代表当前 UI 展示的群聊，不代表唯一运行中的群聊。
-- 后台群聊的 iframe 不因切换群聊而销毁。
+- 后台群聊的 iframe 不因切换群聊而销毁，也不通过 `hidden` / `display: none` 隐藏。
+- 当前群聊可以在背景层视觉上突出，非当前群聊可以弱展示、缩略展示或排布到旁边，但仍保持存在。
 - 所有人员运行态绑定使用 `chatId + roleId`，UI 文案上称为 `chatId + personId`。
 - 回复到达时先写入 store，再广播给 UI。
 - 内部类型可保留 `RoleTemplate` / `GroupRole` 命名，避免无收益的大规模重命名；用户可见文案必须改成“人员库 / 人员 / 人设”。
@@ -126,11 +127,11 @@ interface OpenTeamStore {
 
 interface OpenTeamViewState {
   chatReadSeqById?: Record<string, number>
-  collapsedPeoplePanelByChatId?: Record<string, boolean>
+  chatHasNewMessageById?: Record<string, boolean>
 }
 ```
 
-第一版可以只实现 `chatReadSeqById`。右侧人员区默认收起，也可以先不持久化展开状态。
+左侧群聊列表只显示“有新消息”状态点，不显示未读数字。右侧人员区默认收起，不按群聊持久化展开状态。
 
 ### 4.2 人员库人员
 
@@ -155,6 +156,14 @@ description -> 人员描述
 systemPrompt -> 人设
 ```
 
+字段校验与删除规则：
+
+- `name` 必填，最多 10 个字。
+- `systemPrompt` 必填，不允许空白。
+- `description` 可选，允许较长内容。
+- 如果任一 `GroupRole.templateId` 指向该模板，则该人员库人员视为已被群聊使用，不允许删除。
+- 删除未被使用的人员库人员时，只删除模板，不涉及任何群聊内人员实例。
+
 ### 4.3 群聊内人员
 
 当前沿用：
@@ -167,6 +176,7 @@ interface GroupRole {
   name: string
   description?: string
   systemPrompt?: string
+  avatarColor?: string
   status: RoleStatus
   contextCursor: number
   geminiConversationId?: string
@@ -183,6 +193,9 @@ interface GroupRole {
 - 从人员库添加：复制 `name / description / systemPrompt` 到新的 `GroupRole`。
 - 临时添加：直接创建新的 `GroupRole`，不写入 `roleTemplatesById`。
 - 每次加入群聊都生成新的 `roleId`。
+- 群聊内人员创建后，`systemPrompt` 不允许在当前群聊内继续编辑，只允许查看。
+- 临时人员不允许保存回人员库。
+- 群聊内人员可以编辑 `avatarColor`；颜色修改只影响当前群聊内人员实例。
 
 ### 4.4 消息与正在回复视图
 
@@ -212,7 +225,7 @@ type ThinkingBubble = {
   chatId: string
   roleId: string
   roleName: string
-  promptMessageId?: string
+  startedAt?: number
 }
 ```
 
@@ -220,9 +233,14 @@ type ThinkingBubble = {
 
 ```text
 role.status === 'thinking'
-&& role.lastPromptMessageId 存在
-&& 当前消息流中还没有该 role 对该 promptMessageId 的 assistant 回复
 ```
+
+约束：
+
+- Assistant 回复不要求关联触发它的 user message。
+- 同一个人员同一时间只处理一个消息。
+- 同一个人员最多显示一个 thinking bubble。
+- thinking bubble 默认 120 秒超时。
 
 ## 5. 核心流程
 
@@ -257,7 +275,7 @@ sequenceDiagram
 
 ## 5.2 新建群聊流程
 
-加号不能直接创建群聊，必须先打开创建面板。
+加号不能直接创建群聊，必须先打开创建面板。当前该能力已基本实现，后续除测试修复和验收补齐外，不主动调整该流程。
 
 ```mermaid
 sequenceDiagram
@@ -307,8 +325,10 @@ flowchart TD
 
 删除规则：
 
-- 删除人员库模板不影响已加入群聊的人员。
-- 已加入群聊的人员已经复制了名称、描述、人设。
+- 如果某个人员库模板已经被任一群聊使用，不允许删除。
+- 判断方式：存在任一 `GroupRole.templateId === templateId` 即视为已使用。
+- 未被使用的人员库模板可以删除。
+- 删除未被使用的模板只影响 `roleTemplatesById` 和 `roleTemplateOrder`。
 
 日志点：
 
@@ -328,54 +348,65 @@ flowchart TD
 ```mermaid
 flowchart LR
   Add["点击添加人员"] --> Dialog["添加人员弹窗"]
-  Dialog --> FromLibrary["从人员库添加"]
+  Dialog --> FromLibrary["从人员库批量添加"]
   Dialog --> Temporary["临时添加"]
-  FromLibrary --> Copy["复制模板字段"]
+  FromLibrary --> Copy["批量复制模板字段"]
   Temporary --> Direct["读取临时名称/描述/人设"]
-  Copy --> CreateRole["GROUP_ROLE_CREATE"]
+  Copy --> CreateRole["GROUP_ROLES_CREATE_BATCH"]
   Direct --> CreateRole
-  CreateRole --> Store["写入 GroupRole"]
+  CreateRole --> Store["一次性写入多个 GroupRole"]
   Store --> UI["刷新当前群聊人员"]
-  UI --> Host["创建该人员 iframe"]
+  UI --> Host["创建对应人员 iframe"]
 ```
 
-从人员库添加 payload：
+批量添加 payload：
 
 ```ts
 {
-  type: 'GROUP_ROLE_CREATE',
-  chatId,
-  roleTemplateId
+  type: 'GROUP_ROLES_CREATE_BATCH',
+  chatId: string,
+  items: Array<
+    | {
+        source: 'library'
+        roleTemplateId: string
+      }
+    | {
+        source: 'temporary'
+        name: string
+        description?: string
+        systemPrompt: string
+        avatarColor?: string
+      }
+  >
 }
 ```
 
-临时添加 payload：
+校验规则：
 
-```ts
-{
-  type: 'GROUP_ROLE_CREATE',
-  chatId,
-  name,
-  description,
-  systemPrompt
-}
-```
+- `items` 不能为空。
+- 人员名称必填，最多 10 个字。
+- 人设必填，不允许空白。
+- 描述可选，允许较长内容。
+- 批量创建前先整体校验；如有任何一项不合法，整批不创建。
+- 校验通过后一次性写入 store，并只广播一次 `GROUP_STORE_UPDATED`。
 
 日志点：
 
 - `ui:person-add-dialog:open`
 - `ui:person-add:from-library`
 - `ui:person-add:temporary`
-- `role-create:start`
-- `role-create:stored`
+- `role-create-batch:start`
+- `role-create-batch:stored`
+- `role-create-batch:failed`
 - `iframe-host:role-created`
 
 字段建议：
 
 - `chatId`
-- `roleId`
-- `templateId`
-- `source: 'library' | 'temporary'`
+- `roleIds`
+- `templateIds`
+- `source: 'library' | 'temporary' | 'mixed'`
+- `itemCount`
 - `personaLength`
 
 ## 5.5 消息发送流程
@@ -406,6 +437,13 @@ sequenceDiagram
 - `Command + Enter`：换行。
 - `Control + Enter`：换行。
 - @ 面板打开时，`Enter` 优先确认当前人员选项。
+
+Prompt 构造规则：
+
+- 人设 `systemPrompt` 只在初始化人员、重新唤醒人员或创建新的 Gemini 会话时发送。
+- 普通消息发送时不重复携带完整人设，避免长人设导致上下文持续膨胀。
+- 如果人员已有有效 `geminiConversationUrl` / conversation binding，普通消息只发送用户消息、必要群聊上下文和引用信息。
+- 该规则需要修复当前“每次普通消息都带上完整人设”的问题。
 
 日志点：
 
@@ -450,11 +488,19 @@ sequenceDiagram
 - UI 收到广播后更新左侧列表状态。
 - 当前消息流只渲染当前 `selectedChatId` 的消息。
 
+Thinking 超时规则：
+
+- 同一个人员同一时间只处理一个消息。
+- 进入 `thinking` 后启动 120 秒超时窗口。
+- 120 秒内收到回复：写入 assistant message，并将人员状态恢复为 ready。
+- 120 秒内未收到回复：移除 thinking bubble，将人员标记为 timeout/error，并记录 `reply-timeout` 日志。
+
 日志点：
 
 - `role-status:received`
 - `role-reply:received`
 - `role-reply:stored`
+- `reply-timeout`
 - `group-store-updated:broadcast`
 - `ui:background-chat-updated`
 
@@ -478,8 +524,8 @@ sequenceDiagram
   UI->>UI: selectedChatId = nextChatId
   UI->>BG: GROUP_CHAT_SWITCH(chatId)
   UI->>Host: activateChat(nextChat, nextRoles)
-  Host->>Host: show chat-frame-group(nextChatId)
-  Host->>Host: hide but keep other chat-frame-groups
+  Host->>Host: ensure chat-frame-group(nextChatId)
+  Host->>Host: highlight current group and keep other groups visible
   BG->>BG: store.currentChatId = chatId
   BG-->>UI: GROUP_STORE_UPDATED
 ```
@@ -487,16 +533,17 @@ sequenceDiagram
 关键约束：
 
 - 切换群聊不销毁 iframe。
+- 切换群聊不隐藏已存在 iframe group。
 - 切换群聊不重置非当前群聊人员状态。
 - 切换群聊不取消已经发送的 prompt。
-- 切换群聊只改变当前消息流、标题、人员摘要和背景 group 可见性。
+- 切换群聊只改变当前消息流、标题、人员摘要和背景 group 的视觉突出状态。
 
 日志点：
 
 - `ui:chat-switch`
 - `chat-switch:stored`
-- `iframe-host:chat-visible`
-- `iframe-host:chat-hidden`
+- `iframe-host:chat-highlighted`
+- `iframe-host:chat-preserved`
 - `iframe-host:frame-preserved`
 
 ## 5.8 iframe 分组流程
@@ -509,7 +556,7 @@ sequenceDiagram
     <iframe data-chat-id="chat-A" data-role-id="role-1"></iframe>
     <iframe data-chat-id="chat-A" data-role-id="role-2"></iframe>
   </section>
-  <section data-chat-frame-group data-chat-id="chat-B" hidden>
+  <section data-chat-frame-group data-chat-id="chat-B" data-background-chat="true">
     <iframe data-chat-id="chat-B" data-role-id="role-3"></iframe>
   </section>
 </div>
@@ -529,23 +576,23 @@ class IframeHost {
   activateChat(chat, roles) {
     const group = ensureChatGroup(chat.id)
     ensureRoleFrames(chat, roles)
-    showGroup(chat.id)
-    hideOtherGroups(chat.id)
+    highlightGroup(chat.id)
+    preserveOtherGroups(chat.id)
   }
 }
 ```
 
 可见性策略：
 
-- 当前 group：显示在背景层，可大屏查看。
-- 后台 group：`hidden`、弱展示或缩略，由 UI 策略决定；无论哪种都不 remove iframe。
+- 当前 group：在背景层视觉上突出，可大屏查看。
+- 后台 group：不能使用 `hidden` / `display: none` 隐藏；可以弱展示、缩略展示或排布到旁边，但必须保留在 DOM 和背景工作区中。
 - 缩小聊天窗后，背景层 iframe 工作区仍可操作。
 
 日志点：
 
 - `iframe-host:group-created`
-- `iframe-host:group-visible`
-- `iframe-host:group-hidden`
+- `iframe-host:group-highlighted`
+- `iframe-host:group-preserved`
 - `iframe-host:role-created`
 - `iframe-host:role-reused`
 - `iframe-host:role-recovered`
@@ -564,6 +611,8 @@ src/teamPage/markdown.ts
 
 - 接收原始 `content`。
 - 使用 markdown 渲染器生成安全 HTML。
+- 支持代码块语法高亮，至少覆盖 JavaScript / TypeScript / HTML / CSS / JSON / Bash 等常见语言。
+- 可以展示 HTML / JavaScript 代码内容，但不执行脚本。
 - 禁止危险 HTML 或做安全过滤。
 - 给链接加安全属性。
 - 输出给消息气泡。
@@ -579,13 +628,15 @@ export function renderMarkdown(content: string): DocumentFragment
 - 不直接信任 Gemini 回复内容。
 - 不执行 `<script>`。
 - 不允许内联事件处理器。
-- 链接使用 `rel="noopener noreferrer"`。
-- 表格和代码块不能撑破气泡。
+- 不允许执行 `javascript:` 链接。
+- 链接使用 `target="_blank"` 和 `rel="noopener noreferrer"`。
+- 表格和代码块不能撑破气泡，长内容在 bubble 内横向滚动。
 
 日志：
 
 - Markdown 渲染失败时记录 `markdown:render-failed`。
-- 只记录 `contentLength` 和错误类型，不记录完整内容。
+- 代码高亮失败时记录 `markdown:highlight-failed`，并降级为普通代码块。
+- 只记录 `contentLength`、语言类型和错误类型，不记录完整内容。
 
 ## 5.10 右下角缩小态流程
 
@@ -663,17 +714,23 @@ const log = {
 | `role-template:create` | info | `templateId`, `nameLength`, `personaLength` |
 | `role-template:update` | info | `templateId`, `patchKeys`, `personaLength` |
 | `role-template:delete` | warn | `templateId` |
+| `role-template:delete-denied` | warn | `templateId`, `usedByChatCount` |
 | `role-create:start` | info | `chatId`, `source`, `templateId` |
 | `role-create:stored` | info | `chatId`, `roleId`, `source` |
+| `role-create-batch:start` | info | `chatId`, `itemCount`, `source` |
+| `role-create-batch:stored` | info | `chatId`, `roleIds`, `itemCount` |
+| `role-create-batch:failed` | warn | `chatId`, `itemCount`, `error` |
 | `message-send:start` | info | `chatId`, `rawLength` |
 | `message-send:parsed-targets` | debug | `chatId`, `targetRoleIds` |
 | `message-send:stored` | info | `chatId`, `messageId`, `targetCount` |
-| `prompt:send:start` | info | `chatId`, `roleId`, `messageId`, `tabId`, `frameId`, `contentLength` |
+| `prompt:send:start` | info | `chatId`, `roleId`, `messageId`, `tabId`, `frameId`, `contentLength`, `includesPersona` |
 | `prompt:send:response` | debug | `chatId`, `roleId`, `messageId` |
 | `prompt:send:failed` | warn | `chatId`, `roleId`, `messageId`, `error` |
+| `prompt:persona-skipped` | debug | `chatId`, `roleId`, `messageId`, `conversationUrlPresent` |
 | `role-status:received` | debug | `chatId`, `roleId`, `runtimeStatus`, `mappedStatus` |
 | `role-reply:received` | info | `chatId`, `roleId`, `messageId`, `contentLength` |
 | `role-reply:stored` | info | `chatId`, `roleId`, `replyMessageId` |
+| `reply-timeout` | warn | `chatId`, `roleId`, `messageId`, `timeoutMs` |
 | `delivery:error` | warn | `chatId`, `roleId`, `messageId`, `reason` |
 
 ### IframeHost 层
@@ -681,8 +738,8 @@ const log = {
 | 事件 | 级别 | 字段 |
 | --- | --- | --- |
 | `iframe-host:group-created` | info | `chatId` |
-| `iframe-host:group-visible` | debug | `chatId` |
-| `iframe-host:group-hidden` | debug | `chatId` |
+| `iframe-host:group-highlighted` | debug | `chatId` |
+| `iframe-host:group-preserved` | debug | `chatId` |
 | `iframe-host:role-created` | info | `chatId`, `roleId`, `srcKind` |
 | `iframe-host:role-reused` | debug | `chatId`, `roleId` |
 | `iframe-host:role-assigned` | debug | `chatId`, `roleId`, `attempts` |
@@ -707,7 +764,7 @@ const log = {
 
 职责：
 
-- 补齐创建群聊模式选择面板。
+- 保留并验收已实现的创建群聊模式选择面板。
 - 增加设置小菜单和人员库弹窗容器。
 - 增加添加人员弹窗容器。
 - 增加右下角缩小 launcher。
@@ -723,15 +780,16 @@ const log = {
 职责：
 
 - 管理 UI 状态。
-- 新建群聊模式读取。
+- 新建群聊模式读取与验收校验。
 - 设置菜单和弹窗交互。
 - 人员库 CRUD 调用。
-- 添加人员弹窗。
-- 右侧人员区默认收起。
-- 正在回复气泡派生渲染。
-- Markdown 渲染接入。
+- 添加人员弹窗，支持人员库批量选择。
+- 右侧人员区默认收起，并以右侧抽屉展开。
+- 正在回复气泡派生渲染，默认 120 秒超时。
+- Markdown 渲染和代码高亮接入。
 - Enter / Command+Enter / Control+Enter 输入行为。
-- 群聊右键改名。
+- 群聊三点菜单改名。
+- @ 头像只显示首字，避免换行和挤压。
 
 建议拆分：
 
@@ -752,14 +810,14 @@ src/teamPage/thinkingBubbles.ts
 
 - 从平铺 iframe 管理升级为按群聊 group 管理。
 - 保持 `chatId + roleId` frame binding。
-- 切换群聊时隐藏/显示 group，不销毁 iframe。
+- 切换群聊时突出当前 group，但不隐藏或销毁其他 group。
 
 核心新增 API：
 
 ```ts
 getOrCreateChatGroup(chatId: string): HTMLElement
-showChatGroup(chatId: string): void
-hideChatGroup(chatId: string): void
+highlightChatGroup(chatId: string): void
+preserveOtherChatGroups(activeChatId: string): void
 listChatGroups(): ChatFrameGroupState[]
 ```
 
@@ -768,8 +826,9 @@ listChatGroups(): ChatFrameGroupState[]
 职责：
 
 - 新增群聊更新接口，用于重命名和描述更新。
-- 保持人员库 CRUD。
-- 保持群聊内人员创建逻辑。
+- 保持人员库 CRUD，并增加“已被群聊使用则不允许删除”的保护。
+- 新增群聊内人员批量创建逻辑。
+- 普通消息发送时不重复携带完整人设。
 - 消息回复到达时无条件按 `chatId` 落库。
 - 增加更多日志。
 
@@ -778,6 +837,7 @@ listChatGroups(): ChatFrameGroupState[]
 ```ts
 GROUP_CHAT_UPDATE
 GROUP_CHAT_MARK_READ
+GROUP_ROLES_CREATE_BATCH
 ```
 
 ### 7.5 `src/group/roleTemplates.ts`
@@ -786,7 +846,8 @@ GROUP_CHAT_MARK_READ
 
 - 保持人员库模板和群聊内人员复制逻辑。
 - 临时添加不写入模板库。
-- 从人员库添加继续复制字段。
+- 从人员库批量添加继续复制字段。
+- 删除人员库模板前检查是否已有群聊内人员引用该模板。
 
 ### 7.6 `src/group/types.ts`
 
@@ -794,6 +855,7 @@ GROUP_CHAT_MARK_READ
 
 ```ts
 description?: string // GroupChat
+avatarColor?: string // GroupRole
 viewState?: OpenTeamViewState // OpenTeamStore
 ```
 
@@ -805,22 +867,26 @@ viewState?: OpenTeamViewState // OpenTeamStore
 
 - 新建群聊 UI 必须提供模式选择。
 - `GROUP_CHAT_CREATE` 使用提交的 mode。
-- 从人员库添加会复制为独立 `GroupRole`。
+- 从人员库批量添加会复制为独立 `GroupRole`。
 - 临时添加不会创建 `RoleTemplate`。
-- 删除人员库模板不影响已加入群聊人员。
+- 已被任一群聊使用的人员库模板不允许删除。
+- 未被使用的人员库模板可以删除。
+- 普通消息不会重复携带完整人设。
 - `IframeHost` 切换群聊不销毁 iframe。
+- `IframeHost` 切换群聊不隐藏已存在 iframe group。
 - `IframeHost` 按 chat group 管理 DOM。
 - 非当前群聊收到回复后写入对应 chat 消息。
-- thinking bubble 派生规则。
+- thinking bubble 派生规则和 120 秒超时规则。
 - Enter / Command+Enter / Control+Enter 行为。
-- Markdown 渲染安全过滤。
+- @ 头像只显示首字。
+- Markdown 渲染安全过滤和代码高亮。
 
 ### 8.2 集成测试
 
 关键路径：
 
 1. 创建协作群聊。
-2. 从人员库添加两个人员。
+2. 从人员库批量添加两个人员。
 3. 发送消息。
 4. 两个人员进入 thinking。
 5. 切换到另一个群聊。
@@ -833,50 +899,56 @@ viewState?: OpenTeamViewState // OpenTeamStore
 - 新建群聊时能选择协作模式。
 - 右侧人员区默认收起。
 - 设置齿轮先打开小菜单，再打开人员库弹窗。
-- 添加人员弹窗区分从人员库添加和临时添加。
+- 添加人员弹窗区分从人员库批量添加和临时添加。
+- 人员库人员被群聊使用后不能删除。
 - iframe 背景层空间足够，不挤在聊天窗里。
+- 切换群聊后已存在 iframe group 不隐藏、不销毁。
 - 缩小时变成右下角圆形入口。
-- Markdown 代码块、列表、表格不撑破消息气泡。
+- Markdown 代码块、列表、表格不撑破消息气泡，代码块有语法高亮。
 
 ## 9. 实施顺序
 
 推荐按风险由低到高推进：
 
-1. 新建群聊模式选择修复。
+1. 验证并保留已实现的新建群聊模式选择。
 2. 产品文案统一。
 3. 设置小菜单 + 人员库弹窗。
-4. 添加人员弹窗。
-5. 右侧人员区默认收起。
-6. 输入框快捷键和 @ 头像首字修复。
-7. 正在回复动态气泡。
-8. 群聊右键改名。
-9. Markdown 渲染。
-10. 右下角缩小 launcher。
-11. 多群聊未读 / 后台状态提示。
-12. iframe 按群聊分组和背景层展示。
+4. 人员库删除保护：已被任一群聊使用则不允许删除。
+5. 添加人员弹窗：从人员库批量添加 / 临时添加。
+6. 右侧人员区默认收起，并以右侧抽屉展开。
+7. 输入框快捷键和 @ 头像首字修复。
+8. 正在回复动态气泡和 120 秒超时。
+9. 群聊三点菜单改名。
+10. Markdown 渲染和代码高亮。
+11. 普通消息不重复携带完整人设。
+12. 右下角缩小 launcher。
+13. 多群聊有新消息 / 后台状态提示。
+14. iframe 按群聊分组和背景层展示，切换群聊不隐藏已存在 group。
 
-第 12 步风险最高，应单独做测试和日志。
+第 14 步风险最高，应单独做测试和日志。
 
 ## 10. 风险与回滚
 
-### 10.1 iframe 隐藏运行风险
+### 10.1 iframe 后台运行风险
 
-风险：浏览器可能对隐藏 iframe 做节流。
+风险：多个 iframe group 同时存在时，可能带来性能压力；如果实现中错误使用隐藏策略，浏览器可能对 iframe 做节流。
 
 缓解：
 
 - 不销毁 iframe。
-- 尽量使用可见但弱展示/缩略的背景 group。
+- 不使用 `hidden` / `display: none` 隐藏已存在 iframe group。
+- 使用可见但弱展示、缩略或旁侧排布的背景 group。
 - 增加 `role-status` 和 `reply-timeout` 日志。
 
 ### 10.2 Markdown 安全风险
 
-风险：Gemini 回复中可能包含危险 HTML。
+风险：Gemini 回复中可能包含危险 HTML、脚本或危险链接。
 
 缓解：
 
-- 默认禁用 HTML。
-- 或接入 sanitizer。
+- 允许展示 HTML / JavaScript 等代码内容，但不执行脚本。
+- 禁止 `<script>`、内联事件处理器和 `javascript:` 链接执行。
+- 接入 sanitizer 或等价安全过滤策略。
 - 对链接添加安全属性。
 
 ### 10.3 状态复杂度上升
@@ -900,11 +972,14 @@ viewState?: OpenTeamViewState // OpenTeamStore
 
 ## 11. 完成标准
 
-- PRD 中 P0 功能均有实现。
-- 新建群聊可选择模式。
-- 人员库、添加人员、临时人员行为符合独立身份原则。
+- PRD 第 6 节列出的功能需求均有实现。
+- 新建群聊可选择模式，当前已实现能力通过验收。
+- 人员库、批量添加人员、临时人员行为符合独立身份原则。
+- 已被任一群聊使用的人员库人员不允许删除。
+- 普通消息不重复携带完整人设。
 - 多群聊后台回复能正确落库。
 - iframe group 不在聊天悬浮窗内。
+- 切换群聊不隐藏、不销毁已存在 iframe group。
 - 关键流程有结构化日志。
 - `npm run build` 通过。
 - `npm test` 通过。

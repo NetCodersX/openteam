@@ -54,7 +54,7 @@ export function getContextCursorAfterAck(chat: GroupChat, messages?: GroupMessag
 
 export function formatContextMessage(message: GroupMessage): string {
   const speaker = message.type === 'assistant'
-    ? message.roleName ?? '角色'
+    ? message.roleName ?? '人员'
     : message.type === 'user'
       ? '用户'
       : '系统'

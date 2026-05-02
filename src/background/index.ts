@@ -4,9 +4,11 @@ import { parseGroupMentions } from '../group/mentionParser'
 import { buildPrompt, buildReinitPrompt } from '../group/promptBuilder'
 import {
   createGroupRole,
+  createGroupRolesBatch,
   createRoleTemplate,
   deleteGroupRole,
   deleteRoleTemplate,
+  getRoleTemplateUsage,
   updateGroupRole,
   updateRoleTemplate,
 } from '../group/roleTemplates'
@@ -23,6 +25,7 @@ type SendPromptMessage = {
   messageId: string
   content: string
   autoSend?: boolean
+  includesPersona?: boolean
 }
 
 interface PromptDelivery {
@@ -40,7 +43,7 @@ interface StoreMutationResult<T> {
 const GROUP_PUSH_TYPE = 'OPENTEAM_GROUP_PUSH'
 const LEGACY_PUSH_TYPE = 'OPENTEAM_HOST_PUSH'
 const DEFAULT_GEMINI_URL = 'https://gemini.google.com/'
-const STALE_THINKING_MS = 130000
+const STALE_THINKING_MS = 120_000
 const runtimeFrames = createRuntimeFrameRegistry()
 const hostTabIds = new Set<number>()
 
@@ -146,6 +149,7 @@ async function sendPrompt(delivery: PromptDelivery): Promise<void> {
     tabId: delivery.tabId,
     frameId: delivery.frameId,
     contentLength: delivery.message.content.length,
+    includesPersona: delivery.message.includesPersona ?? false,
   })
 
   try {
@@ -196,6 +200,10 @@ function isRoleDeliverable(role: GroupRole, binding: RuntimeFrameBinding | undef
   return role.status === 'ready' || role.status === 'error' || role.status === 'loading' || role.status === 'pending' || isStaleThinkingRole(role, timestamp)
 }
 
+function shouldIncludePersonaForPrompt(role: GroupRole): boolean {
+  return !role.geminiConversationUrl && !role.geminiConversationId
+}
+
 function recoverDeliverableRoleStatus(role: GroupRole, timestamp: number): void {
   if (role.status === 'ready') return
 
@@ -231,9 +239,9 @@ function requireChat(store: OpenTeamStore, chatId: unknown): GroupChat {
 }
 
 function requireRole(store: OpenTeamStore, chatId: string, roleId: unknown): GroupRole {
-  if (typeof roleId !== 'string') throw new Error('缺少角色 ID')
+  if (typeof roleId !== 'string') throw new Error('缺少人员 ID')
   const role = store.rolesById[roleId]
-  if (!role || role.chatId !== chatId) throw new Error(`找不到角色：${roleId}`)
+  if (!role || role.chatId !== chatId) throw new Error(`找不到人员：${roleId}`)
   return role
 }
 
@@ -241,11 +249,28 @@ function readRoomMode(value: unknown, fallback: RoomMode): RoomMode {
   return value === 'collaborative' || value === 'independent' ? value : fallback
 }
 
+function markChatRead(store: OpenTeamStore, chat: GroupChat): void {
+  store.viewState ??= { chatReadSeqById: {}, chatHasNewMessageById: {} }
+  store.viewState.chatReadSeqById ??= {}
+  store.viewState.chatHasNewMessageById ??= {}
+  store.viewState.chatReadSeqById[chat.id] = chat.nextMessageSeq - 1
+  delete store.viewState.chatHasNewMessageById[chat.id]
+}
+
+function markChatHasNewMessage(store: OpenTeamStore, chat: GroupChat): void {
+  if (store.currentChatId === chat.id) return
+  store.viewState ??= { chatReadSeqById: {}, chatHasNewMessageById: {} }
+  store.viewState.chatHasNewMessageById ??= {}
+  store.viewState.chatHasNewMessageById[chat.id] = true
+}
+
 function createChat(store: OpenTeamStore, message: RuntimeMessage, timestamp: number): GroupChat {
   const name = typeof message.name === 'string' && message.name.trim() ? message.name.trim() : '新群聊'
+  const description = readOptionalString(message.description)
   const chat: GroupChat = {
     id: newId('chat'),
     name,
+    ...(description ? { description } : {}),
     mode: readRoomMode(message.mode, store.settings.defaultMode),
     roleIds: [],
     messageIds: [],
@@ -291,7 +316,48 @@ async function handleChatSwitch(message: RuntimeMessage) {
   const { store } = await mutateStore(store => {
     const chat = requireChat(store, message.chatId)
     store.currentChatId = chat.id
+    markChatRead(store, chat)
     chat.updatedAt = now()
+  })
+  await broadcastStoreUpdated(store)
+  return { ok: true, store }
+}
+
+async function handleChatUpdate(message: RuntimeMessage) {
+  const patch = isRecord(message.patch) ? message.patch : message
+  const timestamp = now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, message.chatId)
+    const patchKeys: string[] = []
+
+    if (patch.name !== undefined) {
+      const name = requireString(patch.name, '群聊名称不能为空')
+      chat.name = name
+      patchKeys.push('name')
+    }
+
+    if (patch.description !== undefined) {
+      const description = readOptionalString(patch.description)
+      if (description) {
+        chat.description = description
+      } else {
+        delete chat.description
+      }
+      patchKeys.push('description')
+    }
+
+    chat.updatedAt = timestamp
+    return { chat, patchKeys }
+  })
+  log.info('chat-update:stored', { chatId: result.chat.id, patchKeys: result.patchKeys })
+  await broadcastStoreUpdated(store)
+  return { ok: true, chat: result.chat, store }
+}
+
+async function handleChatMarkRead(message: RuntimeMessage) {
+  const { store } = await mutateStore(store => {
+    const chat = requireChat(store, message.chatId)
+    markChatRead(store, chat)
   })
   await broadcastStoreUpdated(store)
   return { ok: true, store }
@@ -299,49 +365,89 @@ async function handleChatSwitch(message: RuntimeMessage) {
 
 async function handleRoleTemplateCreate(message: RuntimeMessage) {
   const { store, result } = await mutateStore(store => createRoleTemplate(store, {
-    name: requireString(message.name, '模板名称不能为空'),
+    name: requireString(message.name, '人员名称不能为空'),
     description: readOptionalString(message.description),
     systemPrompt: readOptionalString(message.systemPrompt),
   }, newId('template'), now()))
+  log.info('role-template:create', { templateId: result.id, nameLength: result.name.length, personaLength: result.systemPrompt.length })
   await broadcastStoreUpdated(store)
   return { ok: true, template: result, store }
 }
 
 async function handleRoleTemplateUpdate(message: RuntimeMessage) {
+  const patch = isRecord(message.patch) ? message.patch : message
   const { store, result } = await mutateStore(store => updateRoleTemplate(store, requireString(message.templateId, '缺少模板 ID'), {
-    name: requireString(message.name, '模板名称不能为空'),
-    description: readOptionalString(message.description),
-    systemPrompt: readOptionalString(message.systemPrompt),
+    name: requireString(patch.name, '人员名称不能为空'),
+    description: readOptionalString(patch.description),
+    systemPrompt: readOptionalString(patch.systemPrompt),
   }, now()))
+  log.info('role-template:update', { templateId: result.id, patchKeys: ['name', 'description', 'systemPrompt'], personaLength: result.systemPrompt.length })
   await broadcastStoreUpdated(store)
   return { ok: true, template: result, store }
 }
 
 async function handleRoleTemplateDelete(message: RuntimeMessage) {
-  const { store } = await mutateStore(store => deleteRoleTemplate(store, requireString(message.templateId, '缺少模板 ID')))
+  const templateId = requireString(message.templateId, '缺少模板 ID')
+  const { store } = await mutateStore(store => {
+    const usage = getRoleTemplateUsage(store, templateId)
+    if (usage.usedByChatIds.length > 0) {
+      log.warn('role-template:delete-denied', { templateId, usedByChatCount: usage.usedByChatIds.length })
+    }
+    deleteRoleTemplate(store, templateId)
+  })
+  log.warn('role-template:delete', { templateId })
   await broadcastStoreUpdated(store)
   return { ok: true, store }
 }
 
 async function handleRoleCreate(message: RuntimeMessage) {
   const timestamp = now()
+  const chatId = requireString(message.chatId, '缺少群聊 ID')
+  const templateId = readOptionalString(message.roleTemplateId) ?? readOptionalString(message.templateId)
   const { store, result } = await mutateStore(store => createGroupRole(store, {
-    chatId: requireString(message.chatId, '缺少群聊 ID'),
-    templateId: readOptionalString(message.roleTemplateId) ?? readOptionalString(message.templateId),
+    chatId,
+    templateId,
     name: readOptionalString(message.name),
     description: readOptionalString(message.description),
     systemPrompt: readOptionalString(message.systemPrompt),
+    avatarColor: readOptionalString(message.avatarColor),
   }, newId('role'), timestamp))
+  log.info('role-create:stored', { chatId, roleId: result.id, source: templateId ? 'library' : 'temporary' })
   await broadcastStoreUpdated(store)
   return { ok: true, role: result, store }
 }
 
+async function handleRolesCreateBatch(message: RuntimeMessage) {
+  const chatId = requireString(message.chatId, '缺少群聊 ID')
+  const rawItems = Array.isArray(message.items) ? message.items : []
+  log.info('role-create-batch:start', { chatId, itemCount: rawItems.length, source: getRawBatchSource(rawItems) })
+
+  try {
+    const items = rawItems.map(readGroupRoleBatchItem)
+    const timestamp = now()
+    const { store, result } = await mutateStore(store => createGroupRolesBatch(store, chatId, items, () => newId('role'), timestamp))
+    log.info('role-create-batch:stored', {
+      chatId,
+      roleIds: result.map(role => role.id),
+      templateIds: result.map(role => role.templateId).filter(Boolean),
+      itemCount: result.length,
+      source: getBatchSource(items),
+    })
+    await broadcastStoreUpdated(store)
+    return { ok: true, roles: result, store }
+  } catch (error) {
+    log.warn('role-create-batch:failed', { chatId, itemCount: rawItems.length, source: getRawBatchSource(rawItems), error: error instanceof Error ? error.message : String(error) })
+    throw error
+  }
+}
+
 async function handleRoleUpdate(message: RuntimeMessage) {
   const patch = isRecord(message.patch) ? message.patch : message
-  const { store, result } = await mutateStore(store => updateGroupRole(store, requireString(message.roleId, '缺少角色 ID'), {
+  const { store, result } = await mutateStore(store => updateGroupRole(store, requireString(message.roleId, '缺少人员 ID'), {
     name: readOptionalString(patch.name),
     description: readOptionalString(patch.description),
     systemPrompt: readOptionalString(patch.systemPrompt),
+    avatarColor: readOptionalString(patch.avatarColor),
   }, now()))
   await broadcastStoreUpdated(store)
   return { ok: true, role: result, store }
@@ -365,17 +471,17 @@ async function handleRoleRecover(message: RuntimeMessage) {
 
 async function handleRoleReinitialize(message: RuntimeMessage) {
   const chatId = requireString(message.chatId, '缺少群聊 ID')
-  const roleId = requireString(message.roleId, '缺少角色 ID')
+  const roleId = requireString(message.roleId, '缺少人员 ID')
   const binding = runtimeFrames.getByRole(chatId, roleId)
   log.info('role-reinitialize:start', { chatId, roleId, binding })
-  if (!binding?.ready) throw new Error('角色 iframe 尚未就绪，请先恢复角色')
+  if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，请先恢复人员')
 
   const timestamp = now()
   const { store, result } = await mutateStore(store => {
     const chat = requireChat(store, chatId)
     const role = requireRole(store, chat.id, roleId)
     const roles = getChatRoles(store, chat)
-    if (role.status !== 'ready') throw new Error(`角色不可用：${role.name}`)
+    if (role.status !== 'ready') throw new Error(`人员不可用：${role.name}`)
 
     const messageId = newId('init')
     role.status = 'thinking'
@@ -395,6 +501,7 @@ async function handleRoleReinitialize(message: RuntimeMessage) {
           roleId,
           messageId,
           content: buildReinitPrompt(chat, role, roles),
+          includesPersona: true,
         },
       },
     }
@@ -417,13 +524,15 @@ async function handleMessageSend(message: RuntimeMessage) {
   const chatId = requireString(message.chatId, '缺少群聊 ID')
   const raw = requireString(message.raw, '消息内容不能为空')
   const timestamp = now()
+  log.info('message-send:start', { chatId, rawLength: raw.length })
 
   const { store, result } = await mutateStore(store => {
     const chat = requireChat(store, chatId)
     const roles = getChatRoles(store, chat)
     const parsed = parseGroupMentions(raw, roles)
     if (!parsed.ok) throw new Error(parsed.error)
-    if (parsed.targetRoleIds.length === 0) throw new Error('当前群聊没有可投递角色')
+    if (parsed.targetRoleIds.length === 0) throw new Error('当前群聊没有可投递人员')
+    log.debug('message-send:parsed-targets', { chatId: chat.id, targetRoleIds: parsed.targetRoleIds })
 
     const targetRoles = parsed.targetRoleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
     const unavailable = targetRoles.filter(role => !isRoleDeliverable(role, runtimeFrames.getByRole(chat.id, role.id), timestamp))
@@ -440,7 +549,7 @@ async function handleMessageSend(message: RuntimeMessage) {
           binding: runtimeFrames.getByRole(chat.id, role.id),
         })),
       })
-      throw new Error(`以下角色不可用，请等待或恢复：${unavailable.map(role => role.name).join('、')}`)
+      throw new Error(`以下人员不可用，请等待或恢复：${unavailable.map(role => role.name).join('、')}`)
     }
 
     for (const role of targetRoles) recoverDeliverableRoleStatus(role, timestamp)
@@ -462,6 +571,7 @@ async function handleMessageSend(message: RuntimeMessage) {
     store.messagesById[userMessage.id] = userMessage
     chat.messageIds.push(userMessage.id)
     chat.nextMessageSeq += 1
+    log.info('message-send:stored', { chatId: chat.id, messageId: userMessage.id, targetCount: parsed.targetRoleIds.length })
     chat.status = 'running'
     chat.updatedAt = timestamp
 
@@ -470,7 +580,11 @@ async function handleMessageSend(message: RuntimeMessage) {
       const role = requireRole(store, chat.id, roleId)
       const binding = runtimeFrames.getByRole(chat.id, role.id)!
       const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
-      const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference })
+      const includesPersona = shouldIncludePersonaForPrompt(role)
+      const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
+      if (!includesPersona) {
+        log.debug('prompt:persona-skipped', { chatId: chat.id, roleId: role.id, messageId: userMessage.id, conversationUrlPresent: Boolean(role.geminiConversationUrl) })
+      }
 
       role.status = 'thinking'
       role.lastPromptMessageId = userMessage.id
@@ -480,7 +594,7 @@ async function handleMessageSend(message: RuntimeMessage) {
         roleId,
         tabId: binding.tabId,
         frameId: binding.frameId,
-        message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, content },
+        message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, content, includesPersona },
       }
     })
 
@@ -533,7 +647,7 @@ async function handleFrameRoleReady(message: RuntimeMessage, sender: chrome.runt
   rememberHost(sender, tabId)
 
   const chatId = requireString(message.chatId, '缺少群聊 ID')
-  const roleId = requireString(message.roleId, '缺少角色 ID')
+  const roleId = requireString(message.roleId, '缺少人员 ID')
   const frameId = senderFrameId(sender)
   const timestamp = now()
   log.info('frame-ready:received', {
@@ -603,7 +717,7 @@ async function handleSendAck(message: RuntimeMessage, sender: chrome.runtime.Mes
 
 async function handleRoleStatus(message: RuntimeMessage, sender: chrome.runtime.MessageSender) {
   const mappedStatus = mapRuntimeRoleStatus(message.status)
-  if (!mappedStatus) return { ok: false, error: '未知角色状态' }
+  if (!mappedStatus) return { ok: false, error: '未知人员状态' }
 
   const identity = readIdentity(message, sender)
   const timestamp = now()
@@ -658,6 +772,7 @@ async function handleRoleReply(message: RuntimeMessage, sender: chrome.runtime.M
     store.messagesById[reply.id] = reply
     chat.messageIds.push(reply.id)
     chat.nextMessageSeq += 1
+    markChatHasNewMessage(store, chat)
 
     if (promptMessageId) {
       const userMessage = store.messagesById[promptMessageId]
@@ -676,13 +791,14 @@ async function handleRoleReply(message: RuntimeMessage, sender: chrome.runtime.M
     return reply
   })
 
+  log.info('role-reply:stored', { chatId: result.chatId, roleId: result.roleId, replyMessageId: result.id })
   await broadcastStoreUpdated(store)
   return { ok: true, message: result, store }
 }
 
 async function handleRoleError(message: RuntimeMessage, sender: chrome.runtime.MessageSender) {
   const identity = readIdentity(message, sender)
-  const reason = readOptionalString(message.reason) ?? readOptionalString(message.error) ?? '角色执行失败'
+  const reason = readOptionalString(message.reason) ?? readOptionalString(message.error) ?? '人员执行失败'
   const promptMessageId = readOptionalString(message.messageId)
   log.warn('role-error:received', { ...identity, promptMessageId, reason, senderUrl: sender.url, tabId: messageTabId(message, sender), frameId: senderFrameId(sender) })
 
@@ -795,6 +911,42 @@ function legacyStatus(status: GroupRole['status']): string {
   return 'error'
 }
 
+function readGroupRoleBatchItem(value: unknown): Parameters<typeof createGroupRolesBatch>[2][number] {
+  if (!isRecord(value)) throw new Error('添加人员项无效')
+
+  if (value.source === 'library') {
+    return {
+      source: 'library',
+      roleTemplateId: requireString(value.roleTemplateId ?? value.templateId, '缺少人员库 ID'),
+      avatarColor: readOptionalString(value.avatarColor),
+    }
+  }
+
+  if (value.source === 'temporary') {
+    return {
+      source: 'temporary',
+      name: requireString(value.name, '人员名称不能为空'),
+      description: readOptionalString(value.description),
+      systemPrompt: requireString(value.systemPrompt, '人设不能为空'),
+      avatarColor: readOptionalString(value.avatarColor),
+    }
+  }
+
+  throw new Error('添加人员来源无效')
+}
+
+function getBatchSource(items: Parameters<typeof createGroupRolesBatch>[2]): 'library' | 'temporary' | 'mixed' {
+  const sources = new Set(items.map(item => item.source))
+  if (sources.size === 1) return items[0]?.source ?? 'mixed'
+  return 'mixed'
+}
+
+function getRawBatchSource(items: unknown[]): 'library' | 'temporary' | 'mixed' {
+  const sources = new Set(items.map(item => (isRecord(item) && (item.source === 'library' || item.source === 'temporary')) ? item.source : 'mixed'))
+  if (sources.size === 1) return sources.values().next().value as 'library' | 'temporary' | 'mixed'
+  return 'mixed'
+}
+
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() || undefined : undefined
 }
@@ -844,6 +996,10 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         return handleChatCreate(message)
       case 'GROUP_CHAT_SWITCH':
         return handleChatSwitch(message)
+      case 'GROUP_CHAT_UPDATE':
+        return handleChatUpdate(message)
+      case 'GROUP_CHAT_MARK_READ':
+        return handleChatMarkRead(message)
       case 'ROLE_TEMPLATE_CREATE':
         return handleRoleTemplateCreate(message)
       case 'ROLE_TEMPLATE_UPDATE':
@@ -852,10 +1008,12 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         return handleRoleTemplateDelete(message)
       case 'GROUP_ROLE_CREATE':
         return handleRoleCreate(message)
+      case 'GROUP_ROLES_CREATE_BATCH':
+        return handleRolesCreateBatch(message)
       case 'GROUP_ROLE_UPDATE':
         return handleRoleUpdate(message)
       case 'GROUP_ROLE_DELETE':
-        return mutateStore(store => deleteGroupRole(store, requireString(message.roleId, '缺少角色 ID'), now())).then(async result => {
+        return mutateStore(store => deleteGroupRole(store, requireString(message.roleId, '缺少人员 ID'), now())).then(async result => {
           await broadcastStoreUpdated(result.store)
           return { ok: true, store: result.store }
         })

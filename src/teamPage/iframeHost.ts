@@ -26,10 +26,19 @@ export interface RoleFrameState {
   lastAssignedAt?: number
 }
 
+export interface ChatFrameGroupState {
+  chatId: string
+  active: boolean
+  roleIds: string[]
+}
+
 export type IframeHostEvent =
   | { type: 'chat-activated'; chatId: string }
-  | { type: 'chat-hidden'; chatId: string }
-  | { type: 'role-created'; chatId: string; roleId: string; iframe: HTMLIFrameElement }
+  | { type: 'group-created'; chatId: string; group: HTMLElement }
+  | { type: 'group-highlighted'; chatId: string }
+  | { type: 'group-preserved'; chatId: string }
+  | { type: 'role-created'; chatId: string; roleId: string; iframe: HTMLIFrameElement; srcKind: 'conversation' | 'gemini-home' }
+  | { type: 'role-reused'; chatId: string; roleId: string; iframe: HTMLIFrameElement }
   | { type: 'role-recovered'; chatId: string; roleId: string; iframe: HTMLIFrameElement }
   | { type: 'role-assigned'; chatId: string; roleId: string; attempts: number }
   | { type: 'role-ready'; chatId: string; roleId: string }
@@ -61,11 +70,11 @@ const DEFAULT_ASSIGN_INTERVAL_MS = 1000
 
 export class IframeHost {
   private readonly visibleHost: HTMLElement
-  private readonly hiddenHost: HTMLElement
   private readonly document: Document
   private readonly window: Window
   private readonly assignIntervalMs: number
   private readonly onEvent?: (event: IframeHostEvent) => void
+  private readonly groupsByChatId = new Map<string, HTMLElement>()
   private readonly framesByRoleKey = new Map<string, RoleFrameRecord>()
   private activeChatId?: string
   private hostTabId?: number
@@ -78,7 +87,8 @@ export class IframeHost {
     this.assignIntervalMs = options.assignIntervalMs ?? DEFAULT_ASSIGN_INTERVAL_MS
     this.hostTabId = options.hostTabId
     this.onEvent = options.onEvent
-    this.hiddenHost = options.hiddenHost ?? this.createHiddenHost()
+    this.visibleHost.dataset.openteamIframeHost = 'true'
+    options.hiddenHost?.remove()
   }
 
   setHostTabId(hostTabId: number | undefined): void {
@@ -94,10 +104,7 @@ export class IframeHost {
   }
 
   isChatActivated(chatId: string): boolean {
-    for (const record of this.framesByRoleKey.values()) {
-      if (record.chatId === chatId) return true
-    }
-    return false
+    return this.groupsByChatId.has(chatId)
   }
 
   hasRoleFrame(chatId: string, roleId: string): boolean {
@@ -108,6 +115,21 @@ export class IframeHost {
     return this.framesByRoleKey.get(roleKey(chatId, roleId))?.iframe
   }
 
+  getChatGroup(chatId: string): HTMLElement | undefined {
+    return this.groupsByChatId.get(chatId)
+  }
+
+  listChatGroups(): ChatFrameGroupState[] {
+    return [...this.groupsByChatId.values()].map(group => {
+      const chatId = group.dataset.chatId ?? ''
+      return {
+        chatId,
+        active: this.isChatActive(chatId),
+        roleIds: [...group.querySelectorAll<HTMLIFrameElement>('iframe[data-role-id]')].map(iframe => iframe.dataset.roleId ?? '').filter(Boolean),
+      }
+    })
+  }
+
   getChatState(chatId: string): RoleFrameState[] {
     return [...this.framesByRoleKey.values()]
       .filter(record => record.chatId === chatId)
@@ -116,36 +138,42 @@ export class IframeHost {
 
   activateChat(chat: IframeHostChat, roles: IframeHostRole[]): RoleFrameState[] {
     this.assertNotDisposed()
-    if (this.activeChatId && this.activeChatId !== chat.id) this.hideActiveChat()
+    const group = this.getOrCreateChatGroup(chat.id)
     this.activeChatId = chat.id
 
     const chatRoleIds = new Set(chat.roleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
-        this.ensureRoleFrame(role)
+        const record = this.ensureRoleFrame(role)
+        this.mountRole(record, group)
       }
     }
 
-    this.mountChat(chat.id, this.visibleHost)
+    this.highlightChatGroup(chat.id)
+    this.preserveOtherChatGroups(chat.id)
     this.emit({ type: 'chat-activated', chatId: chat.id })
     return this.getChatState(chat.id)
   }
 
   restoreChat(chat: IframeHostChat, roles: IframeHostRole[]): RoleFrameState[] {
     this.assertNotDisposed()
+    const group = this.getOrCreateChatGroup(chat.id)
     const chatRoleIds = new Set(chat.roleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
-        this.ensureRoleFrame(role)
+        const record = this.ensureRoleFrame(role)
+        this.mountRole(record, group)
       }
     }
 
-    this.mountChat(chat.id, this.isChatActive(chat.id) ? this.visibleHost : this.hiddenHost)
+    if (this.isChatActive(chat.id)) this.highlightChatGroup(chat.id)
+    else this.preserveChatGroup(chat.id)
     return this.getChatState(chat.id)
   }
 
   recoverRole(role: IframeHostRole): RoleFrameState {
     this.assertNotDisposed()
+    const group = this.getOrCreateChatGroup(role.chatId)
     const key = roleKey(role.chatId, role.id)
     const existing = this.framesByRoleKey.get(key)
     if (existing) {
@@ -155,7 +183,7 @@ export class IframeHost {
     }
 
     const record = this.createRoleFrame(role)
-    this.mountRole(record, this.isChatActive(role.chatId) ? this.visibleHost : this.hiddenHost)
+    this.mountRole(record, group)
     this.emit({ type: 'role-recovered', chatId: role.chatId, roleId: role.id, iframe: record.iframe })
     return this.toState(record)
   }
@@ -173,9 +201,8 @@ export class IframeHost {
     if (!this.activeChatId) return
 
     const chatId = this.activeChatId
-    this.mountChat(chatId, this.hiddenHost)
     this.activeChatId = undefined
-    this.emit({ type: 'chat-hidden', chatId })
+    this.preserveChatGroup(chatId)
   }
 
   dispose(): void {
@@ -187,7 +214,8 @@ export class IframeHost {
       this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
     }
     this.framesByRoleKey.clear()
-    this.hiddenHost.remove()
+    for (const group of this.groupsByChatId.values()) group.remove()
+    this.groupsByChatId.clear()
     this.activeChatId = undefined
     this.disposed = true
     this.emit({ type: 'disposed' })
@@ -196,7 +224,10 @@ export class IframeHost {
   private ensureRoleFrame(role: IframeHostRole): RoleFrameRecord {
     const key = roleKey(role.chatId, role.id)
     const existing = this.framesByRoleKey.get(key)
-    if (existing) return existing
+    if (existing) {
+      this.emit({ type: 'role-reused', chatId: role.chatId, roleId: role.id, iframe: existing.iframe })
+      return existing
+    }
     return this.createRoleFrame(role)
   }
 
@@ -209,6 +240,7 @@ export class IframeHost {
     iframe.allow = GEMINI_IFRAME_ALLOW
     iframe.dataset.chatId = role.chatId
     iframe.dataset.roleId = role.id
+    iframe.dataset.roleKey = roleKey(role.chatId, role.id)
     iframe.setAttribute('user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     iframe.setAttribute('accept-language', 'zh-CN,zh;q=0.9,en;q=0.8')
     iframe.setAttribute('sec-ch-ua', '"Chromium";v="122", "Google Chrome";v="122"')
@@ -227,18 +259,60 @@ export class IframeHost {
     iframe.addEventListener('load', () => this.startAssignLoop(record))
     this.framesByRoleKey.set(roleKey(role.chatId, role.id), record)
     this.startAssignLoop(record)
-    this.emit({ type: 'role-created', chatId: role.chatId, roleId: role.id, iframe })
+    this.emit({
+      type: 'role-created',
+      chatId: role.chatId,
+      roleId: role.id,
+      iframe,
+      srcKind: src === 'https://gemini.google.com/' ? 'gemini-home' : 'conversation',
+    })
     return record
   }
 
-  private mountChat(chatId: string, host: HTMLElement): void {
-    for (const record of this.framesByRoleKey.values()) {
-      if (record.chatId === chatId) this.mountRole(record, host)
+  private getOrCreateChatGroup(chatId: string): HTMLElement {
+    const existing = this.groupsByChatId.get(chatId)
+    if (existing) return existing
+
+    const group = this.document.createElement('section')
+    group.className = 'chat-frame-group'
+    group.dataset.chatFrameGroup = 'true'
+    group.dataset.chatId = chatId
+    group.dataset.backgroundChat = 'true'
+    group.setAttribute('aria-label', `Gemini iframe group for ${chatId}`)
+    this.visibleHost.append(group)
+    this.groupsByChatId.set(chatId, group)
+    this.emit({ type: 'group-created', chatId, group })
+    return group
+  }
+
+  private highlightChatGroup(chatId: string): void {
+    const group = this.getOrCreateChatGroup(chatId)
+    group.classList.add('active')
+    group.classList.remove('background')
+    group.dataset.activeChat = 'true'
+    delete group.dataset.backgroundChat
+    this.emit({ type: 'group-highlighted', chatId })
+  }
+
+  private preserveOtherChatGroups(activeChatId: string): void {
+    for (const chatId of this.groupsByChatId.keys()) {
+      if (chatId !== activeChatId) this.preserveChatGroup(chatId)
     }
   }
 
-  private mountRole(record: RoleFrameRecord, host: HTMLElement): void {
-    if (record.iframe.parentElement !== host) host.append(record.iframe)
+  private preserveChatGroup(chatId: string): void {
+    const group = this.groupsByChatId.get(chatId)
+    if (!group) return
+
+    group.classList.remove('active')
+    group.classList.add('background')
+    delete group.dataset.activeChat
+    group.dataset.backgroundChat = 'true'
+    this.emit({ type: 'group-preserved', chatId })
+  }
+
+  private mountRole(record: RoleFrameRecord, group: HTMLElement): void {
+    if (record.iframe.parentElement !== group) group.append(record.iframe)
   }
 
   private startAssignLoop(record: RoleFrameRecord): void {
@@ -266,24 +340,6 @@ export class IframeHost {
       hostTabId: this.hostTabId,
     } satisfies FrameAssignmentMessage, 'https://gemini.google.com')
     this.emit({ type: 'role-assigned', chatId: record.chatId, roleId: record.roleId, attempts: record.assignmentAttempts })
-  }
-
-  private createHiddenHost(): HTMLElement {
-    const host = this.document.createElement('div')
-    host.className = 'iframe-host'
-    host.dataset.openteamIframeHiddenHost = 'true'
-    host.setAttribute('aria-hidden', 'true')
-    host.style.position = 'fixed'
-    host.style.left = '-10000px'
-    host.style.top = '0'
-    host.style.width = '420px'
-    host.style.height = '720px'
-    host.style.overflow = 'hidden'
-    host.style.opacity = '0'
-    host.style.pointerEvents = 'none'
-    host.style.zIndex = '-1'
-    this.visibleHost.after(host)
-    return host
   }
 
   private toState(record: RoleFrameRecord): RoleFrameState {

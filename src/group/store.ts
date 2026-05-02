@@ -20,6 +20,10 @@ export function createDefaultStore(): OpenTeamStore {
     roleTemplateOrder: [],
     roleTemplatesById: {},
     settings: { ...DEFAULT_SETTINGS },
+    viewState: {
+      chatReadSeqById: {},
+      chatHasNewMessageById: {},
+    },
   }
 }
 
@@ -65,6 +69,7 @@ function normalizeStore(raw: unknown): OpenTeamStore {
     roleTemplateOrder: readStringArray(raw.roleTemplateOrder, defaults.roleTemplateOrder),
     roleTemplatesById: readRecord(raw.roleTemplatesById),
     settings: normalizeSettings(raw.settings),
+    viewState: normalizeViewState(raw.viewState),
   }
 
   if (typeof raw.currentChatId === 'string') {
@@ -85,6 +90,17 @@ function normalizeSettings(raw: unknown): OpenTeamSettings {
   }
 }
 
+function normalizeViewState(raw: unknown): NonNullable<OpenTeamStore['viewState']> {
+  if (!isRecord(raw)) {
+    return { chatReadSeqById: {}, chatHasNewMessageById: {} }
+  }
+
+  return {
+    chatReadSeqById: readNumberRecord(raw.chatReadSeqById),
+    chatHasNewMessageById: readBooleanRecord(raw.chatHasNewMessageById),
+  }
+}
+
 function readStringArray(raw: unknown, fallback: string[]): string[] {
   if (!Array.isArray(raw)) {
     return [...fallback]
@@ -99,6 +115,16 @@ function readRecord<T>(raw: unknown): Record<string, T> {
   }
 
   return raw as Record<string, T>
+}
+
+function readNumberRecord(raw: unknown): Record<string, number> {
+  if (!isRecord(raw)) return {}
+  return Object.fromEntries(Object.entries(raw).filter((entry): entry is [string, number] => typeof entry[1] === 'number'))
+}
+
+function readBooleanRecord(raw: unknown): Record<string, boolean> {
+  if (!isRecord(raw)) return {}
+  return Object.fromEntries(Object.entries(raw).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

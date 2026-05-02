@@ -505,11 +505,11 @@ function teamStatusLabel(role: TeamRole): string {
 function messageTitle(message: TeamMessage): string {
   if (message.from === 'user') {
     if (message.target === 'all') return '你 → all'
-    if (message.target === 'role') return `你 → ${message.targetRoleName || '角色'}`
+    if (message.target === 'role') return `你 → ${message.targetRoleName || '人员'}`
     return '你'
   }
 
-  if (message.from === 'role') return message.roleName || '角色'
+  if (message.from === 'role') return message.roleName || '人员'
   return '系统'
 }
 
@@ -784,9 +784,9 @@ function createTeamPanel(initialState: TeamRoomState) {
     const add = document.createElement('button')
     add.className = 'add'
     add.type = 'button'
-    add.textContent = '+ 角色'
+    add.textContent = '+ 人员'
     add.addEventListener('click', () => {
-      const name = window.prompt('角色名')
+      const name = window.prompt('人员名')
       if (!name?.trim()) return
       sendRuntimeMessage({ type: 'TEAM_CREATE_ROLE', name }).catch(error => console.warn('[OpenTeam] create role failed', error))
     })
@@ -837,7 +837,7 @@ function createTeamPanel(initialState: TeamRoomState) {
 
   function render(state: TeamRoomState): void {
     currentState = state
-    if (summaryEl) summaryEl.textContent = `${state.roles.length} 个角色 · ${state.messages.length} 条消息`
+    if (summaryEl) summaryEl.textContent = `${state.roles.length} 个人员 · ${state.messages.length} 条消息`
     renderRoles(state)
     renderMessages(state)
   }

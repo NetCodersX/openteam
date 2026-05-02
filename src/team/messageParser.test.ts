@@ -51,7 +51,7 @@ describe('parseTeamMention', () => {
   it('rejects an unknown role without falling back to another target', () => {
     expect(parseTeamMention('@Unknown hello', roles)).toEqual({
       ok: false,
-      error: '找不到角色：Unknown',
+      error: '找不到人员：Unknown',
     })
   })
 

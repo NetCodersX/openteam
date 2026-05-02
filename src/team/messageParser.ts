@@ -20,7 +20,7 @@ export function parseTeamMention(raw: string, roles: TeamRole[]): ParsedTeamMent
   }
 
   const role = roles.find(item => item.name === targetName)
-  if (!role) return { ok: false, error: `找不到角色：${targetName}` }
+  if (!role) return { ok: false, error: `找不到人员：${targetName}` }
 
   return {
     ok: true,

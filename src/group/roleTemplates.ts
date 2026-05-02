@@ -12,15 +12,31 @@ export interface GroupRoleInput {
   name?: string
   description?: string
   systemPrompt?: string
+  avatarColor?: string
 }
+
+export type GroupRoleBatchInput =
+  | {
+      source: 'library'
+      roleTemplateId: string
+      avatarColor?: string
+    }
+  | {
+      source: 'temporary'
+      name: string
+      description?: string
+      systemPrompt: string
+      avatarColor?: string
+    }
 
 export function validateRoleName(name: string, existingNames: string[] = []): string | undefined {
   const trimmed = name.trim()
-  if (!trimmed) return '角色名称不能为空'
-  if (/\s/.test(trimmed)) return '角色名称不能包含空白字符'
-  if (trimmed.includes('@')) return '角色名称不能包含 @'
-  if (trimmed.toLowerCase() === 'all') return '角色名称不能是 all'
-  if (existingNames.some(existingName => existingName.toLowerCase() === trimmed.toLowerCase())) return `角色名称已存在：${trimmed}`
+  if (!trimmed) return '人员名称不能为空'
+  if (countUserPerceivedCharacters(trimmed) > 10) return '人员名称不能超过 10 个字'
+  if (/\s/.test(trimmed)) return '人员名称不能包含空白字符'
+  if (trimmed.includes('@')) return '人员名称不能包含 @'
+  if (trimmed.toLowerCase() === 'all') return '人员名称不能是 all'
+  if (existingNames.some(existingName => existingName.toLowerCase() === trimmed.toLowerCase())) return `人员名称已存在：${trimmed}`
   return undefined
 }
 
@@ -41,10 +57,11 @@ export function createRoleTemplate(
   now: number,
 ): RoleTemplate {
   const name = assertValidRoleName(input.name, [])
+  const systemPrompt = assertValidSystemPrompt(input.systemPrompt)
   const template: RoleTemplate = {
     id,
     name,
-    systemPrompt: input.systemPrompt?.trim() ?? '',
+    systemPrompt,
     createdAt: now,
     updatedAt: now,
   }
@@ -64,10 +81,10 @@ export function updateRoleTemplate(
   now: number,
 ): RoleTemplate {
   const template = store.roleTemplatesById[templateId]
-  if (!template) throw new Error(`找不到角色模板：${templateId}`)
+  if (!template) throw new Error(`找不到人员库人员：${templateId}`)
 
   template.name = assertValidRoleName(patch.name, [])
-  template.systemPrompt = patch.systemPrompt?.trim() ?? ''
+  template.systemPrompt = assertValidSystemPrompt(patch.systemPrompt)
   template.updatedAt = now
 
   const description = patch.description?.trim()
@@ -81,8 +98,26 @@ export function updateRoleTemplate(
 }
 
 export function deleteRoleTemplate(store: OpenTeamStore, templateId: string): void {
+  const usage = getRoleTemplateUsage(store, templateId)
+  if (usage.usedByChatIds.length > 0) {
+    throw new Error('该人员库人员已被群聊使用，不能删除')
+  }
+
   delete store.roleTemplatesById[templateId]
   store.roleTemplateOrder = store.roleTemplateOrder.filter(id => id !== templateId)
+}
+
+export function getRoleTemplateUsage(store: OpenTeamStore, templateId: string): { usedByRoleIds: string[]; usedByChatIds: string[] } {
+  const usedByRoleIds: string[] = []
+  const usedByChatIds = new Set<string>()
+
+  for (const role of Object.values(store.rolesById)) {
+    if (role.templateId !== templateId) continue
+    usedByRoleIds.push(role.id)
+    usedByChatIds.add(role.chatId)
+  }
+
+  return { usedByRoleIds, usedByChatIds: [...usedByChatIds] }
 }
 
 export function createGroupRole(
@@ -95,7 +130,7 @@ export function createGroupRole(
   if (!chat) throw new Error(`找不到群聊：${input.chatId}`)
 
   const template = input.templateId ? store.roleTemplatesById[input.templateId] : undefined
-  if (input.templateId && !template) throw new Error(`找不到角色模板：${input.templateId}`)
+  if (input.templateId && !template) throw new Error(`找不到人员库人员：${input.templateId}`)
 
   const name = assertValidRoleName(input.name ?? template?.name ?? '', getChatRoles(store, chat))
   const role: GroupRole = {
@@ -114,7 +149,11 @@ export function createGroupRole(
   if (description) role.description = description
 
   const systemPrompt = (input.systemPrompt ?? template?.systemPrompt)?.trim()
-  if (systemPrompt) role.systemPrompt = systemPrompt
+  if (!systemPrompt) throw new Error('人设不能为空')
+  role.systemPrompt = systemPrompt
+
+  const avatarColor = input.avatarColor?.trim()
+  if (avatarColor) role.avatarColor = avatarColor
 
   store.rolesById[id] = role
   chat.roleIds.push(id)
@@ -129,7 +168,7 @@ export function updateGroupRole(
   now: number,
 ): GroupRole {
   const role = store.rolesById[roleId]
-  if (!role) throw new Error(`找不到角色：${roleId}`)
+  if (!role) throw new Error(`找不到人员：${roleId}`)
 
   const chat = store.chatsById[role.chatId]
   if (!chat) throw new Error(`找不到群聊：${role.chatId}`)
@@ -143,12 +182,13 @@ export function updateGroupRole(
       delete role.description
     }
   }
-  if (patch.systemPrompt !== undefined) {
-    const systemPrompt = patch.systemPrompt.trim()
-    if (systemPrompt) {
-      role.systemPrompt = systemPrompt
+  if (patch.systemPrompt !== undefined) throw new Error('群聊内人员人设不可编辑')
+  if (patch.avatarColor !== undefined) {
+    const avatarColor = patch.avatarColor.trim()
+    if (avatarColor) {
+      role.avatarColor = avatarColor
     } else {
-      delete role.systemPrompt
+      delete role.avatarColor
     }
   }
 
@@ -167,6 +207,67 @@ export function deleteGroupRole(store: OpenTeamStore, roleId: string, now: numbe
     chat.updatedAt = now
   }
   delete store.rolesById[roleId]
+}
+
+export function createGroupRolesBatch(
+  store: OpenTeamStore,
+  chatId: string,
+  items: GroupRoleBatchInput[],
+  idFactory: () => string,
+  now: number,
+): GroupRole[] {
+  if (items.length === 0) throw new Error('添加人员列表不能为空')
+
+  const chat = store.chatsById[chatId]
+  if (!chat) throw new Error(`找不到群聊：${chatId}`)
+
+  const existingNames = getChatRoles(store, chat).map(role => role.name)
+  const prepared = items.map((item, index) => prepareBatchItem(store, item, index))
+  const names = [...existingNames]
+  for (const item of prepared) {
+    const error = validateRoleName(item.name, names)
+    if (error) throw new Error(error)
+    names.push(item.name)
+  }
+
+  return prepared.map(item => createGroupRole(store, { chatId, ...item }, idFactory(), now))
+}
+
+function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index: number): Omit<GroupRoleInput, 'chatId'> {
+  if (item.source === 'library') {
+    const template = store.roleTemplatesById[item.roleTemplateId]
+    if (!template) throw new Error(`找不到人员库人员：${item.roleTemplateId}`)
+    return {
+      templateId: item.roleTemplateId,
+      name: assertValidRoleName(template.name, []),
+      description: template.description,
+      systemPrompt: assertValidSystemPrompt(template.systemPrompt),
+      avatarColor: item.avatarColor,
+    }
+  }
+
+  if (item.source === 'temporary') {
+    return {
+      name: assertValidRoleName(item.name, []),
+      description: item.description,
+      systemPrompt: assertValidSystemPrompt(item.systemPrompt),
+      avatarColor: item.avatarColor,
+    }
+  }
+
+  throw new Error(`第 ${index + 1} 个添加项无效`)
+}
+
+function assertValidSystemPrompt(systemPrompt: string | undefined): string {
+  const trimmed = systemPrompt?.trim() ?? ''
+  if (!trimmed) throw new Error('人设不能为空')
+  return trimmed
+}
+
+function countUserPerceivedCharacters(value: string): number {
+  const Segmenter = Intl.Segmenter
+  if (!Segmenter) return [...value].length
+  return [...new Segmenter(undefined, { granularity: 'grapheme' }).segment(value)].length
 }
 
 function getChatRoles(store: OpenTeamStore, chat: GroupChat): GroupRole[] {

@@ -16,6 +16,12 @@ export interface OpenTeamStore {
   roleTemplateOrder: string[]
   roleTemplatesById: Record<string, RoleTemplate>
   settings: OpenTeamSettings
+  viewState?: OpenTeamViewState
+}
+
+export interface OpenTeamViewState {
+  chatReadSeqById?: Record<string, number>
+  chatHasNewMessageById?: Record<string, boolean>
 }
 
 export interface OpenTeamSettings {
@@ -26,6 +32,7 @@ export interface OpenTeamSettings {
 export interface GroupChat {
   id: string
   name: string
+  description?: string
   mode: RoomMode
   roleIds: string[]
   messageIds: string[]
@@ -51,6 +58,7 @@ export interface GroupRole {
   name: string
   description?: string
   systemPrompt?: string
+  avatarColor?: string
   status: RoleStatus
   contextCursor: number
   geminiConversationId?: string
