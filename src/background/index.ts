@@ -99,10 +99,11 @@ async function mutateStore<T>(mutator: (store: OpenTeamStore) => T | Promise<T>)
   })
 }
 
-async function broadcastStoreUpdated(store: OpenTeamStore): Promise<void> {
+async function broadcastStoreUpdated(store: OpenTeamStore, excludeTabId?: number): Promise<void> {
   const message = { type: 'GROUP_STORE_UPDATED', store }
 
   for (const tabId of [...hostTabIds]) {
+    if (tabId === excludeTabId) continue
     try {
       await chrome.tabs.sendMessage(tabId, message)
     } catch (error) {
@@ -312,14 +313,14 @@ async function handleChatCreate(message: RuntimeMessage) {
   return { ok: true, chat: result, store }
 }
 
-async function handleChatSwitch(message: RuntimeMessage) {
+async function handleChatSwitch(message: RuntimeMessage, sender: chrome.runtime.MessageSender) {
   const { store } = await mutateStore(store => {
     const chat = requireChat(store, message.chatId)
     store.currentChatId = chat.id
     markChatRead(store, chat)
     chat.updatedAt = now()
   })
-  await broadcastStoreUpdated(store)
+  await broadcastStoreUpdated(store, messageTabId(message, sender))
   return { ok: true, store }
 }
 
@@ -995,7 +996,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
       case 'GROUP_CHAT_CREATE':
         return handleChatCreate(message)
       case 'GROUP_CHAT_SWITCH':
-        return handleChatSwitch(message)
+        return handleChatSwitch(message, sender)
       case 'GROUP_CHAT_UPDATE':
         return handleChatUpdate(message)
       case 'GROUP_CHAT_MARK_READ':

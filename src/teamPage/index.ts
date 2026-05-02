@@ -2,7 +2,7 @@ import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStor
 import { createDefaultStore } from '../group/store'
 import { parseGroupMentions } from '../group/mentionParser'
 import { createIframeHost } from './iframeHost'
-import { getAvatarInitial, getVisibleThinkingRoles, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
+import { formatChatListTime, getAvatarInitial, getChatStartupNotice, getVisibleThinkingRoles, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
 import { renderMarkdown } from './markdown'
 
 interface RuntimeResponse<T = unknown> {
@@ -21,9 +21,10 @@ type StorePushMessage =
   | { type: 'TEAM_FRAME_ROLE_READY'; chatId: string; roleId: string; store?: OpenTeamStore }
 
 type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt'>
-type RolePatch = Pick<GroupRole, 'name' | 'description'>
+type CachedMessageNode = { signature: string; node: HTMLElement }
 
 const GEMINI_URL = 'https://gemini.google.com/'
+const MAX_CACHED_MESSAGE_NODES = 400
 
 let store: OpenTeamStore = createDefaultStore()
 let selectedChatId: string | undefined
@@ -34,8 +35,10 @@ let hostTabId: number | undefined
 let mentionIndex = 0
 let peopleDrawerOpen = false
 let chatMenuChatId: string | undefined
+let pendingSwitchAnimationFrame: number | undefined
 let thinkingTimeoutTimers: ReturnType<typeof window.setTimeout>[] = []
 const loggedThinkingTimeoutRoleIds = new Set<string>()
+const messageNodeCache = new Map<string, CachedMessageNode>()
 
 const appShellEl = requireElement<HTMLElement>('#app')
 const floatingDragHandleEl = requireElement<HTMLElement>('#floating-drag-handle')
@@ -60,10 +63,6 @@ const errorEl = requireElement<HTMLElement>('#error')
 const newChatNameEl = requireElement<HTMLInputElement>('#new-chat-name')
 const createChatFormEl = requireElement<HTMLFormElement>('#create-chat-form')
 const quickCreateChatEl = requireElement<HTMLButtonElement>('#quick-create-chat')
-const newRoleNameEl = requireElement<HTMLInputElement>('#new-role-name')
-const editRoleNameEl = requireElement<HTMLInputElement>('#edit-role-name')
-const editRoleDescriptionEl = requireElement<HTMLTextAreaElement>('#edit-role-description')
-const editRolePromptEl = requireElement<HTMLTextAreaElement>('#edit-role-prompt')
 const templateNameEl = requireElement<HTMLInputElement>('#template-name')
 const templateDescriptionEl = requireElement<HTMLTextAreaElement>('#template-description')
 const templatePromptEl = requireElement<HTMLTextAreaElement>('#template-prompt')
@@ -130,7 +129,10 @@ function sendRuntimeMessage<T>(type: string, payload: Record<string, unknown> = 
 async function runCommand(type: string, payload: Record<string, unknown> = {}): Promise<void> {
   const response = await sendRuntimeMessage(type, payload)
   if (response.ok === false) throw new Error(response.error || `${type} failed`)
-  if (response.store) applyStore(response.store)
+  if (response.store) {
+    applyStore(response.store)
+    return
+  }
   await refreshStore(false)
 }
 
@@ -205,13 +207,17 @@ function syncIframeHost(): void {
 }
 
 function render(): void {
+  renderSelectedChat()
+  renderTemplates()
+  renderAddPersonDialog()
+}
+
+function renderSelectedChat(): void {
   renderChatList()
   renderChatHeader()
   renderMessages()
   renderComposerState()
   renderRolePanel()
-  renderTemplates()
-  renderAddPersonDialog()
 }
 
 function renderChatList(): void {
@@ -229,11 +235,18 @@ function renderChatList(): void {
     const hasActivity = chat.id !== selectedChatId && Boolean(store.viewState?.chatHasNewMessageById?.[chat.id])
     item.className = `chat-item${chat.id === selectedChatId ? ' active' : ''}${hasActivity ? ' has-activity' : ''}`
 
+    const avatar = document.createElement('div')
+    avatar.className = `chat-avatar ${roleToneClass(chat.name)}`
+    avatar.textContent = roleAvatarLabel(chat.name)
+
+    const body = document.createElement('div')
+    body.className = 'chat-item-body'
+
     const row = document.createElement('div')
-    row.className = 'chat-row'
+    row.className = 'chat-row chat-item-title'
     const name = document.createElement('button')
     name.type = 'button'
-    name.className = 'chat-name btn btn-ghost'
+    name.className = 'chat-name'
     name.textContent = chat.name
     name.addEventListener('click', () => switchChat(chat.id))
     const menuButton = document.createElement('button')
@@ -246,16 +259,22 @@ function renderChatList(): void {
       chatMenuChatId = chatMenuChatId === chat.id ? undefined : chat.id
       renderChatList()
     })
-    row.append(name, menuButton)
+    row.append(name)
 
     const summary = document.createElement('div')
     summary.className = 'summary-line'
     summary.textContent = getChatRecentSummary(chat)
 
-    const meta = document.createElement('div')
-    meta.className = 'chat-row tiny'
-    meta.append(statusPill(chat.status, chatStatusLabel(chat.status)), textNode(`${chat.roleIds.length} 人员 · ${formatTime(chat.updatedAt)}`))
-    item.append(row, summary, meta)
+    body.append(row, summary)
+
+    const side = document.createElement('div')
+    side.className = 'chat-item-side'
+    const time = document.createElement('span')
+    time.className = 'chat-time'
+    time.textContent = formatChatListTime(chat.updatedAt)
+    side.append(time, menuButton)
+
+    item.append(avatar, body, side)
     if (chatMenuChatId === chat.id) item.append(chatActionMenu(chat))
     chatListEl.append(item)
   }
@@ -306,66 +325,97 @@ function renderChatHeader(): void {
 }
 
 function renderMessages(): void {
+  const chat = getCurrentChat()
   const messages = getCurrentMessages()
   messagesEl.replaceChildren()
 
-  if (!getCurrentChat()) {
+  if (!chat) {
     messagesEl.append(emptyCard('选择一个群聊', '左侧群聊列表会显示最近摘要、状态和更新时间。'))
     return
   }
 
   if (messages.length === 0) {
-    messagesEl.append(emptyCard('等待第一条消息', '唤醒人员后，在下方输入任务；无 @ 默认发送给全部人员。'))
+    const startupNotice = getChatStartupNotice(chat, getCurrentRoles())
+    messagesEl.append(startupNotice ? emptyCard(startupNotice.title, startupNotice.body) : emptyCard('等待第一条消息', '唤醒人员后，在下方输入任务；无 @ 默认发送给全部人员。'))
   }
 
-  for (const message of messages) {
-    const article = document.createElement('article')
-    article.className = `message ${message.type}`
-
-    const meta = document.createElement('div')
-    meta.className = 'message-meta tiny'
-    meta.append(textNode(messageTitle(message)), textNode(formatTime(message.createdAt)))
-
-    const body = document.createElement('div')
-    body.className = 'message-body markdown-body'
-    body.append(renderMarkdown(message.content))
-
-    if (message.type === 'system') {
-      article.append(meta, body)
-      messagesEl.append(article)
-      continue
-    }
-
-    const avatar = document.createElement('div')
-    avatar.className = `message-avatar ${messageToneClass(message)}`
-    avatar.textContent = messageAvatarLabel(message)
-
-    const content = document.createElement('div')
-    content.className = 'message-content'
-    content.append(meta, body)
-    if (message.references?.length) content.append(referenceBox(message.references[0]))
-
-    if (message.type === 'assistant') {
-      const tools = document.createElement('div')
-      tools.className = 'message-tools'
-      const quote = document.createElement('button')
-      quote.type = 'button'
-      quote.className = 'btn btn-ghost'
-      quote.textContent = '引用'
-      quote.addEventListener('click', () => setReference(message))
-      tools.append(quote)
-      content.append(tools)
-    }
-
-    article.append(avatar, content)
-    messagesEl.append(article)
-  }
+  for (const message of messages) messagesEl.append(renderMessageNode(message))
 
   for (const role of getVisibleThinkingRoles(getCurrentRoles())) {
     messagesEl.append(thinkingBubble(role))
   }
   scheduleThinkingTimeouts()
   messagesEl.scrollTop = messagesEl.scrollHeight
+}
+
+function renderMessageNode(message: GroupMessage): HTMLElement {
+  const signature = messageSignature(message)
+  const cached = messageNodeCache.get(message.id)
+  if (cached?.signature === signature) return cached.node
+
+  const article = document.createElement('article')
+  article.className = `message ${message.type}`
+
+  const meta = document.createElement('div')
+  meta.className = 'message-meta tiny'
+  meta.append(textNode(messageTitle(message)), textNode(formatTime(message.createdAt)))
+
+  const body = document.createElement('div')
+  body.className = 'message-body markdown-body'
+  body.append(renderMarkdown(message.content))
+
+  if (message.type === 'system') {
+    article.append(meta, body)
+    cacheMessageNode(message.id, signature, article)
+    return article
+  }
+
+  const avatar = document.createElement('div')
+  avatar.className = `message-avatar ${messageToneClass(message)}`
+  avatar.textContent = messageAvatarLabel(message)
+
+  const content = document.createElement('div')
+  content.className = 'message-content'
+  content.append(meta, body)
+  if (message.references?.length) content.append(referenceBox(message.references[0]))
+
+  if (message.type === 'assistant') {
+    const tools = document.createElement('div')
+    tools.className = 'message-tools'
+    const quote = document.createElement('button')
+    quote.type = 'button'
+    quote.className = 'btn btn-ghost'
+    quote.textContent = '引用'
+    quote.addEventListener('click', () => setReference(message))
+    tools.append(quote)
+    content.append(tools)
+  }
+
+  article.append(avatar, content)
+  cacheMessageNode(message.id, signature, article)
+  return article
+}
+
+function cacheMessageNode(messageId: string, signature: string, node: HTMLElement): void {
+  messageNodeCache.set(messageId, { signature, node })
+  while (messageNodeCache.size > MAX_CACHED_MESSAGE_NODES) {
+    const oldestMessageId = messageNodeCache.keys().next().value
+    if (!oldestMessageId) return
+    messageNodeCache.delete(oldestMessageId)
+  }
+}
+
+function messageSignature(message: GroupMessage): string {
+  return JSON.stringify({
+    type: message.type,
+    roleId: message.roleId,
+    roleName: message.roleName,
+    content: message.content,
+    createdAt: message.createdAt,
+    status: message.status,
+    references: message.references,
+    targetRoleIds: message.targetRoleIds,
+  })
 }
 
 function scheduleThinkingTimeouts(): void {
@@ -513,13 +563,6 @@ function renderRolePanel(): void {
   } else {
     for (const role of roles) roleListEl.append(roleCard(role))
   }
-
-  editRoleNameEl.value = selectedRole?.name ?? ''
-  editRoleDescriptionEl.value = selectedRole?.description ?? ''
-  editRolePromptEl.value = selectedRole?.systemPrompt ?? ''
-  editRoleNameEl.disabled = true
-  editRoleDescriptionEl.disabled = true
-  editRolePromptEl.disabled = true
 }
 
 function renderTemplates(): void {
@@ -711,15 +754,24 @@ function textNode(content: string): Text {
 }
 
 function switchChat(chatId: string): void {
+  if (chatId === selectedChatId) {
+    chatMenuChatId = undefined
+    renderChatList()
+    return
+  }
   selectedChatId = chatId
   selectedRoleId = undefined
   selectedReference = undefined
   peopleDrawerOpen = false
   chatMenuChatId = undefined
-  render()
-  runCommand('GROUP_CHAT_SWITCH', { chatId })
-    .then(() => runCommand('GROUP_CHAT_MARK_READ', { chatId }))
-    .catch(error => showError(error.message))
+  renderSelectedChat()
+  if (pendingSwitchAnimationFrame !== undefined) window.cancelAnimationFrame(pendingSwitchAnimationFrame)
+  pendingSwitchAnimationFrame = window.requestAnimationFrame(() => {
+    pendingSwitchAnimationFrame = undefined
+    if (selectedChatId !== chatId) return
+    runCommand('GROUP_CHAT_SWITCH', { chatId })
+      .catch(error => showError(error.message))
+  })
 }
 
 function setReference(message: GroupMessage): void {
@@ -835,13 +887,6 @@ async function addPeopleToCurrentChat(items: Record<string, unknown>[]): Promise
   if (!chat) return
   if (items.length === 0) throw new Error('请选择或填写要添加的人员')
   await runCommand('GROUP_ROLES_CREATE_BATCH', { chatId: chat.id, items })
-}
-
-function readRolePatch(): RolePatch {
-  return {
-    name: editRoleNameEl.value.trim(),
-    description: editRoleDescriptionEl.value.trim(),
-  }
 }
 
 function resetTemplateForm(): void {
@@ -1119,31 +1164,6 @@ function registerUi(): void {
         addPersonModalEl.hidden = true
       })
       .catch(error => showError(error.message))
-  })
-
-  requireElement<HTMLFormElement>('#role-editor').addEventListener('submit', event => {
-    event.preventDefault()
-    const chat = getCurrentChat()
-    const role = selectedRoleId ? store.rolesById[selectedRoleId] : undefined
-    if (!chat || !role) return
-    runCommand('GROUP_ROLE_UPDATE', { chatId: chat.id, roleId: role.id, patch: readRolePatch() }).catch(error => showError(error.message))
-  })
-
-  requireElement<HTMLButtonElement>('#recover-role').addEventListener('click', () => {
-    const chat = getCurrentChat()
-    const role = selectedRoleId ? store.rolesById[selectedRoleId] : undefined
-    if (!chat || !role) return
-    log.info('ui:recover-role', { chatId: chat.id, roleId: role.id, roleName: role.name, conversationUrl: role.geminiConversationUrl })
-    iframeHost.recoverRole(role)
-    runCommand('GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id }).catch(error => showError(error.message))
-  })
-
-  requireElement<HTMLButtonElement>('#initialize-role').addEventListener('click', () => {
-    const chat = getCurrentChat()
-    if (!chat || !selectedRoleId) return
-    const role = store.rolesById[selectedRoleId]
-    log.info('ui:reinitialize-role', { chatId: chat.id, roleId: selectedRoleId, roleName: role?.name, roleStatus: role?.status })
-    runCommand('GROUP_ROLE_REINITIALIZE', { chatId: chat.id, roleId: selectedRoleId }).catch(error => showError(error.message))
   })
 
   requireElement<HTMLFormElement>('#people-library-form').addEventListener('submit', event => {

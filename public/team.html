@@ -7,7 +7,7 @@
     <style>
       :root {
         color-scheme: dark;
-        --bg: #03070d;
+        --bg: #000000;
         --panel: rgba(9, 15, 24, 0.86);
         --panel-strong: rgba(14, 22, 34, 0.94);
         --panel-soft: rgba(20, 31, 44, 0.64);
@@ -40,36 +40,6 @@
         font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif;
       }
 
-      body::before,
-      body::after {
-        content: "";
-        position: fixed;
-        z-index: 1;
-        width: 300px;
-        height: 520px;
-        border: 1px solid rgba(100, 123, 143, 0.14);
-        border-radius: 14px;
-        background:
-          linear-gradient(rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0)),
-          repeating-linear-gradient(to bottom, transparent 0 38px, rgba(120, 147, 168, 0.06) 39px 45px),
-          rgba(12, 20, 30, 0.46);
-        filter: blur(0.2px);
-        opacity: 0.55;
-        pointer-events: none;
-      }
-
-      body::before {
-        left: 12px;
-        top: 98px;
-        box-shadow: 0 340px 0 rgba(12, 20, 30, 0.5);
-      }
-
-      body::after {
-        right: 12px;
-        top: 98px;
-        box-shadow: 0 340px 0 rgba(12, 20, 30, 0.5);
-      }
-
       button,
       input,
       textarea,
@@ -93,9 +63,7 @@
         border: 1px solid rgba(132, 153, 171, 0.24);
         border-radius: 18px;
         background:
-          radial-gradient(circle at 16% 4%, rgba(47, 216, 204, 0.13), transparent 28%),
-          radial-gradient(circle at 84% 12%, rgba(68, 106, 255, 0.12), transparent 30%),
-          linear-gradient(135deg, rgba(13, 22, 32, 0.94), rgba(4, 10, 17, 0.94));
+          linear-gradient(180deg, rgba(13, 24, 35, 0.98), rgba(6, 13, 21, 0.98));
         box-shadow: var(--shadow);
         transform: translate(-50%, -50%);
         overflow: hidden;
@@ -527,17 +495,21 @@
         min-height: 0;
         flex: 1;
         flex-direction: column;
-        gap: 10px;
+        gap: 0;
         overflow: auto;
-        padding: 14px 14px 18px;
+        padding: 10px 0 18px;
       }
 
       .chat-item {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
         width: 100%;
-        min-height: 62px;
-        border: 1px solid transparent;
-        border-radius: 8px;
-        padding: 12px 12px;
+        min-height: 0;
+        border: 0;
+        border-radius: 0;
+        padding: 12px 16px;
         background: transparent;
         color: var(--text);
         cursor: pointer;
@@ -545,14 +517,22 @@
         transition: 0.16s ease;
       }
 
-      .chat-item.has-activity .chat-name::before {
-        color: var(--warning);
+      .chat-item::after {
+        content: "";
+        grid-column: 2 / 4;
+        height: 1px;
+        margin-top: 2px;
+        background: rgba(132, 153, 171, 0.1);
+      }
+
+      .chat-item.has-activity {
+        background: rgba(248, 184, 78, 0.035);
       }
 
       .chat-menu-btn {
-        width: 26px;
-        height: 26px;
-        border-radius: 8px;
+        width: 22px;
+        height: 22px;
+        border-radius: 7px;
         color: var(--muted);
         opacity: 0;
       }
@@ -564,8 +544,9 @@
 
       .chat-action-menu {
         display: grid;
+        grid-column: 2 / 4;
         gap: 6px;
-        margin-top: 8px;
+        margin-top: -2px;
         border: 1px solid rgba(132, 153, 171, 0.18);
         border-radius: 8px;
         padding: 8px;
@@ -574,11 +555,9 @@
 
       .chat-item:hover,
       .chat-item.active {
-        border-color: rgba(47, 216, 204, 0.52);
         background:
-          linear-gradient(90deg, rgba(47, 216, 204, 0.12), rgba(47, 216, 204, 0.03)),
-          rgba(132, 153, 171, 0.06);
-        box-shadow: var(--glow);
+          linear-gradient(90deg, rgba(47, 216, 204, 0.09), rgba(47, 216, 204, 0.02)),
+          rgba(132, 153, 171, 0.045);
       }
 
       .chat-row,
@@ -592,6 +571,43 @@
         gap: 10px;
       }
 
+      .chat-item-title {
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .chat-avatar {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        color: #ffffff;
+        font-size: 16px;
+        font-weight: 780;
+        line-height: 1;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+      }
+
+      .chat-item-body {
+        min-width: 0;
+      }
+
+      .chat-item-side {
+        display: grid;
+        justify-items: end;
+        gap: 8px;
+        min-width: 44px;
+      }
+
+      .chat-time {
+        color: var(--subtle);
+        font-size: 10px;
+        font-weight: 680;
+        line-height: 1.35;
+        white-space: nowrap;
+      }
+
       .chat-name,
       .role-name {
         overflow: hidden;
@@ -600,14 +616,35 @@
         font-weight: 760;
       }
 
+      .chat-name {
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+        justify-content: flex-start;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1.35;
+        text-align: left;
+      }
+
+      .chat-name:hover {
+        color: #ffffff;
+      }
+
       .summary-line {
-        display: -webkit-box;
+        display: block;
         overflow: hidden;
         margin-top: 5px;
         color: var(--muted);
         font-size: 12px;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 2;
+        line-height: 1.45;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .status-pill,
@@ -625,8 +662,7 @@
         font-weight: 740;
       }
 
-      .status-pill::before,
-      .chat-item .chat-name::before {
+      .status-pill::before {
         content: "";
         display: inline-block;
         width: 7px;
@@ -1100,7 +1136,7 @@
         line-height: 1.45;
       }
 
-      .role-editor,
+      .role-form,
       .modal-form {
         display: grid;
         gap: 12px;
@@ -1165,22 +1201,6 @@
         background: rgba(14, 24, 35, 0.46);
       }
 
-      #role-editor {
-        position: sticky;
-        bottom: 0;
-        z-index: 3;
-        margin-top: 18px;
-        border-color: rgba(47, 216, 204, 0.48);
-        background:
-          radial-gradient(circle at 20% 0%, rgba(47, 216, 204, 0.12), transparent 42%),
-          rgba(9, 17, 25, 0.96);
-        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.42), var(--glow);
-      }
-
-      #role-editor h3 {
-        font-size: 16px;
-      }
-
       #add-role-form {
         border-color: rgba(132, 153, 171, 0.1);
         background: rgba(8, 16, 24, 0.42);
@@ -1218,66 +1238,92 @@
         position: fixed;
         inset: 0;
         z-index: 0;
-        display: grid;
-        grid-template-columns: minmax(540px, 1fr) minmax(280px, 0.38fr);
-        grid-auto-rows: minmax(260px, 1fr);
-        grid-auto-flow: dense;
-        gap: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
         overflow: auto;
-        padding: 10px;
-        background:
-          radial-gradient(circle at 20% -10%, rgba(47, 216, 204, 0.14), transparent 34%),
-          radial-gradient(circle at 85% 0%, rgba(71, 103, 255, 0.16), transparent 30%),
-          var(--bg);
-      }
-
-      #iframe-host::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: 1;
-        background: rgba(2, 6, 23, 0.2);
-        pointer-events: none;
+        padding: 14px;
+        background: #000000;
+        scroll-snap-type: y proximity;
       }
 
       #iframe-host .chat-frame-group {
         position: relative;
         z-index: 0;
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        grid-auto-rows: minmax(240px, 1fr);
-        gap: 8px;
-        min-height: 260px;
-        border: 1px solid rgba(132, 153, 171, 0.18);
-        border-radius: 16px;
-        padding: 8px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: auto;
+        grid-auto-rows: calc(100vh - 92px);
+        gap: 10px;
+        flex: 0 0 calc(100vh - 28px);
+        width: 100%;
+        height: calc(100vh - 28px);
+        min-height: calc(100vh - 28px);
+        border: 1px solid rgba(132, 153, 171, 0.14);
+        border-radius: 10px;
+        padding: 10px;
+        overflow: auto;
+        background: rgba(5, 8, 12, 0.82);
+        scroll-snap-align: start;
+        transition: border-color 0.18s ease, box-shadow 0.18s ease, outline-color 0.18s ease;
+      }
+
+      #iframe-host .chat-frame-group-title {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        grid-column: 1 / -1;
         overflow: hidden;
-        background: rgba(8, 15, 24, 0.58);
-        opacity: 0.52;
-        transform: scale(0.98);
-        transform-origin: center;
-        transition: opacity 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+        min-height: 34px;
+        border-bottom: 1px solid rgba(132, 153, 171, 0.12);
+        padding: 7px 8px 8px;
+        background: rgba(5, 8, 12, 0.96);
+        color: #dceaf2;
+        font-size: 13px;
+        font-weight: 780;
+        line-height: 1.3;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #iframe-host .chat-frame-group.active {
-        grid-column: span 1;
-        grid-row: span 2;
-        border-color: rgba(47, 216, 204, 0.48);
-        opacity: 1;
-        transform: scale(1);
-        box-shadow: var(--glow);
+        border-color: rgba(47, 216, 204, 0.68);
+        outline: 2px solid rgba(47, 216, 204, 0.55);
+        outline-offset: -2px;
+        box-shadow: 0 0 0 1px rgba(47, 216, 204, 0.18), 0 0 34px rgba(47, 216, 204, 0.16), 0 16px 42px rgba(0, 0, 0, 0.32);
       }
 
       #iframe-host .chat-frame-group.background {
-        opacity: 0.46;
+        border-color: rgba(132, 153, 171, 0.14);
+      }
+
+      #iframe-host .role-frame-shell {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        min-height: 240px;
+        overflow: hidden;
+        border: 1px solid rgba(132, 153, 171, 0.14);
+        border-radius: 12px;
+        background: rgba(7, 14, 22, 0.64);
+      }
+
+      #iframe-host .role-frame-label {
+        overflow: hidden;
+        padding: 6px 9px;
+        border-bottom: 1px solid rgba(132, 153, 171, 0.12);
+        color: #d8e6ed;
+        font-size: 12px;
+        font-weight: 760;
+        line-height: 1.3;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #iframe-host .role-frame {
         width: 100%;
         height: 100%;
-        min-height: 240px;
+        min-height: 0;
         border: 0;
-        border-radius: 12px;
         background: white;
       }
 
@@ -1306,6 +1352,16 @@
 
         .messages {
           padding-inline: 20px;
+        }
+
+        #iframe-host .chat-frame-group {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 720px) {
+        #iframe-host .chat-frame-group {
+          grid-template-columns: minmax(0, 1fr);
         }
       }
     </style>
@@ -1430,34 +1486,13 @@
           </div>
           <div id="role-list" class="role-list"></div>
 
-          <form id="add-role-form" class="editor-card role-editor">
+          <form id="add-role-form" class="editor-card role-form">
             <h3>添加人员</h3>
             <p class="tiny">从人员库批量选择，或临时添加只属于当前群聊的人员。</p>
             <select id="role-template-select" hidden></select>
-            <input id="new-role-name" type="text" hidden autocomplete="off" />
             <button class="btn btn-primary" type="submit">打开添加人员</button>
           </form>
 
-          <form id="role-editor" class="editor-card role-editor">
-            <h3>人员设置</h3>
-            <div class="field">
-              <label for="edit-role-name">名称</label>
-              <input id="edit-role-name" type="text" autocomplete="off" />
-            </div>
-            <div class="field">
-              <label for="edit-role-description">描述</label>
-              <textarea id="edit-role-description"></textarea>
-            </div>
-            <div class="field">
-              <label for="edit-role-prompt">人设</label>
-              <textarea id="edit-role-prompt"></textarea>
-            </div>
-            <p class="tiny">群聊内人员的人设只读；人员库修改不会影响已加入群聊的人员。</p>
-            <div class="two-col">
-              <button id="recover-role" class="btn" type="button">恢复会话</button>
-              <button id="initialize-role" class="btn" type="button">重新唤醒</button>
-            </div>
-          </form>
         </div>
       </aside>
     </div>

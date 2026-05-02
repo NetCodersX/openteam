@@ -4,7 +4,7 @@ import type { GroupChat, GroupRole } from '../group/types'
 export const FRAME_ASSIGN_MESSAGE = 'OPENTEAM_ASSIGN_FRAME_ROLE'
 export const GEMINI_IFRAME_ALLOW = 'clipboard-read; clipboard-write; microphone; camera; geolocation; autoplay; fullscreen; picture-in-picture; storage-access; web-share'
 
-export type IframeHostChat = Pick<GroupChat, 'id' | 'roleIds'>
+export type IframeHostChat = Pick<GroupChat, 'id' | 'name' | 'roleIds'>
 export type IframeHostRole = Pick<GroupRole, 'id' | 'chatId' | 'name' | 'geminiConversationUrl'>
 
 export interface FrameAssignmentMessage {
@@ -58,6 +58,9 @@ export interface IframeHostOptions {
 interface RoleFrameRecord {
   chatId: string
   roleId: string
+  roleName: string
+  shell: HTMLElement
+  label: HTMLElement
   iframe: HTMLIFrameElement
   src: string
   status: RoleFrameStatus
@@ -77,6 +80,7 @@ export class IframeHost {
   private readonly groupsByChatId = new Map<string, HTMLElement>()
   private readonly framesByRoleKey = new Map<string, RoleFrameRecord>()
   private activeChatId?: string
+  private activeChatSignature?: string
   private hostTabId?: number
   private disposed = false
 
@@ -138,8 +142,14 @@ export class IframeHost {
 
   activateChat(chat: IframeHostChat, roles: IframeHostRole[]): RoleFrameState[] {
     this.assertNotDisposed()
-    const group = this.getOrCreateChatGroup(chat.id)
+    const activationSignature = chatActivationSignature(chat, roles)
+    if (this.activeChatId === chat.id && this.activeChatSignature === activationSignature) {
+      return this.getChatState(chat.id)
+    }
+
+    const group = this.getOrCreateChatGroup(chat)
     this.activeChatId = chat.id
+    this.activeChatSignature = activationSignature
 
     const chatRoleIds = new Set(chat.roleIds)
     for (const role of roles) {
@@ -151,13 +161,15 @@ export class IframeHost {
 
     this.highlightChatGroup(chat.id)
     this.preserveOtherChatGroups(chat.id)
+    this.scrollChatGroupIntoView(group)
     this.emit({ type: 'chat-activated', chatId: chat.id })
     return this.getChatState(chat.id)
   }
 
   restoreChat(chat: IframeHostChat, roles: IframeHostRole[]): RoleFrameState[] {
     this.assertNotDisposed()
-    const group = this.getOrCreateChatGroup(chat.id)
+    this.activeChatSignature = undefined
+    const group = this.getOrCreateChatGroup(chat)
     const chatRoleIds = new Set(chat.roleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
@@ -173,12 +185,13 @@ export class IframeHost {
 
   recoverRole(role: IframeHostRole): RoleFrameState {
     this.assertNotDisposed()
+    this.activeChatSignature = undefined
     const group = this.getOrCreateChatGroup(role.chatId)
     const key = roleKey(role.chatId, role.id)
     const existing = this.framesByRoleKey.get(key)
     if (existing) {
       this.stopAssignLoop(existing)
-      existing.iframe.remove()
+      existing.shell.remove()
       this.framesByRoleKey.delete(key)
     }
 
@@ -202,6 +215,7 @@ export class IframeHost {
 
     const chatId = this.activeChatId
     this.activeChatId = undefined
+    this.activeChatSignature = undefined
     this.preserveChatGroup(chatId)
   }
 
@@ -210,13 +224,14 @@ export class IframeHost {
 
     for (const record of this.framesByRoleKey.values()) {
       this.stopAssignLoop(record)
-      record.iframe.remove()
+      record.shell.remove()
       this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
     }
     this.framesByRoleKey.clear()
     for (const group of this.groupsByChatId.values()) group.remove()
     this.groupsByChatId.clear()
     this.activeChatId = undefined
+    this.activeChatSignature = undefined
     this.disposed = true
     this.emit({ type: 'disposed' })
   }
@@ -225,6 +240,7 @@ export class IframeHost {
     const key = roleKey(role.chatId, role.id)
     const existing = this.framesByRoleKey.get(key)
     if (existing) {
+      this.updateRoleFrameLabel(existing, role.name)
       this.emit({ type: 'role-reused', chatId: role.chatId, roleId: role.id, iframe: existing.iframe })
       return existing
     }
@@ -232,6 +248,16 @@ export class IframeHost {
   }
 
   private createRoleFrame(role: IframeHostRole): RoleFrameRecord {
+    const shell = this.document.createElement('section')
+    shell.className = 'role-frame-shell'
+    shell.dataset.chatId = role.chatId
+    shell.dataset.roleId = role.id
+    shell.dataset.roleKey = roleKey(role.chatId, role.id)
+
+    const label = this.document.createElement('div')
+    label.className = 'role-frame-label'
+    label.textContent = role.name
+
     const iframe = this.document.createElement('iframe')
     const src = getSafeGeminiIframeSrc(role.geminiConversationUrl)
     iframe.className = 'role-frame'
@@ -246,10 +272,14 @@ export class IframeHost {
     iframe.setAttribute('sec-ch-ua', '"Chromium";v="122", "Google Chrome";v="122"')
     iframe.setAttribute('sec-ch-ua-mobile', '?0')
     iframe.setAttribute('sec-ch-ua-platform', '"Macintosh"')
+    shell.append(label, iframe)
 
     const record: RoleFrameRecord = {
       chatId: role.chatId,
       roleId: role.id,
+      roleName: role.name,
+      shell,
+      label,
       iframe,
       src,
       status: 'loading',
@@ -269,16 +299,27 @@ export class IframeHost {
     return record
   }
 
-  private getOrCreateChatGroup(chatId: string): HTMLElement {
+  private getOrCreateChatGroup(chat: IframeHostChat | string): HTMLElement {
+    const chatId = typeof chat === 'string' ? chat : chat.id
     const existing = this.groupsByChatId.get(chatId)
-    if (existing) return existing
+    if (existing) {
+      const chatName = typeof chat === 'string' ? existing.querySelector<HTMLElement>('.chat-frame-group-title')?.textContent || chat : chat.name
+      this.updateChatGroupTitle(existing, chatName)
+      existing.setAttribute('aria-label', `Gemini iframe group for ${chatName}`)
+      return existing
+    }
+    const chatName = typeof chat === 'string' ? chat : chat.name
 
     const group = this.document.createElement('section')
     group.className = 'chat-frame-group'
     group.dataset.chatFrameGroup = 'true'
     group.dataset.chatId = chatId
     group.dataset.backgroundChat = 'true'
-    group.setAttribute('aria-label', `Gemini iframe group for ${chatId}`)
+    group.setAttribute('aria-label', `Gemini iframe group for ${chatName}`)
+    const title = this.document.createElement('div')
+    title.className = 'chat-frame-group-title'
+    group.append(title)
+    this.updateChatGroupTitle(group, chatName)
     this.visibleHost.append(group)
     this.groupsByChatId.set(chatId, group)
     this.emit({ type: 'group-created', chatId, group })
@@ -311,8 +352,13 @@ export class IframeHost {
     this.emit({ type: 'group-preserved', chatId })
   }
 
+  private scrollChatGroupIntoView(group: HTMLElement): void {
+    if (typeof group.scrollIntoView !== 'function') return
+    group.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+
   private mountRole(record: RoleFrameRecord, group: HTMLElement): void {
-    if (record.iframe.parentElement !== group) group.append(record.iframe)
+    if (record.shell.parentElement !== group) group.append(record.shell)
   }
 
   private startAssignLoop(record: RoleFrameRecord): void {
@@ -358,6 +404,24 @@ export class IframeHost {
     if (this.disposed) throw new Error('IframeHost has been disposed')
   }
 
+  private updateChatGroupTitle(group: HTMLElement, title: string): void {
+    let titleEl = group.querySelector<HTMLElement>('.chat-frame-group-title')
+    if (!titleEl) {
+      titleEl = this.document.createElement('div')
+      titleEl.className = 'chat-frame-group-title'
+      group.prepend(titleEl)
+    }
+    if (titleEl.textContent === title) return
+    titleEl.textContent = title
+  }
+
+  private updateRoleFrameLabel(record: RoleFrameRecord, roleName: string): void {
+    if (record.roleName === roleName && record.label.textContent === roleName) return
+    record.roleName = roleName
+    record.label.textContent = roleName
+    record.iframe.title = `${roleName} Gemini`
+  }
+
   private emit(event: IframeHostEvent): void {
     this.onEvent?.(event)
   }
@@ -369,4 +433,14 @@ export function createIframeHost(options: IframeHostOptions): IframeHost {
 
 function roleKey(chatId: string, roleId: string): string {
   return `${chatId}:${roleId}`
+}
+
+function chatActivationSignature(chat: IframeHostChat, roles: IframeHostRole[]): string {
+  const roleIds = new Set(chat.roleIds)
+  const roleSignature = roles
+    .filter(role => role.chatId === chat.id && roleIds.has(role.id))
+    .map(role => `${role.id}:${role.name}:${role.geminiConversationUrl ?? ''}`)
+    .sort()
+    .join('|')
+  return `${chat.id}:${chat.name}:${chat.roleIds.join(',')}:${roleSignature}`
 }

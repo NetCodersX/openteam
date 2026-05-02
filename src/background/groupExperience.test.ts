@@ -173,6 +173,35 @@ describe('background group chat experience handlers', () => {
     expect(markedRead.store.viewState?.chatHasNewMessageById?.['chat-2']).toBeUndefined()
   })
 
+  it('does not push the switched store back to the tab that already receives the command response', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1')
+    store.chatsById['chat-2'] = { ...makeChat('chat-2'), messageIds: ['msg-1'], nextMessageSeq: 2 }
+    store.chatOrder = ['chat-1', 'chat-2']
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-2',
+      seq: 1,
+      type: 'assistant',
+      roleName: '产品经理',
+      content: '后台回复',
+      createdAt: 1,
+      status: 'sent',
+    }
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'GROUP_STORE_GET' }, { tab: { id: 900 } as chrome.tabs.Tab, frameId: 0 })
+    await harness.invoke({ type: 'GROUP_STORE_GET' }, { tab: { id: 901 } as chrome.tabs.Tab, frameId: 0 })
+    harness.tabsSendMessage.mockClear()
+    const switched = await harness.invoke({ type: 'GROUP_CHAT_SWITCH', chatId: 'chat-2' }, { tab: { id: 900 } as chrome.tabs.Tab, frameId: 0 }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(switched.ok).toBe(true)
+    expect(switched.store.currentChatId).toBe('chat-2')
+    expect(harness.tabsSendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.tabsSendMessage.mock.calls[0][0]).toBe(901)
+  })
+
   it('marks timed-out personnel errors and delivery status through TEAM_ROLE_ERROR', async () => {
     const store = makeStore()
     store.currentChatId = 'chat-1'

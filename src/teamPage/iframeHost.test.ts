@@ -55,8 +55,11 @@ describe('IframeHost', () => {
     expect(group?.dataset.chatFrameGroup).toBe('true')
     expect(group?.dataset.chatId).toBe('chat-1')
     expect(group?.dataset.activeChat).toBe('true')
+    expect(group?.querySelector('.chat-frame-group-title')?.textContent).toBe('chat-1')
     expect(iframe).toBeInstanceOf(HTMLIFrameElement)
-    expect(iframe?.parentElement).toBe(group)
+    expect(iframe?.parentElement?.classList.contains('role-frame-shell')).toBe(true)
+    expect(iframe?.parentElement?.parentElement).toBe(group)
+    expect(iframe?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('role-1')
     expect(iframe?.dataset.chatId).toBe('chat-1')
     expect(iframe?.dataset.roleId).toBe('role-1')
     expect(iframe?.dataset.roleKey).toBe('chat-1:role-1')
@@ -82,10 +85,29 @@ describe('IframeHost', () => {
     host.activateChat(chat, [makeRole('chat-1', 'role-1'), makeRole('chat-1', 'role-2')])
 
     const group = host.getChatGroup('chat-1')
-    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement).toBe(group)
-    expect(host.getRoleFrame('chat-1', 'role-2')?.parentElement).toBe(group)
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.parentElement).toBe(group)
+    expect(host.getRoleFrame('chat-1', 'role-2')?.parentElement?.parentElement).toBe(group)
     expect(visibleHost.querySelectorAll('[data-chat-frame-group="true"]')).toHaveLength(1)
     expect(group?.querySelectorAll('iframe')).toHaveLength(2)
+    expect(group?.querySelectorAll('.role-frame-label')).toHaveLength(2)
+  })
+
+  it('updates chat group and role frame labels when display names change', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const host = createIframeHost({ visibleHost })
+    const chat = { ...makeChat('chat-1', ['role-1']), name: '产品评审群' }
+    const role = { ...makeRole('chat-1', 'role-1'), name: '产品经理' }
+
+    host.activateChat(chat, [role])
+
+    expect(host.getChatGroup('chat-1')?.querySelector('.chat-frame-group-title')?.textContent).toBe('产品评审群')
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('产品经理')
+
+    host.activateChat({ ...chat, name: '增长复盘群' }, [{ ...role, name: '增长顾问' }])
+
+    expect(host.getChatGroup('chat-1')?.querySelector('.chat-frame-group-title')?.textContent).toBe('增长复盘群')
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('增长顾问')
   })
 
   it('does not move active chat iframes through a hidden host on same-chat reactivation', () => {
@@ -103,7 +125,59 @@ describe('IframeHost', () => {
 
     expect(appendHidden).not.toHaveBeenCalled()
     expect(hiddenHost.isConnected).toBe(false)
-    expect(iframe?.parentElement).toBe(group)
+    expect(iframe?.parentElement?.parentElement).toBe(group)
+  })
+
+  it('skips iframe DOM work when the active chat and role inputs have not changed', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const onEvent = vi.fn()
+    const host = createIframeHost({ visibleHost, onEvent })
+    const chat = makeChat('chat-1', ['role-1'])
+    const role = makeRole('chat-1', 'role-1')
+
+    host.activateChat(chat, [role])
+    onEvent.mockClear()
+    const state = host.activateChat(chat, [role])
+
+    expect(state).toHaveLength(1)
+    expect(onEvent).not.toHaveBeenCalled()
+  })
+
+  it('still updates labels when the same active chat receives new display names', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const onEvent = vi.fn()
+    const host = createIframeHost({ visibleHost, onEvent })
+    const chat = { ...makeChat('chat-1', ['role-1']), name: '旧群名' }
+    const role = { ...makeRole('chat-1', 'role-1'), name: '旧角色' }
+
+    host.activateChat(chat, [role])
+    onEvent.mockClear()
+    host.activateChat({ ...chat, name: '新群名' }, [{ ...role, name: '新角色' }])
+
+    expect(host.getChatGroup('chat-1')?.querySelector('.chat-frame-group-title')?.textContent).toBe('新群名')
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('新角色')
+    expect(onEvent).toHaveBeenCalled()
+  })
+
+  it('scrolls the activated chat group into view when switching groups', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const scrollIntoView = vi.fn()
+    const originalScrollIntoView = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    const host = createIframeHost({ visibleHost })
+
+    try {
+      host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
+      scrollIntoView.mockClear()
+      host.activateChat(makeChat('chat-2', ['role-2']), [makeRole('chat-2', 'role-2')])
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView
+    }
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' })
   })
 
   it('updates host tab id used in role assignment messages', () => {
@@ -138,8 +212,8 @@ describe('IframeHost', () => {
     expect(chatOneGroup.hidden).toBe(false)
     expect(chatOneGroup.style.display).toBe('')
     expect(chatOneGroup.dataset.backgroundChat).toBe('true')
-    expect(chatOneFrame.parentElement).toBe(chatOneGroup)
-    expect(host.getRoleFrame('chat-2', 'role-2')?.parentElement).toBe(host.getChatGroup('chat-2'))
+    expect(chatOneFrame.parentElement?.parentElement).toBe(chatOneGroup)
+    expect(host.getRoleFrame('chat-2', 'role-2')?.parentElement?.parentElement).toBe(host.getChatGroup('chat-2'))
   })
 
   it('lists chat groups with active state and role ids', () => {
@@ -171,7 +245,7 @@ describe('IframeHost', () => {
     expect(host.isChatActivated('chat-1')).toBe(true)
     expect(host.isChatActive('chat-1')).toBe(false)
     expect(group?.dataset.backgroundChat).toBe('true')
-    expect(host.getRoleFrame('chat-1', 'safe-role')?.parentElement).toBe(group)
+    expect(host.getRoleFrame('chat-1', 'safe-role')?.parentElement?.parentElement).toBe(group)
     expect(host.getRoleFrame('chat-1', 'safe-role')?.src).toBe('https://gemini.google.com/app/abc')
     expect(host.getRoleFrame('chat-1', 'unsafe-role')?.src).toBe('https://gemini.google.com/')
     expect(state).toHaveLength(2)
@@ -190,7 +264,7 @@ describe('IframeHost', () => {
     host.recoverRole(makeRole('chat-1', 'role-1', 'https://gemini.google.com/app/restored'))
 
     expect(host.getRoleFrame('chat-1', 'role-1')).not.toBe(oldRoleOneFrame)
-    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement).toBe(group)
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.parentElement).toBe(group)
     expect(host.getRoleFrame('chat-1', 'role-1')?.src).toBe('https://gemini.google.com/app/restored')
     expect(host.getRoleFrame('chat-1', 'role-2')).toBe(roleTwoFrame)
   })
@@ -220,7 +294,7 @@ describe('IframeHost', () => {
     const host = createIframeHost({ visibleHost, onEvent })
 
     host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
-    host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
+    host.activateChat({ ...makeChat('chat-1', ['role-1']), name: 'chat-1-renamed' }, [{ ...makeRole('chat-1', 'role-1'), name: 'role-1-renamed' }])
     host.markRoleReady('chat-1', 'role-1')
     host.recoverRole(makeRole('chat-1', 'role-1'))
     host.activateChat(makeChat('chat-2', ['role-2']), [makeRole('chat-2', 'role-2')])
