@@ -13,6 +13,7 @@ import { createReplyTracker } from './replyTracker'
 import { createReplyTimeout } from './replyTimeout'
 import { waitBeforePromptInput, PROMPT_INPUT_DELAY_MS } from './promptDelay'
 import { keepDeepestResponseContainers } from './responseContainers'
+import { findLatestCompensationReply } from './replyCompensation'
 
 interface SiteConfig {
   editor: string
@@ -87,6 +88,7 @@ const replyTracker = createReplyTracker()
 let panelApi: ReturnType<typeof createTeamPanel> | null = null
 const replyTimeout = createReplyTimeout(REPLY_TIMEOUT_MS, messageId => {
   log.warn('reply-timeout', { messageId, roleId: assignedRole?.roleId, roleName: assignedRole?.roleName })
+  if (tryReportLatestReply(messageId, 'timeout-compensation')) return
   if (activeMessageId === messageId) activeMessageId = undefined
   sendRuntimeMessage({
     type: 'TEAM_ROLE_STATUS',
@@ -314,6 +316,47 @@ function isPromptBaselineReply(text: string, element: Element): boolean {
   }
 
   return false
+}
+
+function findCompensationReply(messageId: string): { text: string; element: Element } | undefined {
+  return findLatestCompensationReply({
+    containers: [...document.querySelectorAll(getSiteConfig().responseSelector)],
+    readText: extractCleanText,
+    isBaseline: isPromptBaselineReply,
+    consume: text => replyTracker.consumeIfNewForMessage(getConversationId(), text, messageId),
+  })
+}
+
+function reportAcceptedReply(messageId: string, text: string, source: 'observer' | 'timeout-compensation'): void {
+  if (!assignedRole) return
+
+  activeMessageId = undefined
+  clearPromptReplyBaseline()
+  replyTimeout.clear()
+  log.info('reply:accepted', { messageId, textLength: text.length, roleId: assignedRole.roleId, roleName: assignedRole.roleName, source })
+
+  const snapshot = getConversationSnapshot()
+  sendRuntimeMessage({
+    type: 'TEAM_ROLE_REPLY',
+    chatId: getAssignedChatId(assignedRole),
+    roleId: assignedRole.roleId,
+    messageId,
+    content: text,
+    conversationId: snapshot.conversationId,
+    conversationUrl: snapshot.conversationUrl,
+  })
+    .then(() => sendRuntimeMessage({ type: 'TEAM_ROLE_STATUS', status: 'idle' }))
+    .catch(error => log.warn('reply:report-failed', { error: error instanceof Error ? error.message : String(error) }))
+}
+
+function tryReportLatestReply(messageId: string, source: 'timeout-compensation'): boolean {
+  if (!assignedRole) return false
+  const reply = findCompensationReply(messageId)
+  if (!reply) return false
+
+  log.warn('reply:compensated', { messageId, textLength: reply.text.length, roleId: assignedRole.roleId, source })
+  reportAcceptedReply(messageId, reply.text, source)
+  return true
 }
 
 function observeResponseContainers(onStableText: (text: string, element: Element) => void): void {
@@ -974,6 +1017,10 @@ function startReplyReporting(): void {
     if (!assignedRole) return
 
     const messageId = activeMessageId
+    if (!messageId) {
+      log.debug('reply:skipped-no-active-message', { textLength: text.length, roleId: assignedRole.roleId })
+      return
+    }
     if (messageId && isPromptBaselineReply(text, element)) {
       log.debug('reply:skipped-baseline', { messageId, textLength: text.length, roleId: assignedRole.roleId })
       return
@@ -983,23 +1030,7 @@ function startReplyReporting(): void {
       log.debug('reply:skipped', { messageId, textLength: text.length, roleId: assignedRole.roleId })
       return
     }
-    activeMessageId = undefined
-    clearPromptReplyBaseline()
-    replyTimeout.clear()
-    log.info('reply:accepted', { messageId, textLength: text.length, roleId: assignedRole.roleId, roleName: assignedRole.roleName })
-
-    const snapshot = getConversationSnapshot()
-    sendRuntimeMessage({
-      type: 'TEAM_ROLE_REPLY',
-      chatId: getAssignedChatId(assignedRole),
-      roleId: assignedRole.roleId,
-      messageId,
-      content: text,
-      conversationId: snapshot.conversationId,
-      conversationUrl: snapshot.conversationUrl,
-    })
-      .then(() => sendRuntimeMessage({ type: 'TEAM_ROLE_STATUS', status: 'idle' }))
-      .catch(error => log.warn('reply:report-failed', { error: error instanceof Error ? error.message : String(error) }))
+    reportAcceptedReply(messageId, text, 'observer')
   })
 }
 
