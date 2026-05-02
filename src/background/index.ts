@@ -1,4 +1,4 @@
-import { buildUnsyncedContext, getContextCursorAfterAck } from '../group/contextSync'
+import { buildUnsyncedContext } from '../group/contextSync'
 import { extractGeminiConversationId, normalizeGeminiConversationUrl } from '../group/conversationUrl'
 import { parseGroupMentions } from '../group/mentionParser'
 import { buildPrompt, buildReinitPrompt } from '../group/promptBuilder'
@@ -155,6 +155,9 @@ async function sendPrompt(delivery: PromptDelivery): Promise<void> {
 
   try {
     const response = await chrome.tabs.sendMessage(delivery.tabId, delivery.message, { frameId: delivery.frameId })
+    if (isRecord(response) && response.ok === false) {
+      throw new Error(readOptionalString(response.error) ?? readOptionalString(response.message) ?? 'Gemini prompt delivery failed')
+    }
     log.info('prompt:send:response', {
       chatId: delivery.message.chatId,
       roleId: delivery.roleId,
@@ -201,8 +204,25 @@ function isRoleDeliverable(role: GroupRole, binding: RuntimeFrameBinding | undef
   return role.status === 'ready' || role.status === 'error' || role.status === 'loading' || role.status === 'pending' || isStaleThinkingRole(role, timestamp)
 }
 
-function shouldIncludePersonaForPrompt(role: GroupRole): boolean {
-  return !role.geminiConversationUrl && !role.geminiConversationId
+function shouldIncludePersonaForPrompt(roleHistoryCount: number): boolean {
+  return roleHistoryCount === 0
+}
+
+function countLocalRoleHistory(messages: GroupMessage[], role: GroupRole, currentMessageId: string): number {
+  return messages.filter(message => message.id !== currentMessageId && isRoleHistoryMessage(message, role.id)).length
+}
+
+function isRoleHistoryMessage(message: GroupMessage, roleId: string): boolean {
+  if (message.roleId === roleId) return true
+  return Array.isArray(message.targetRoleIds) && message.targetRoleIds.includes(roleId)
+}
+
+function readPersonaLength(role: GroupRole): number {
+  return (role.systemPrompt?.trim() || role.description?.trim() || role.name.trim()).length
+}
+
+function isMeaningfulConversationId(value: string | undefined): value is string {
+  return Boolean(value && value !== '__default__')
 }
 
 function recoverDeliverableRoleStatus(role: GroupRole, timestamp: number): void {
@@ -608,10 +628,19 @@ async function handleMessageSend(message: RuntimeMessage) {
       const role = requireRole(store, chat.id, roleId)
       const binding = runtimeFrames.getByRole(chat.id, role.id)!
       const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
-      const includesPersona = shouldIncludePersonaForPrompt(role)
+      const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
+      const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
       const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
       if (!includesPersona) {
-        log.debug('prompt:persona-skipped', { chatId: chat.id, roleId: role.id, messageId: userMessage.id, conversationUrlPresent: Boolean(role.geminiConversationUrl) })
+        log.debug('prompt:persona-skipped', {
+          chatId: chat.id,
+          roleId: role.id,
+          messageId: userMessage.id,
+          conversationUrlPresent: Boolean(role.geminiConversationUrl),
+          contextCursor: role.contextCursor,
+          roleHistoryCount,
+          personaLength: readPersonaLength(role),
+        })
       }
 
       role.status = 'thinking'
@@ -735,7 +764,7 @@ async function handleSendAck(message: RuntimeMessage, sender: chrome.runtime.Mes
         userMessage.status = 'sent'
       }
     }
-    role.contextCursor = getContextCursorAfterAck(chat, getChatMessages(store, chat))
+    if (userMessage) role.contextCursor = Math.max(role.contextCursor, userMessage.seq)
     role.updatedAt = now()
     chat.updatedAt = role.updatedAt
   })
@@ -869,13 +898,14 @@ function readIdentity(message: RuntimeMessage, sender: chrome.runtime.MessageSen
 
 function updateConversation(role: GroupRole, conversationUrl: string | undefined, conversationId: string | undefined): void {
   const safeUrl = normalizeGeminiConversationUrl(conversationUrl)
-  if (safeUrl) {
+  const conversationIdFromUrl = extractGeminiConversationId(safeUrl)
+  if (safeUrl && conversationIdFromUrl) {
     role.geminiConversationUrl = safeUrl
-    role.geminiConversationId = extractGeminiConversationId(safeUrl) ?? conversationId
+    role.geminiConversationId = conversationIdFromUrl
     return
   }
 
-  if (conversationId) role.geminiConversationId = conversationId
+  if (isMeaningfulConversationId(conversationId)) role.geminiConversationId = conversationId
 }
 
 function resolveReference(store: OpenTeamStore, chat: GroupChat, raw: unknown): MessageReference | undefined {

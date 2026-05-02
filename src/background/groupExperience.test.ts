@@ -124,13 +124,92 @@ describe('background group chat experience handlers', () => {
     expect(deleted.store.roleTemplateOrder).toEqual(['template-used'])
   })
 
-  it('skips full persona in ordinary prompts for roles with an active Gemini conversation', async () => {
+  it('includes persona from description for legacy roles without systemPrompt on the first user message', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '调查记者', {
+      description: '调查记者',
+      systemPrompt: undefined,
+    })
+    const harness = await setupBackground(store)
+
+    await harness.invoke(
+      { type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900, conversationId: '__default__', conversationUrl: 'https://gemini.google.com/' },
+      { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/' },
+    )
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '你好' }) as { ok: boolean }
+
+    expect(response.ok).toBe(true)
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(1)
+    const prompt = promptCalls[0][1]
+    expect(prompt.includesPersona).toBe(true)
+    expect(prompt.content).toContain('你是「调查记者」。')
+    expect(prompt.content).toContain('你的职责：\n调查记者')
+    expect(prompt.content).toContain('用户消息：\n你好')
+  })
+
+  it('includes persona on the first user message even after the frame reports Gemini home', async () => {
     const store = makeStore()
     store.currentChatId = 'chat-1'
     store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
     store.chatOrder = ['chat-1']
     store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', {
-      systemPrompt: '这是一段很长的人设，普通消息不应重复发送。',
+      systemPrompt: '第一次必须发送的人设',
+    })
+    const harness = await setupBackground(store)
+
+    await harness.invoke(
+      { type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900, conversationId: '__default__', conversationUrl: 'https://gemini.google.com/' },
+      { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/' },
+    )
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '请评估这个方案' }) as { ok: boolean }
+
+    expect(response.ok).toBe(true)
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(1)
+    const prompt = promptCalls[0][1]
+    expect(prompt.includesPersona).toBe(true)
+    expect(prompt.content).toContain('第一次必须发送的人设')
+    expect(harness.stored[harness.storeKey].rolesById['role-1'].geminiConversationUrl).toBeUndefined()
+    expect(harness.stored[harness.storeKey].rolesById['role-1'].geminiConversationId).toBeUndefined()
+  })
+
+  it('does not repeat persona after the first prompt is acknowledged', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', {
+      systemPrompt: '只需要首轮发送的人设',
+    })
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/' })
+    const first = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '第一条' }) as { ok: boolean; message: { id: string } }
+    await harness.invoke({ type: 'TEAM_SEND_ACK', chatId: 'chat-1', roleId: 'role-1', messageId: first.message.id })
+    await harness.invoke({ type: 'TEAM_ROLE_REPLY', chatId: 'chat-1', roleId: 'role-1', messageId: first.message.id, content: '第一条回复' })
+    const second = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '第二条' }) as { ok: boolean }
+
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(2)
+    expect(promptCalls[0][1].includesPersona).toBe(true)
+    expect(promptCalls[0][1].content).toContain('只需要首轮发送的人设')
+    expect(promptCalls[1][1].includesPersona).toBe(false)
+    expect(promptCalls[1][1].content).not.toContain('只需要首轮发送的人设')
+  })
+
+  it('includes persona on the first local user message even when the frame has an active Gemini conversation', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', {
+      systemPrompt: '这是首次本地对话必须发送的人设。',
       geminiConversationUrl: 'https://gemini.google.com/app/existing-conversation',
       geminiConversationId: 'existing-conversation',
     })
@@ -143,9 +222,126 @@ describe('background group chat experience handlers', () => {
     const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
     expect(promptCalls).toHaveLength(1)
     const prompt = promptCalls[0][1]
+    expect(prompt.includesPersona).toBe(true)
+    expect(prompt.content).toContain('这是首次本地对话必须发送的人设。')
+    expect(prompt.content).toContain('请评估这个方案')
+  })
+
+  it('includes persona when the role cursor is stale but there is no local message history', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', {
+      contextCursor: 3,
+      systemPrompt: '没有本地历史时仍必须发送的人设。',
+    })
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/test' })
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '你好' }) as { ok: boolean }
+
+    expect(response.ok).toBe(true)
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(1)
+    const prompt = promptCalls[0][1]
+    expect(prompt.includesPersona).toBe(true)
+    expect(prompt.content).toContain('没有本地历史时仍必须发送的人设。')
+  })
+
+  it('skips full persona in ordinary prompts after the role already has local history', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1'], nextMessageSeq: 2 }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', {
+      contextCursor: 1,
+      systemPrompt: '这是一段很长的人设，普通消息不应重复发送。',
+      geminiConversationUrl: 'https://gemini.google.com/app/existing-conversation',
+      geminiConversationId: 'existing-conversation',
+    })
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'user',
+      content: '历史消息',
+      targetRoleIds: ['role-1'],
+      createdAt: 1,
+      status: 'sent',
+      deliveryStatus: { 'role-1': 'sent' },
+    }
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/existing-conversation' })
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '请评估这个方案' }) as { ok: boolean }
+
+    expect(response.ok).toBe(true)
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(1)
+    const prompt = promptCalls[0][1]
     expect(prompt.includesPersona).toBe(false)
     expect(prompt.content).toContain('请评估这个方案')
     expect(prompt.content).not.toContain('这是一段很长的人设')
+  })
+
+  it('marks delivery error when a prompt response is explicitly rejected', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师')
+    const harness = await setupBackground(store)
+    harness.tabsSendMessage.mockImplementation((_tabId, message) => Promise.resolve(
+      message?.type === 'TEAM_SEND_PROMPT' ? { ok: false, error: 'Gemini 输入框不可用' } : { ok: true },
+    ))
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/test' })
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '请评估这个方案' }) as { ok: boolean; message: { id: string } }
+
+    expect(response.ok).toBe(true)
+    const stored = harness.stored[harness.storeKey]
+    expect(stored.messagesById[response.message.id].status).toBe('error')
+    expect(stored.messagesById[response.message.id].deliveryStatus?.['role-1']).toBe('error')
+    expect(stored.rolesById['role-1'].status).toBe('error')
+    expect(stored.chatsById['chat-1'].status).toBe('error')
+  })
+
+  it('advances context cursor only to the acknowledged prompt message', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1', 'msg-2'], nextMessageSeq: 3 }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师')
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'user',
+      content: '第一条',
+      targetRoleIds: ['role-1'],
+      createdAt: 1,
+      status: 'pending',
+      deliveryStatus: { 'role-1': 'pending' },
+    }
+    store.messagesById['msg-2'] = {
+      id: 'msg-2',
+      chatId: 'chat-1',
+      seq: 2,
+      type: 'user',
+      content: '后续消息',
+      targetRoleIds: ['role-1'],
+      createdAt: 2,
+      status: 'pending',
+      deliveryStatus: { 'role-1': 'pending' },
+    }
+    const harness = await setupBackground(store)
+
+    const response = await harness.invoke({ type: 'TEAM_SEND_ACK', chatId: 'chat-1', roleId: 'role-1', messageId: 'msg-1' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(response.ok).toBe(true)
+    expect(response.store.rolesById['role-1'].contextCursor).toBe(1)
+    expect(response.store.messagesById['msg-1'].deliveryStatus?.['role-1']).toBe('sent')
   })
 
   it('stores explicit mentions for display while sending the cleaned message content', async () => {
