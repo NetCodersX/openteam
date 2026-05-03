@@ -1,3 +1,4 @@
+import MarkdownIt from 'markdown-it'
 import { getDefaultChatSiteUrl } from '../group/conversationUrl'
 import type { ChatSite, GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RoleStatus, RoleTemplate, RoomMode } from '../group/types'
 import { createDefaultStore, loadStore, saveStore } from '../group/store'
@@ -29,6 +30,7 @@ type AddPersonItem =
 
 const MAX_CACHED_MESSAGE_NODES = 400
 const AUTO_RECONNECT_TIMEOUT_MS = 20_000
+const markdownRenderer = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 interface RoleReadyWaiter {
   chatId: string
@@ -579,7 +581,11 @@ function renderMessageNode(message: GroupMessage, showName = true, showAvatar = 
     const mentions = renderMessageMentions(message)
     if (mentions) appendMentionsToBody(body, mentions)
   }
-  body.append(document.createTextNode(message.content))
+  if (message.contentFormat === 'markdown') {
+    renderMarkdownMessageBody(body, message.content)
+  } else {
+    renderPlainMessageBody(body, message.content)
+  }
   bubble.append(body)
   if (message.references?.length) bubble.append(referenceBox(message.references[0]))
 
@@ -619,12 +625,26 @@ function cacheMessageNode(messageId: string, signature: string, node: HTMLElemen
   }
 }
 
+function renderMarkdownMessageBody(body: HTMLElement, content: string): void {
+  body.classList.add('markdown-body')
+  body.innerHTML = markdownRenderer.render(content)
+  for (const link of body.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    link.target = '_blank'
+    link.rel = 'noreferrer'
+  }
+}
+
+function renderPlainMessageBody(body: HTMLElement, content: string): void {
+  body.append(document.createTextNode(content))
+}
+
 function messageSignature(message: GroupMessage, showName = true, showAvatar = true): string {
   return JSON.stringify({
     type: message.type,
     roleId: message.roleId,
     roleName: message.roleName,
     content: message.content,
+    contentFormat: message.contentFormat,
     createdAt: message.createdAt,
     status: message.status,
     references: message.references,

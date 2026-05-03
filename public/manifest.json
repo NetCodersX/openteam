@@ -7,7 +7,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "tabs", "declarativeNetRequest"],
+  "permissions": ["storage", "tabs", "declarativeNetRequest", "clipboardRead", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; frame-src *;"

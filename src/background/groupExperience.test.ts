@@ -442,6 +442,43 @@ describe('background group chat experience handlers', () => {
     expect(markedRead.store.viewState?.chatHasNewMessageById?.['chat-2']).toBeUndefined()
   })
 
+  it('stores copied ChatGPT replies as markdown-formatted assistant messages', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-user'], nextMessageSeq: 2, status: 'running' }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '产品经理', { status: 'thinking', lastPromptMessageId: 'msg-user' })
+    store.messagesById['msg-user'] = {
+      id: 'msg-user',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'user',
+      content: '请给出方案',
+      targetRoleIds: ['role-1'],
+      createdAt: 1,
+      status: 'sent',
+      deliveryStatus: { 'role-1': 'sent' },
+    }
+    const harness = await setupBackground(store)
+
+    const reply = await harness.invoke({
+      type: 'TEAM_ROLE_REPLY',
+      chatId: 'chat-1',
+      roleId: 'role-1',
+      content: '**结论**\n\n- 可以做',
+      contentFormat: 'markdown',
+      messageId: 'msg-user',
+    }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(reply.ok).toBe(true)
+    const replyMessageId = reply.store.chatsById['chat-1'].messageIds[1]
+    expect(reply.store.messagesById[replyMessageId]).toMatchObject({
+      type: 'assistant',
+      content: '**结论**\n\n- 可以做',
+      contentFormat: 'markdown',
+    })
+  })
+
   it('duplicates a chat with copied roles but without messages or Gemini conversation bindings', async () => {
     const store = makeStore()
     store.currentChatId = 'chat-1'

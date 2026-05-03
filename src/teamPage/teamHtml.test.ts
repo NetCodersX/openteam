@@ -343,17 +343,18 @@ describe('team.html chat creation UI', () => {
     expect(html).toMatch(/\.message-mention\s*{[^}]*font-weight:\s*820;/s)
   })
 
-  it('renders message content as plain text with original whitespace preserved', () => {
+  it('renders copied markdown replies with markdown-it while keeping other messages on the plain-text renderer', () => {
     const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
 
-    expect(source).toContain('body.append(document.createTextNode(message.content))')
+    expect(source).toContain("message.contentFormat === 'markdown'")
+    expect(source).toContain('renderMarkdownMessageBody(body, message.content)')
+    expect(source).toContain('renderPlainMessageBody(body, message.content)')
     expect(source).toContain('pill.textContent = message.content')
-    expect(source).not.toContain('renderMarkdown')
-    expect(source).not.toContain('markdown-body')
+    expect(source).toContain('MarkdownIt')
+    expect(source).toContain('body.innerHTML = markdownRenderer.render(content)')
     expect(html).toMatch(/\.message-body\s*{[^}]*white-space:\s*pre-wrap;/s)
-    expect(html).not.toContain('.markdown-body')
-    expect(html).not.toContain('markdown-it')
+    expect(html).toContain('.message-body.markdown-body')
   })
 
   it('keeps chat titles as plain text and omits chat status from list rows', () => {

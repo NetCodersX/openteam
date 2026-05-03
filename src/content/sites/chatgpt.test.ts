@@ -76,4 +76,39 @@ describe('ChatGPT site adapter', () => {
 
     expect(createChatGptAdapter().getAllAssistantReplies()).toEqual(['你好！今天想聊点什么？\n\n调研\n\n写代码'])
   })
+
+  it('uses the ChatGPT copy action to read markdown replies and restores the clipboard', async () => {
+    let clipboardText = '用户原来的剪贴板'
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        readText: vi.fn(async () => clipboardText),
+        writeText: vi.fn(async (text: string) => {
+          clipboardText = text
+        }),
+      },
+    })
+    document.body.innerHTML = `
+      <section data-turn="assistant" data-testid="conversation-turn-2">
+        <div data-message-author-role="assistant" data-message-id="reply-1">
+          <div class="markdown">
+            <p>标题</p>
+            <pre><code>const answer = 42</code></pre>
+          </div>
+        </div>
+        <div aria-label="回复操作">
+          <button aria-label="复制回复" data-testid="copy-turn-action-button">复制</button>
+        </div>
+      </section>
+    `
+    document.querySelector<HTMLButtonElement>('[data-testid="copy-turn-action-button"]')?.addEventListener('click', () => {
+      clipboardText = '标题\n\n```ts\nconst answer = 42\n```'
+    })
+    const response = document.querySelector('[data-message-author-role="assistant"]')!
+
+    const copied = await createChatGptAdapter({ clipboardPollMs: 5, clipboardTimeoutMs: 50 }).readResponseTextFromCopy?.(response)
+
+    expect(copied).toBe('标题\n\n```ts\nconst answer = 42\n```')
+    expect(clipboardText).toBe('用户原来的剪贴板')
+  })
 })

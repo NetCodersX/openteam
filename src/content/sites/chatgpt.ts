@@ -3,12 +3,17 @@ import { keepDeepestResponseContainers } from '../responseContainers'
 
 const CHATGPT_HOSTS = new Set(['chatgpt.com', 'chat.openai.com'])
 const DEFAULT_INPUT_TIMEOUT_MS = 9000
+const DEFAULT_CLIPBOARD_TIMEOUT_MS = 900
+const DEFAULT_CLIPBOARD_POLL_MS = 40
 
 const CHATGPT_SELECTORS = {
   editor: 'form[data-type="unified-composer"] #prompt-textarea[contenteditable="true"], #prompt-textarea.ProseMirror[contenteditable="true"]',
   sendButton:
     'button[data-testid="send-button"], button[aria-label*="发送"], button[aria-label*="Send"], button[aria-label*="提交"], button[aria-label*="Submit"]',
   response: '[data-message-author-role="assistant"]',
+  copyButton:
+    'button[data-testid="copy-turn-action-button"], button[aria-label="复制回复"], button[aria-label*="Copy"], button[aria-label*="复制"]',
+  turn: '[data-testid^="conversation-turn-"], [data-turn]',
 }
 
 const BLOCK_TAGS = new Set([
@@ -32,10 +37,14 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'BUTTON', 'TEXTAREA', 'SVG'])
 interface ChatGptAdapterOptions {
   href?: string
   inputTimeoutMs?: number
+  clipboardTimeoutMs?: number
+  clipboardPollMs?: number
 }
 
 export function createChatGptAdapter(options: ChatGptAdapterOptions = {}): ChatSiteAdapter {
   const inputTimeoutMs = options.inputTimeoutMs ?? DEFAULT_INPUT_TIMEOUT_MS
+  const clipboardTimeoutMs = options.clipboardTimeoutMs ?? DEFAULT_CLIPBOARD_TIMEOUT_MS
+  const clipboardPollMs = options.clipboardPollMs ?? DEFAULT_CLIPBOARD_POLL_MS
 
   function currentHref(): string {
     return options.href ?? location.href
@@ -78,11 +87,73 @@ export function createChatGptAdapter(options: ChatGptAdapterOptions = {}): ChatS
     getResponseContainers,
     getAllAssistantReplies,
     readResponseText: extractCleanText,
+    readResponseTextFromCopy: node => readResponseTextFromCopy(node, clipboardTimeoutMs, clipboardPollMs),
     findResponseContainer,
     isGenerating: isChatGptGenerating,
     fillAndSend,
     collectPromptDiagnostics,
   }
+}
+
+async function readResponseTextFromCopy(node: Node, timeoutMs: number, pollMs: number): Promise<string | undefined> {
+  if (node.nodeType !== Node.ELEMENT_NODE) return undefined
+
+  const copyButton = findCopyButton(node as Element)
+  const clipboard = navigator.clipboard
+  if (!copyButton || !clipboard?.readText) return undefined
+
+  let previousText: string | undefined
+  try {
+    previousText = await clipboard.readText()
+  } catch {
+    previousText = undefined
+  }
+
+  try {
+    copyButton.click()
+    const copiedText = await waitForClipboardText(previousText, timeoutMs, pollMs)
+    return copiedText?.trim() || undefined
+  } catch {
+    return undefined
+  } finally {
+    if (previousText !== undefined && clipboard.writeText) {
+      clipboard.writeText(previousText).catch(() => undefined)
+    }
+  }
+}
+
+function findCopyButton(response: Element): HTMLButtonElement | undefined {
+  const turn = response.closest(CHATGPT_SELECTORS.turn) ?? response.parentElement
+  const copyButton = turn?.querySelector<HTMLButtonElement>(CHATGPT_SELECTORS.copyButton)
+  return copyButton && isClickableButton(copyButton) ? copyButton : undefined
+}
+
+function waitForClipboardText(previousText: string | undefined, timeoutMs: number, pollMs: number): Promise<string | undefined> {
+  const clipboard = navigator.clipboard
+  if (!clipboard?.readText) return Promise.resolve(undefined)
+
+  return new Promise(resolve => {
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      clipboard.readText()
+        .then(text => {
+          const trimmed = text.trim()
+          if (trimmed && (previousText === undefined || text !== previousText)) {
+            window.clearInterval(timer)
+            resolve(text)
+            return
+          }
+          if (Date.now() - startedAt >= timeoutMs) {
+            window.clearInterval(timer)
+            resolve(undefined)
+          }
+        })
+        .catch(() => {
+          window.clearInterval(timer)
+          resolve(undefined)
+        })
+    }, pollMs)
+  })
 }
 
 export function getChatGptConversationLocation(href: string): ConversationSnapshot {

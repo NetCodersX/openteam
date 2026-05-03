@@ -26,6 +26,11 @@ interface AssignedRole {
   roomId?: string
 }
 
+interface ReportableReplyText {
+  text: string
+  contentFormat?: 'markdown'
+}
+
 const OPEN_TEAM_LOADED_KEY = '__OPENTEAM_LOADED__'
 const PANEL_ID = '__openteam_team_panel__'
 const FRAME_ASSIGN_MESSAGE = 'OPENTEAM_ASSIGN_FRAME_ROLE'
@@ -156,7 +161,7 @@ function findCompensationReply(messageId: string): { text: string; element: Elem
   })
 }
 
-function reportAcceptedReply(messageId: string, text: string, source: 'observer' | 'timeout-compensation'): void {
+function reportAcceptedReply(messageId: string, reply: ReportableReplyText, source: 'observer' | 'timeout-compensation'): void {
   if (!assignedRole) return
 
   activeMessageId = undefined
@@ -164,6 +169,7 @@ function reportAcceptedReply(messageId: string, text: string, source: 'observer'
   activeReplyAttemptId = undefined
   clearPromptReplyBaseline()
   replyTimeout.clear()
+  const text = reply.text
   log.info('reply:accepted', { messageId, textLength: text.length, roleId: assignedRole.roleId, roleName: assignedRole.roleName, source })
 
   const snapshot = getConversationSnapshot()
@@ -174,6 +180,7 @@ function reportAcceptedReply(messageId: string, text: string, source: 'observer'
     messageId,
     replyAttemptId,
     content: text,
+    contentFormat: reply.contentFormat,
     conversationId: snapshot.conversationId,
     conversationUrl: snapshot.conversationUrl,
   })
@@ -187,8 +194,15 @@ function tryReportLatestReply(messageId: string, source: 'timeout-compensation')
   if (!reply) return false
 
   log.warn('reply:compensated', { messageId, textLength: reply.text.length, roleId: assignedRole.roleId, source })
-  reportAcceptedReply(messageId, reply.text, source)
+  reportAcceptedReply(messageId, { text: reply.text }, source)
   return true
+}
+
+async function resolveReportableReplyText(element: Element, fallbackText: string): Promise<ReportableReplyText> {
+  const copiedText = await siteAdapter.readResponseTextFromCopy?.(element)
+  const trimmedCopiedText = copiedText?.trim()
+  if (trimmedCopiedText) return { text: trimmedCopiedText, contentFormat: 'markdown' }
+  return { text: fallbackText }
 }
 
 function observeResponseContainers(onStableText: (text: string, element: Element) => void): void {
@@ -849,11 +863,23 @@ function startReplyReporting(): void {
       return
     }
 
-    if (!replyTracker.consumeIfNewForMessage(getConversationId(), text, messageId)) {
-      log.debug('reply:skipped', { messageId, textLength: text.length, roleId: assignedRole.roleId })
-      return
-    }
-    reportAcceptedReply(messageId, text, 'observer')
+    resolveReportableReplyText(element, text)
+      .then(reply => {
+        if (!assignedRole) return
+        if (!replyTracker.consumeIfNewForMessage(getConversationId(), reply.text, messageId)) {
+          log.debug('reply:skipped', { messageId, textLength: reply.text.length, roleId: assignedRole.roleId })
+          return
+        }
+        reportAcceptedReply(messageId, reply, 'observer')
+      })
+      .catch(() => {
+        if (!assignedRole) return
+        if (!replyTracker.consumeIfNewForMessage(getConversationId(), text, messageId)) {
+          log.debug('reply:skipped', { messageId, textLength: text.length, roleId: assignedRole.roleId })
+          return
+        }
+        reportAcceptedReply(messageId, { text }, 'observer')
+      })
   })
 }
 

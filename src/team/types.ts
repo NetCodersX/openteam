@@ -28,6 +28,7 @@ export interface TeamMessage {
   target: 'role' | 'all' | 'none'
   targetRoleName?: string
   content: string
+  contentFormat?: 'markdown'
   createdAt: number
   status?: 'pending' | 'sent' | 'received' | 'error'
 }
@@ -102,4 +103,4 @@ export type RoleToBackgroundMessage =
   | { type: 'TEAM_SEND_ACK'; chatId: string; roleId: string; messageId: string }
   | { type: 'TEAM_ROLE_ERROR'; chatId: string; roleId: string; messageId?: string; reason: string; replyAttemptId?: string }
   | { type: 'TEAM_ROLE_STATUS'; status: TeamRoleStatus; error?: string }
-  | { type: 'TEAM_ROLE_REPLY'; chatId?: string; roleId?: string; messageId?: string; replyAttemptId?: string; content: string; conversationId?: string; conversationUrl?: string }
+  | { type: 'TEAM_ROLE_REPLY'; chatId?: string; roleId?: string; messageId?: string; replyAttemptId?: string; content: string; contentFormat?: 'markdown'; conversationId?: string; conversationUrl?: string }

@@ -1055,6 +1055,7 @@ async function handleRoleStatus(message: RuntimeMessage, sender: chrome.runtime.
 async function handleRoleReply(message: RuntimeMessage, sender: chrome.runtime.MessageSender) {
   const identity = readIdentity(message, sender)
   const content = requireString(message.content, '回复内容不能为空')
+  const contentFormat = message.contentFormat === 'markdown' ? 'markdown' : undefined
   const promptMessageId = readOptionalString(message.messageId)
   const replyAttemptId = readOptionalString(message.replyAttemptId)
   const timestamp = now()
@@ -1076,6 +1077,7 @@ async function handleRoleReply(message: RuntimeMessage, sender: chrome.runtime.M
       seq: chat.nextMessageSeq,
       type: 'assistant',
       content,
+      contentFormat,
       roleId: role.id,
       roleName: role.name,
       createdAt: timestamp,

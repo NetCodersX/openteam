@@ -80,6 +80,7 @@ export interface GroupMessage {
   seq: number
   type: 'user' | 'assistant' | 'system'
   content: string
+  contentFormat?: 'markdown'
   roleId?: string
   roleName?: string
   targetRoleIds?: string[]
