@@ -22,6 +22,10 @@ type StorePushMessage =
 
 type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultChatSite'>
 type CachedMessageNode = { signature: string; node: HTMLElement }
+type TemporaryPersonDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt'> & { id: string; chatSite: ChatSite }
+type AddPersonItem =
+  | { key: string; source: 'library'; roleTemplateId: string; name: string; description?: string; chatSite: ChatSite }
+  | { key: string; source: 'temporary'; draftId: string; name: string; description?: string; systemPrompt: string; chatSite: ChatSite }
 
 const MAX_CACHED_MESSAGE_NODES = 400
 const AUTO_RECONNECT_TIMEOUT_MS = 20_000
@@ -44,12 +48,15 @@ let mentionIndex = 0
 let peopleDrawerOpen = false
 let chatMenuChatId: string | undefined
 let roleSiteMenuRoleId: string | undefined
+let addPersonSiteMenuId: string | undefined
 let pendingSwitchAnimationFrame: number | undefined
 let thinkingTimeoutTimers: ReturnType<typeof window.setTimeout>[] = []
 const loggedThinkingTimeoutRoleIds = new Set<string>()
 const messageNodeCache = new Map<string, CachedMessageNode>()
 const reconnectingRoleKeys = new Set<string>()
 const roleReadyWaiters = new Set<RoleReadyWaiter>()
+const temporaryPersonDrafts: TemporaryPersonDraft[] = []
+const addPersonSiteByKey = new Map<string, ChatSite>()
 
 const appShellEl = requireElement<HTMLElement>('#app')
 const floatingDragHandleEl = requireElement<HTMLElement>('#floating-drag-handle')
@@ -83,15 +90,13 @@ const settingsMenuEl = requireElement<HTMLElement>('#settings-menu')
 const peopleLibraryModalEl = requireElement<HTMLElement>('#people-library-modal')
 const personTemplateModalEl = requireElement<HTMLElement>('#person-template-modal')
 const addPersonModalEl = requireElement<HTMLElement>('#add-person-modal')
+const temporaryPersonModalEl = requireElement<HTMLElement>('#temporary-person-modal')
 const peopleLibrarySummaryEl = requireElement<HTMLElement>('#people-library-summary')
 const peopleLibraryListEl = requireElement<HTMLElement>('#people-library-list')
 const addLibraryPeopleListEl = requireElement<HTMLElement>('#add-library-people-list')
 const templateSiteGeminiEl = requireElement<HTMLInputElement>('#template-site-gemini')
 const templateSiteChatGptEl = requireElement<HTMLInputElement>('#template-site-chatgpt')
 const templateSiteClaudeEl = requireElement<HTMLInputElement>('#template-site-claude')
-const addPersonSiteGeminiEl = requireElement<HTMLInputElement>('#add-person-site-gemini')
-const addPersonSiteChatGptEl = requireElement<HTMLInputElement>('#add-person-site-chatgpt')
-const addPersonSiteClaudeEl = requireElement<HTMLInputElement>('#add-person-site-claude')
 const temporaryPersonNameEl = requireElement<HTMLInputElement>('#temporary-person-name')
 const temporaryPersonDescriptionEl = requireElement<HTMLTextAreaElement>('#temporary-person-description')
 const temporaryPersonPromptEl = requireElement<HTMLTextAreaElement>('#temporary-person-prompt')
@@ -392,6 +397,25 @@ function chatActionMenu(chat: GroupChat): HTMLElement {
     renderChatList()
     runCommand('GROUP_CHAT_DUPLICATE', { chatId: chat.id }).catch(error => showError(error.message))
   })
+  const clearMessages = document.createElement('button')
+  clearMessages.type = 'button'
+  clearMessages.className = 'btn btn-ghost'
+  clearMessages.textContent = '清空消息'
+  clearMessages.addEventListener('click', () => {
+    chatMenuChatId = undefined
+    renderChatList()
+    if (!window.confirm(`确定清空「${chat.name}」的聊天消息吗？人员会保留，但所有 iframe 会重新创建。`)) return
+    clearChatMessages(chat.id).catch(error => showError(error.message))
+  })
+  const closeFrames = document.createElement('button')
+  closeFrames.type = 'button'
+  closeFrames.className = 'btn btn-ghost'
+  closeFrames.textContent = '关闭群聊'
+  closeFrames.addEventListener('click', () => {
+    chatMenuChatId = undefined
+    renderChatList()
+    closeChatFrames(chat.id).catch(error => showError(error.message))
+  })
   const remove = document.createElement('button')
   remove.type = 'button'
   remove.className = 'btn btn-ghost btn-danger'
@@ -402,8 +426,21 @@ function chatActionMenu(chat: GroupChat): HTMLElement {
     if (!window.confirm(`确定删除「${chat.name}」吗？删除后这个群聊的消息和角色都会移除。`)) return
     deleteChat(chat.id).catch(error => showError(error.message))
   })
-  menu.append(rename, duplicate, remove)
+  menu.append(rename, duplicate, clearMessages, closeFrames, remove)
   return menu
+}
+
+async function clearChatMessages(chatId: string): Promise<void> {
+  await runCommand('GROUP_CHAT_CLEAR_MESSAGES', { chatId })
+  messageNodeCache.clear()
+  iframeHost.removeChat(chatId)
+  const chat = store.chatsById[chatId]
+  if (chat && selectedChatId === chatId) iframeHost.restoreChat(chat, chat.roleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role)))
+}
+
+async function closeChatFrames(chatId: string): Promise<void> {
+  await runCommand('GROUP_CHAT_CLOSE', { chatId })
+  iframeHost.removeChat(chatId)
 }
 
 async function deleteChat(chatId: string): Promise<void> {
@@ -472,8 +509,13 @@ function renderMessages(): void {
   }
 
   if (messages.length === 0) {
-    const startupNotice = getChatStartupNotice(chat, getCurrentRoles())
-    messagesEl.append(startupNotice ? emptyCard(startupNotice.title, startupNotice.body) : emptyCard('等待第一条消息', '唤醒人员后，在下方输入任务；无 @ 默认发送给全部人员。'))
+    const roles = getCurrentRoles()
+    const startupNotice = getChatStartupNotice(chat, roles)
+    if (roles.length === 0) {
+      messagesEl.append(emptyChatPeopleCard('暂无人员', '先添加人员，再开始群聊协作。'))
+    } else {
+      messagesEl.append(startupNotice ? emptyCard(startupNotice.title, startupNotice.body) : emptyCard('等待第一条消息', '唤醒人员后，在下方输入任务；无 @ 默认发送给全部人员。'))
+    }
   }
 
   for (const item of buildChatRenderItems(messages, getCurrentRoles())) {
@@ -544,6 +586,14 @@ function renderMessageNode(message: GroupMessage, showName = true, showAvatar = 
   if (message.type === 'assistant') {
     const tools = document.createElement('div')
     tools.className = 'message-tools'
+    if (message.roleId) {
+      const jump = document.createElement('button')
+      jump.type = 'button'
+      jump.className = 'btn btn-ghost'
+      jump.textContent = '跳转'
+      jump.addEventListener('click', () => focusRoleFrame(message.chatId, message.roleId))
+      tools.append(jump)
+    }
     const quote = document.createElement('button')
     quote.type = 'button'
     quote.className = 'btn btn-ghost'
@@ -654,6 +704,15 @@ function thinkingBubble(role: GroupRole, showName = true, showAvatar = true): HT
   body.className = 'message-body thinking-dots'
   body.textContent = `${role.name} 正在回复中 `
   bubble.append(body)
+  const tools = document.createElement('div')
+  tools.className = 'message-tools'
+  const retry = document.createElement('button')
+  retry.type = 'button'
+  retry.className = 'btn btn-ghost'
+  retry.textContent = '打断重试'
+  retry.addEventListener('click', () => interruptAndRetryRole(role).catch(error => showError(error instanceof Error ? error.message : String(error))))
+  tools.append(retry)
+  bubble.append(tools)
   stack.append(bubble)
   inner.append(avatar, stack)
   article.append(inner)
@@ -821,6 +880,26 @@ function closeTemplateEditor(): void {
   selectedTemplateId = undefined
 }
 
+function openAddPersonDialog(): void {
+  if (!getCurrentChat()) return
+  addPersonModalEl.hidden = false
+  addPersonSiteMenuId = undefined
+  log.info('ui:person-add-dialog:open', { chatId: getCurrentChat()?.id, source: 'mixed' })
+  renderAddPersonDialog()
+}
+
+function openTemporaryPersonDialog(): void {
+  temporaryPersonNameEl.value = ''
+  temporaryPersonDescriptionEl.value = ''
+  temporaryPersonPromptEl.value = ''
+  temporaryPersonModalEl.hidden = false
+  temporaryPersonNameEl.focus()
+}
+
+function closeTemporaryPersonDialog(): void {
+  temporaryPersonModalEl.hidden = true
+}
+
 function roleCard(role: GroupRole): HTMLElement {
   const card = document.createElement('section')
   card.className = `role-card${role.id === selectedRoleId ? ' active' : ''}`
@@ -985,37 +1064,103 @@ function templateCard(template: RoleTemplate): HTMLElement {
 }
 
 function renderAddPersonDialog(): void {
-  const defaultSite = store.settings.defaultChatSite
-  addPersonSiteGeminiEl.checked = defaultSite === 'gemini'
-  addPersonSiteChatGptEl.checked = defaultSite === 'chatgpt'
-  addPersonSiteClaudeEl.checked = defaultSite === 'claude'
-
-  const templates = getTemplates()
+  const items = addPersonItems()
   addLibraryPeopleListEl.replaceChildren()
-  if (templates.length === 0) {
-    addLibraryPeopleListEl.append(emptyCard('人员库为空', '先在人员库中创建人员，或使用右侧临时添加。'))
+  if (items.length === 0) {
+    addLibraryPeopleListEl.append(emptyCard('暂无可选人员', '先在人员库中新建人员，或点击右上角临时添加。'))
     return
   }
 
-  for (const template of templates) {
+  for (const item of items) {
     const label = document.createElement('label')
     label.className = 'select-row'
     const checkbox = document.createElement('input')
     checkbox.type = 'checkbox'
-    checkbox.value = template.id
+    checkbox.value = item.key
     const content = document.createElement('span')
+    content.className = 'select-row-content'
     const name = document.createElement('strong')
-    name.textContent = template.name
+    name.textContent = item.name
     const description = document.createElement('div')
     description.className = 'template-description'
-    description.textContent = template.description || '未填写描述'
+    description.textContent = item.description || '未填写描述'
     const site = document.createElement('div')
     site.className = 'template-description'
-    site.textContent = `默认站点：${siteLabel(template.defaultChatSite ?? store.settings.defaultChatSite)}`
+    site.textContent = item.source === 'temporary' ? '临时人员' : '人员库'
     content.append(name, description, site)
-    label.append(checkbox, content)
+    label.append(checkbox, content, addPersonSiteControl(item.key, item.chatSite))
     addLibraryPeopleListEl.append(label)
   }
+}
+
+function addPersonItems(): AddPersonItem[] {
+  const libraryItems = getTemplates().map(template => {
+    const key = `library:${template.id}`
+    const chatSite = addPersonSiteByKey.get(key) ?? template.defaultChatSite ?? store.settings.defaultChatSite
+    addPersonSiteByKey.set(key, chatSite)
+    return {
+      key,
+      source: 'library' as const,
+      roleTemplateId: template.id,
+      name: template.name,
+      description: template.description,
+      chatSite,
+    }
+  })
+  const temporaryItems = temporaryPersonDrafts.map(draft => {
+    const key = `temporary:${draft.id}`
+    const chatSite = addPersonSiteByKey.get(key) ?? draft.chatSite
+    addPersonSiteByKey.set(key, chatSite)
+    return {
+      key,
+      source: 'temporary' as const,
+      draftId: draft.id,
+      name: draft.name,
+      description: draft.description,
+      systemPrompt: draft.systemPrompt,
+      chatSite,
+    }
+  })
+  return [...libraryItems, ...temporaryItems]
+}
+
+function addPersonSiteControl(itemKey: string, chatSite: ChatSite): HTMLElement {
+  const control = document.createElement('div')
+  control.className = 'role-site-control'
+  const sitePill = document.createElement('button')
+  sitePill.type = 'button'
+  sitePill.className = `site-pill site-pill-${chatSite}`
+  sitePill.setAttribute('aria-expanded', String(addPersonSiteMenuId === itemKey))
+  sitePill.textContent = siteLabel(chatSite)
+  sitePill.addEventListener('click', event => {
+    event.preventDefault()
+    event.stopPropagation()
+    addPersonSiteMenuId = addPersonSiteMenuId === itemKey ? undefined : itemKey
+    renderAddPersonDialog()
+  })
+  control.append(sitePill)
+  if (addPersonSiteMenuId === itemKey) control.append(addPersonSiteMenu(itemKey, chatSite))
+  return control
+}
+
+function addPersonSiteMenu(itemKey: string, currentSite: ChatSite): HTMLElement {
+  const menu = document.createElement('div')
+  menu.className = 'role-site-menu'
+  menu.addEventListener('click', event => event.stopPropagation())
+  for (const site of ['gemini', 'chatgpt', 'claude'] as const) {
+    const option = document.createElement('button')
+    option.type = 'button'
+    option.className = `role-site-option${currentSite === site ? ' active' : ''}`
+    option.textContent = currentSite === site ? `✓ ${siteLabel(site)}` : siteLabel(site)
+    option.addEventListener('click', event => {
+      event.preventDefault()
+      addPersonSiteByKey.set(itemKey, site)
+      addPersonSiteMenuId = undefined
+      renderAddPersonDialog()
+    })
+    menu.append(option)
+  }
+  return menu
 }
 
 function referenceBox(reference: MessageReference): HTMLElement {
@@ -1037,6 +1182,18 @@ function emptyCard(title: string, body: string): HTMLElement {
   paragraph.textContent = body
   card.append(heading, paragraph)
   wrapper.append(card)
+  return wrapper
+}
+
+function emptyChatPeopleCard(title: string, body: string): HTMLElement {
+  const wrapper = emptyCard(title, body)
+  const card = wrapper.querySelector('.empty-card')
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn btn-primary'
+  button.textContent = '添加人员'
+  button.addEventListener('click', openAddPersonDialog)
+  card?.append(button)
   return wrapper
 }
 
@@ -1113,6 +1270,26 @@ async function reconnectRolesForSend(chat: GroupChat, roles: GroupRole[]): Promi
     for (const role of uniqueRoles) reconnectingRoleKeys.delete(teamRoleKey(chat.id, role.id))
     renderComposerState()
   }
+}
+
+function focusRoleFrame(chatId: string, roleId: string | undefined): void {
+  if (!roleId) return
+  setWindowMinimized(true)
+  const chat = store.chatsById[chatId]
+  if (chat && selectedChatId !== chatId) switchChat(chatId)
+  if (iframeHost.focusRoleFrame(chatId, roleId)) return
+  const role = store.rolesById[roleId]
+  if (!role) return
+  iframeHost.recoverRole(role)
+}
+
+async function interruptAndRetryRole(role: GroupRole): Promise<void> {
+  const chat = store.chatsById[role.chatId]
+  if (!chat) return
+  await runCommand('GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id })
+  iframeHost.recoverRole(role)
+  await waitForRolesReady(chat.id, [role.id])
+  await runCommand('GROUP_ROLE_RETRY_REPLY', { chatId: chat.id, roleId: role.id })
 }
 
 async function sendMessageAfterReconnect(chat: GroupChat, raw: string, reference: MessageReference | undefined, targetRoles: GroupRole[], retryOnUnavailable = true): Promise<void> {
@@ -1254,19 +1431,23 @@ function validatePersonDraft(draft: TemplateDraft): string | undefined {
   return undefined
 }
 
-function selectedLibraryTemplateIds(): string[] {
-  return Array.from(addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value)
+function selectedAddPersonItems(): Record<string, unknown>[] {
+  const checkedKeys = new Set(Array.from(addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value))
+  return addPersonItems().filter(item => checkedKeys.has(item.key)).map(item => {
+    const chatSite = addPersonSiteByKey.get(item.key) ?? item.chatSite
+    if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, chatSite }
+    return {
+      source: 'temporary',
+      name: item.name,
+      description: item.description,
+      systemPrompt: item.systemPrompt,
+      chatSite,
+    }
+  })
 }
 
 function readTemplateChatSite(): ChatSite {
   const selected = document.querySelector<HTMLInputElement>('input[name="template-chat-site"]:checked')
-  if (selected?.value === 'chatgpt') return 'chatgpt'
-  if (selected?.value === 'claude') return 'claude'
-  return 'gemini'
-}
-
-function readAddPersonChatSite(): ChatSite {
-  const selected = document.querySelector<HTMLInputElement>('input[name="add-person-chat-site"]:checked')
   if (selected?.value === 'chatgpt') return 'chatgpt'
   if (selected?.value === 'claude') return 'claude'
   return 'gemini'
@@ -1431,7 +1612,12 @@ function registerUi(): void {
 
   requireElement<HTMLButtonElement>('#close-add-person').addEventListener('click', () => {
     addPersonModalEl.hidden = true
+    addPersonSiteMenuId = undefined
   })
+
+  requireElement<HTMLButtonElement>('#open-temporary-person').addEventListener('click', openTemporaryPersonDialog)
+
+  requireElement<HTMLButtonElement>('#close-temporary-person').addEventListener('click', closeTemporaryPersonDialog)
 
   togglePeopleDrawerEl.addEventListener('click', () => {
     peopleDrawerOpen = !peopleDrawerOpen
@@ -1456,6 +1642,10 @@ function registerUi(): void {
       roleSiteMenuRoleId = undefined
       renderRolePanel()
     }
+    if (addPersonSiteMenuId && !(event.target as Element | null)?.closest('.role-site-menu, .site-pill')) {
+      addPersonSiteMenuId = undefined
+      renderAddPersonDialog()
+    }
   })
 
   document.addEventListener('keydown', event => {
@@ -1465,9 +1655,11 @@ function registerUi(): void {
     peopleLibraryModalEl.hidden = true
     personTemplateModalEl.hidden = true
     addPersonModalEl.hidden = true
+    temporaryPersonModalEl.hidden = true
     selectedTemplateId = undefined
     chatMenuChatId = undefined
     roleSiteMenuRoleId = undefined
+    addPersonSiteMenuId = undefined
     renderChatList()
     renderRolePanel()
   })
@@ -1538,18 +1730,16 @@ function registerUi(): void {
 
   requireElement<HTMLFormElement>('#add-role-form').addEventListener('submit', event => {
     event.preventDefault()
-    if (!getCurrentChat()) return
-    addPersonModalEl.hidden = false
-    log.info('ui:person-add-dialog:open', { chatId: getCurrentChat()?.id, source: 'mixed' })
-    renderAddPersonDialog()
+    openAddPersonDialog()
   })
 
   requireElement<HTMLFormElement>('#add-library-people-form').addEventListener('submit', event => {
     event.preventDefault()
-    const templateIds = selectedLibraryTemplateIds()
-    addPeopleToCurrentChat(templateIds.map(roleTemplateId => ({ source: 'library', roleTemplateId })))
+    addPeopleToCurrentChat(selectedAddPersonItems())
       .then(() => {
         addPersonModalEl.hidden = true
+        addPersonSiteMenuId = undefined
+        temporaryPersonDrafts.splice(0)
       })
       .catch(error => showError(error.message))
   })
@@ -1566,15 +1756,11 @@ function registerUi(): void {
       showError(validationError)
       return
     }
-    const chatSite = readAddPersonChatSite()
-    addPeopleToCurrentChat([{ source: 'temporary', ...draft, chatSite }])
-      .then(() => {
-        temporaryPersonNameEl.value = ''
-        temporaryPersonDescriptionEl.value = ''
-        temporaryPersonPromptEl.value = ''
-        addPersonModalEl.hidden = true
-      })
-      .catch(error => showError(error.message))
+    const id = `temporary-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    temporaryPersonDrafts.push({ id, ...draft, chatSite: store.settings.defaultChatSite })
+    addPersonSiteByKey.set(`temporary:${id}`, store.settings.defaultChatSite)
+    closeTemporaryPersonDialog()
+    renderAddPersonDialog()
   })
 
   requireElement<HTMLFormElement>('#people-library-form').addEventListener('submit', event => {

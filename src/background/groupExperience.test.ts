@@ -696,6 +696,102 @@ describe('background group chat experience handlers', () => {
     expect(result.store.messagesById['msg-1'].deliveryStatus?.['role-1']).toBe('error')
     expect(result.store.chatsById['chat-1'].status).toBe('error')
   })
+
+  it('clears chat messages and unbinds role conversations without deleting roles', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1'], nextMessageSeq: 2, status: 'ready' }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', {
+      contextCursor: 1,
+      geminiConversationUrl: 'https://gemini.google.com/app/abc',
+      geminiConversationId: 'abc',
+    })
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'assistant',
+      content: '旧回复',
+      roleId: 'role-1',
+      roleName: '工程师',
+      createdAt: 1,
+      status: 'received',
+    }
+    const harness = await setupBackground(store)
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/abc' })
+
+    const result = await harness.invoke({ type: 'GROUP_CHAT_CLEAR_MESSAGES', chatId: 'chat-1' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(result.ok).toBe(true)
+    expect(result.store.chatsById['chat-1'].messageIds).toEqual([])
+    expect(result.store.chatsById['chat-1'].nextMessageSeq).toBe(1)
+    expect(result.store.messagesById['msg-1']).toBeUndefined()
+    expect(result.store.rolesById['role-1']).toMatchObject({ status: 'loading', contextCursor: 0 })
+    expect(result.store.rolesById['role-1'].geminiConversationUrl).toBeUndefined()
+    expect(result.store.rolesById['role-1'].geminiConversationId).toBeUndefined()
+  })
+
+  it('closes a chat by clearing runtime bindings while keeping the chat data', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1'], nextMessageSeq: 2, status: 'ready' }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师')
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'user',
+      content: '保留的消息',
+      createdAt: 1,
+      status: 'received',
+    }
+    const harness = await setupBackground(store)
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/abc' })
+
+    const result = await harness.invoke({ type: 'GROUP_CHAT_CLOSE', chatId: 'chat-1' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(result.ok).toBe(true)
+    expect(result.store.chatsById['chat-1'].messageIds).toEqual(['msg-1'])
+    expect(result.store.rolesById['role-1'].status).toBe('loading')
+    const legacyState = await harness.invoke({ type: 'GROUP_STORE_GET' }) as { bindings: unknown[] }
+    expect(legacyState.bindings).toEqual([])
+  })
+
+  it('retries an interrupted role reply with a new attempt id for the pending user message', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1'], nextMessageSeq: 2, status: 'running' }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', { status: 'thinking', lastPromptMessageId: 'msg-1', replyAttemptId: 'attempt-old' })
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'user',
+      content: '请分析',
+      targetRoleIds: ['role-1'],
+      createdAt: 1,
+      status: 'pending',
+      deliveryStatus: { 'role-1': 'sent' },
+    }
+    const harness = await setupBackground(store)
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/abc' })
+
+    const result = await harness.invoke({ type: 'GROUP_ROLE_RETRY_REPLY', chatId: 'chat-1', roleId: 'role-1' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(result.ok).toBe(true)
+    expect(result.store.rolesById['role-1'].status).toBe('thinking')
+    expect(result.store.rolesById['role-1'].lastPromptMessageId).toBe('msg-1')
+    expect(result.store.rolesById['role-1'].replyAttemptId).toMatch(/^attempt-/)
+    expect(result.store.rolesById['role-1'].replyAttemptId).not.toBe('attempt-old')
+    expect(result.store.messagesById['msg-1'].deliveryStatus?.['role-1']).toBe('pending')
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(1)
+    expect(promptCalls[0][1].messageId).toBe('msg-1')
+    expect(promptCalls[0][1].replyAttemptId).toBe(result.store.rolesById['role-1'].replyAttemptId)
+  })
 })
 
 function makeStore(): OpenTeamStore {

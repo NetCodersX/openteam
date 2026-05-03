@@ -68,6 +68,7 @@ export interface GroupRole {
   geminiConversationId?: string
   geminiConversationUrl?: string
   lastPromptMessageId?: string
+  replyAttemptId?: string
   lastReplyAt?: number
   createdAt: number
   updatedAt: number

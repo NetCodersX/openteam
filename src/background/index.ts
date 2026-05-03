@@ -23,6 +23,7 @@ type SendPromptMessage = {
   chatId: string
   roleId: string
   messageId: string
+  replyAttemptId?: string
   content: string
   autoSend?: boolean
   includesPersona?: boolean
@@ -227,9 +228,10 @@ function readPersonaLength(role: GroupRole): number {
   return (role.systemPrompt?.trim() || role.description?.trim() || role.name.trim()).length
 }
 
-function staleReplyReason(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string | undefined): string | undefined {
+function staleReplyReason(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string | undefined, replyAttemptId?: string): string | undefined {
   if (!promptMessageId) return 'missing-prompt-message-id'
   if (role.lastPromptMessageId !== promptMessageId) return 'prompt-message-mismatch'
+  if (replyAttemptId && role.replyAttemptId && role.replyAttemptId !== replyAttemptId) return 'reply-attempt-mismatch'
 
   const userMessage = store.messagesById[promptMessageId]
   if (!userMessage || userMessage.chatId !== chat.id || userMessage.type !== 'user') return 'prompt-message-not-found'
@@ -250,6 +252,7 @@ function recoverDeliverableRoleStatus(role: GroupRole, timestamp: number): void 
   log.warn('role:auto-recover-status', { roleId: role.id, roleName: role.name, previousStatus: role.status, lastPromptMessageId: role.lastPromptMessageId })
   role.status = 'ready'
   delete role.lastPromptMessageId
+  delete role.replyAttemptId
   role.updatedAt = timestamp
 }
 
@@ -492,6 +495,64 @@ async function handleChatDelete(message: RuntimeMessage) {
   return { ok: true, chatId: result.chatId, store }
 }
 
+async function handleChatClearMessages(message: RuntimeMessage) {
+  const chatId = requireString(message.chatId, '缺少群聊 ID')
+  const timestamp = now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, chatId)
+    const roleIds = [...chat.roleIds]
+    const messageIds = [...chat.messageIds]
+
+    for (const messageId of messageIds) delete store.messagesById[messageId]
+    chat.messageIds = []
+    chat.nextMessageSeq = 1
+    chat.updatedAt = timestamp
+
+    for (const roleId of roleIds) {
+      const role = store.rolesById[roleId]
+      if (!role) continue
+      runtimeFrames.removeRole(chat.id, role.id)
+      role.status = 'loading'
+      role.contextCursor = 0
+      role.updatedAt = timestamp
+      delete role.geminiConversationId
+      delete role.geminiConversationUrl
+      delete role.lastPromptMessageId
+      delete role.replyAttemptId
+    }
+
+    chat.status = roleIds.length > 0 ? 'initializing' : 'draft'
+    markChatRead(store, chat)
+    return { chatId: chat.id, roleIds, messageIds }
+  })
+  log.info('chat-clear-messages:stored', { chatId: result.chatId, roleCount: result.roleIds.length, messageCount: result.messageIds.length })
+  await broadcastStoreUpdated(store)
+  return { ok: true, chatId: result.chatId, store }
+}
+
+async function handleChatClose(message: RuntimeMessage) {
+  const chatId = requireString(message.chatId, '缺少群聊 ID')
+  const timestamp = now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, chatId)
+    const roleIds = [...chat.roleIds]
+
+    for (const roleId of roleIds) {
+      const role = store.rolesById[roleId]
+      if (!role) continue
+      runtimeFrames.removeRole(chat.id, role.id)
+      if (role.status !== 'thinking') role.status = 'loading'
+      role.updatedAt = timestamp
+    }
+    chat.status = getChatStatusFromRoles(store, chat)
+    chat.updatedAt = timestamp
+    return { chatId: chat.id, roleIds }
+  })
+  log.info('chat-close:stored', { chatId: result.chatId, roleCount: result.roleIds.length })
+  await broadcastStoreUpdated(store)
+  return { ok: true, chatId: result.chatId, store }
+}
+
 async function handleChatMarkRead(message: RuntimeMessage) {
   const { store } = await mutateStore(store => {
     const chat = requireChat(store, message.chatId)
@@ -622,7 +683,9 @@ async function handleRoleRecover(message: RuntimeMessage) {
   const { store, result } = await mutateStore(store => {
     const chat = requireChat(store, message.chatId)
     const role = requireRole(store, chat.id, message.roleId)
+    const wasThinking = role.status === 'thinking'
     role.status = 'loading'
+    if (wasThinking && role.lastPromptMessageId) role.replyAttemptId = newId('attempt')
     role.updatedAt = now()
     chat.status = 'initializing'
     chat.updatedAt = role.updatedAt
@@ -648,8 +711,10 @@ async function handleRoleReinitialize(message: RuntimeMessage) {
     if (role.status !== 'ready') throw new Error(`人员不可用：${role.name}`)
 
     const messageId = newId('init')
+    const replyAttemptId = newId('attempt')
     role.status = 'thinking'
     role.lastPromptMessageId = messageId
+    role.replyAttemptId = replyAttemptId
     role.updatedAt = timestamp
     chat.status = 'running'
     chat.updatedAt = timestamp
@@ -664,6 +729,7 @@ async function handleRoleReinitialize(message: RuntimeMessage) {
           chatId,
           roleId,
           messageId,
+          replyAttemptId,
           content: buildReinitPrompt(chat, role, roles),
           includesPersona: true,
         },
@@ -748,6 +814,7 @@ async function handleMessageSend(message: RuntimeMessage) {
       const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
       const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
       const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
+      const replyAttemptId = newId('attempt')
       if (!includesPersona) {
         log.debug('prompt:persona-skipped', {
           chatId: chat.id,
@@ -762,13 +829,14 @@ async function handleMessageSend(message: RuntimeMessage) {
 
       role.status = 'thinking'
       role.lastPromptMessageId = userMessage.id
+      role.replyAttemptId = replyAttemptId
       role.updatedAt = timestamp
 
       return {
         roleId,
         tabId: binding.tabId,
         frameId: binding.frameId,
-        message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, content, includesPersona },
+        message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
       }
     })
 
@@ -794,6 +862,68 @@ async function handleMessageSend(message: RuntimeMessage) {
   return { ok: true, message: result.message, deliveries: result.deliveries.map(delivery => ({ roleId: delivery.roleId })), store }
 }
 
+async function handleRoleRetryReply(message: RuntimeMessage) {
+  const chatId = requireString(message.chatId, '缺少群聊 ID')
+  const roleId = requireString(message.roleId, '缺少人员 ID')
+  const timestamp = now()
+  const binding = runtimeFrames.getByRole(chatId, roleId)
+  if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，请先恢复人员')
+
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, chatId)
+    const role = requireRole(store, chat.id, roleId)
+    const userMessageId = role.lastPromptMessageId ?? readOptionalString(message.messageId)
+    const userMessage = userMessageId ? store.messagesById[userMessageId] : undefined
+    if (!userMessage || userMessage.chatId !== chat.id || userMessage.type !== 'user') throw new Error('找不到可重试的用户消息')
+    if (userMessage.targetRoleIds && !userMessage.targetRoleIds.includes(role.id)) throw new Error('该消息没有发送给这个人员')
+
+    const roles = getChatRoles(store, chat)
+    const messages = getChatMessages(store, chat)
+    const reference = userMessage.references?.[0]
+    const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
+    const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
+    const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
+    const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
+    const replyAttemptId = newId('attempt')
+
+    userMessage.deliveryStatus ??= {}
+    userMessage.deliveryStatus[role.id] = 'pending'
+    userMessage.status = 'pending'
+    role.status = 'thinking'
+    role.lastPromptMessageId = userMessage.id
+    role.replyAttemptId = replyAttemptId
+    role.updatedAt = timestamp
+    chat.status = 'running'
+    chat.updatedAt = timestamp
+
+    return {
+      delivery: {
+        roleId,
+        tabId: binding.tabId,
+        frameId: binding.frameId,
+        message: { type: 'TEAM_SEND_PROMPT' as const, chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
+      },
+    }
+  })
+
+  log.info('role-retry-reply:deliver', {
+    chatId,
+    roleId,
+    messageId: result.delivery.message.messageId,
+    replyAttemptId: result.delivery.message.replyAttemptId,
+    tabId: result.delivery.tabId,
+    frameId: result.delivery.frameId,
+  })
+  await broadcastStoreUpdated(store)
+  try {
+    await sendPrompt(result.delivery)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    await markDeliveryError(chatId, roleId, result.delivery.message.messageId, reason)
+  }
+  return { ok: true, store, messageId: result.delivery.message.messageId }
+}
+
 async function markDeliveryError(chatId: string, roleId: string, messageId: string, reason: string): Promise<void> {
   log.warn('delivery:error', { chatId, roleId, messageId, reason })
   const { store } = await mutateStore(store => {
@@ -802,6 +932,7 @@ async function markDeliveryError(chatId: string, roleId: string, messageId: stri
     role.status = 'error'
     role.updatedAt = now()
     if (role.lastPromptMessageId === messageId) delete role.lastPromptMessageId
+    delete role.replyAttemptId
 
     const userMessage = store.messagesById[messageId]
     if (userMessage?.deliveryStatus) {
@@ -911,6 +1042,7 @@ async function handleRoleStatus(message: RuntimeMessage, sender: chrome.runtime.
     role.status = mappedStatus
     role.updatedAt = timestamp
     if (mappedStatus === 'ready' || mappedStatus === 'error') delete role.lastPromptMessageId
+    if (mappedStatus === 'ready' || mappedStatus === 'error') delete role.replyAttemptId
     chat.status = getChatStatusFromRoles(store, chat)
     chat.updatedAt = timestamp
     return role
@@ -924,13 +1056,14 @@ async function handleRoleReply(message: RuntimeMessage, sender: chrome.runtime.M
   const identity = readIdentity(message, sender)
   const content = requireString(message.content, '回复内容不能为空')
   const promptMessageId = readOptionalString(message.messageId)
+  const replyAttemptId = readOptionalString(message.replyAttemptId)
   const timestamp = now()
-  log.info('role-reply:received', { ...identity, promptMessageId, contentLength: content.length, senderUrl: sender.url })
+  log.info('role-reply:received', { ...identity, promptMessageId, replyAttemptId, contentLength: content.length, senderUrl: sender.url })
 
   const { store, result } = await mutateStore(store => {
     const chat = requireChat(store, identity.chatId)
     const role = requireRole(store, chat.id, identity.roleId)
-    const staleReason = staleReplyReason(store, chat, role, promptMessageId)
+    const staleReason = staleReplyReason(store, chat, role, promptMessageId, replyAttemptId)
     if (staleReason) {
       return { ignored: true as const, reason: staleReason, roleId: role.id, promptMessageId }
     }
@@ -965,6 +1098,7 @@ async function handleRoleReply(message: RuntimeMessage, sender: chrome.runtime.M
     role.lastReplyAt = timestamp
     role.updatedAt = timestamp
     if (!promptMessageId || role.lastPromptMessageId === promptMessageId) delete role.lastPromptMessageId
+    if (!replyAttemptId || role.replyAttemptId === replyAttemptId) delete role.replyAttemptId
     chat.status = getChatStatusFromRoles(store, chat)
     chat.updatedAt = timestamp
     return { ignored: false as const, reply }
@@ -984,7 +1118,8 @@ async function handleRoleError(message: RuntimeMessage, sender: chrome.runtime.M
   const identity = readIdentity(message, sender)
   const reason = readOptionalString(message.reason) ?? readOptionalString(message.error) ?? '人员执行失败'
   const promptMessageId = readOptionalString(message.messageId)
-  log.warn('role-error:received', { ...identity, promptMessageId, reason, senderUrl: sender.url, tabId: messageTabId(message, sender), frameId: senderFrameId(sender) })
+  const replyAttemptId = readOptionalString(message.replyAttemptId)
+  log.warn('role-error:received', { ...identity, promptMessageId, replyAttemptId, reason, senderUrl: sender.url, tabId: messageTabId(message, sender), frameId: senderFrameId(sender) })
 
   const { store } = await mutateStore(store => {
     const chat = requireChat(store, identity.chatId)
@@ -992,6 +1127,7 @@ async function handleRoleError(message: RuntimeMessage, sender: chrome.runtime.M
     role.status = 'error'
     role.updatedAt = now()
     if (!promptMessageId || role.lastPromptMessageId === promptMessageId) delete role.lastPromptMessageId
+    if (!replyAttemptId || role.replyAttemptId === replyAttemptId) delete role.replyAttemptId
 
     if (promptMessageId) {
       const userMessage = store.messagesById[promptMessageId]
@@ -1203,6 +1339,10 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         return handleSettingsUpdate(message)
       case 'GROUP_CHAT_DELETE':
         return handleChatDelete(message)
+      case 'GROUP_CHAT_CLEAR_MESSAGES':
+        return handleChatClearMessages(message)
+      case 'GROUP_CHAT_CLOSE':
+        return handleChatClose(message)
       case 'GROUP_CHAT_MARK_READ':
         return handleChatMarkRead(message)
       case 'ROLE_TEMPLATE_CREATE':
@@ -1226,6 +1366,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         return handleRoleRecover(message)
       case 'GROUP_ROLE_REINITIALIZE':
         return handleRoleReinitialize(message)
+      case 'GROUP_ROLE_RETRY_REPLY':
+        return handleRoleRetryReply(message)
       case 'GROUP_MESSAGE_SEND':
         return handleMessageSend(message)
       case 'TEAM_FRAME_ROLE_READY':

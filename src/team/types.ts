@@ -93,13 +93,13 @@ export type BackgroundToHostMessage =
 
 export type BackgroundToRoleMessage =
   | { type: 'TEAM_ASSIGN_ROLE'; chatId?: string; roleId: string; roleName: string; roomId: string }
-  | { type: 'TEAM_SEND_PROMPT'; chatId?: string; roleId?: string; messageId: string; content: string; autoSend?: boolean }
+  | { type: 'TEAM_SEND_PROMPT'; chatId?: string; roleId?: string; messageId: string; content: string; autoSend?: boolean; replyAttemptId?: string }
 
 export type RoleToBackgroundMessage =
   | { type: 'TEAM_ROLE_READY'; conversationId: string }
   | { type: 'TEAM_FRAME_ROLE_READY'; chatId?: string; roleId: string; hostTabId?: number; conversationId: string; conversationUrl?: string }
   | { type: 'TEAM_ROLE_CONVERSATION_UPDATED'; chatId: string; roleId: string; conversationId?: string; conversationUrl?: string }
   | { type: 'TEAM_SEND_ACK'; chatId: string; roleId: string; messageId: string }
-  | { type: 'TEAM_ROLE_ERROR'; chatId: string; roleId: string; messageId?: string; reason: string }
+  | { type: 'TEAM_ROLE_ERROR'; chatId: string; roleId: string; messageId?: string; reason: string; replyAttemptId?: string }
   | { type: 'TEAM_ROLE_STATUS'; status: TeamRoleStatus; error?: string }
-  | { type: 'TEAM_ROLE_REPLY'; chatId?: string; roleId?: string; messageId?: string; content: string; conversationId?: string; conversationUrl?: string }
+  | { type: 'TEAM_ROLE_REPLY'; chatId?: string; roleId?: string; messageId?: string; replyAttemptId?: string; content: string; conversationId?: string; conversationUrl?: string }

@@ -119,6 +119,26 @@ export class IframeHost {
     return this.framesByRoleKey.get(roleKey(chatId, roleId))?.iframe
   }
 
+  focusRoleFrame(chatId: string, roleId: string): boolean {
+    this.assertNotDisposed()
+    const record = this.framesByRoleKey.get(roleKey(chatId, roleId))
+    if (!record) return false
+
+    this.activeChatId = chatId
+    this.activeChatSignature = undefined
+    this.highlightChatGroup(chatId)
+    this.preserveOtherChatGroups(chatId)
+    record.shell.classList.remove('jump-highlight')
+    void record.shell.offsetWidth
+    record.shell.classList.add('jump-highlight')
+    this.window.setTimeout(() => {
+      if (record.shell.isConnected) record.shell.classList.remove('jump-highlight')
+    }, 2200)
+    record.shell.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    record.iframe.focus()
+    return true
+  }
+
   getChatGroup(chatId: string): HTMLElement | undefined {
     return this.groupsByChatId.get(chatId)
   }

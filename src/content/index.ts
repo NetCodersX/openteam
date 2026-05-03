@@ -47,6 +47,7 @@ const log = {
 
 let assignedRole: AssignedRole | null = null
 let activeMessageId: string | undefined
+let activeReplyAttemptId: string | undefined
 let currentState: TeamRoomState | null = null
 let lastReportedConversationKey = ''
 let conversationMonitorStarted = false
@@ -58,11 +59,14 @@ const replyTimeout = createReplyTimeout(REPLY_TIMEOUT_MS, messageId => {
   log.warn('reply-timeout', { messageId, roleId: assignedRole?.roleId, roleName: assignedRole?.roleName })
   if (tryReportLatestReply(messageId, 'timeout-compensation')) return
   if (activeMessageId === messageId) activeMessageId = undefined
+  const replyAttemptId = activeReplyAttemptId
+  activeReplyAttemptId = undefined
   sendRuntimeMessage({
     type: 'TEAM_ROLE_STATUS',
     status: 'error',
     error: `等待 Gemini 回复超时（${Math.round(REPLY_TIMEOUT_MS / 1000)} 秒）`,
   }).catch(error => log.warn('reply-timeout:status-failed', { error: error instanceof Error ? error.message : String(error) }))
+  reportRoleError(messageId, `等待 Gemini 回复超时（${Math.round(REPLY_TIMEOUT_MS / 1000)} 秒）`, undefined, undefined, replyAttemptId)
 })
 
 function getConversationId(): string {
@@ -156,6 +160,8 @@ function reportAcceptedReply(messageId: string, text: string, source: 'observer'
   if (!assignedRole) return
 
   activeMessageId = undefined
+  const replyAttemptId = activeReplyAttemptId
+  activeReplyAttemptId = undefined
   clearPromptReplyBaseline()
   replyTimeout.clear()
   log.info('reply:accepted', { messageId, textLength: text.length, roleId: assignedRole.roleId, roleName: assignedRole.roleName, source })
@@ -166,6 +172,7 @@ function reportAcceptedReply(messageId: string, text: string, source: 'observer'
     chatId: getAssignedChatId(assignedRole),
     roleId: assignedRole.roleId,
     messageId,
+    replyAttemptId,
     content: text,
     conversationId: snapshot.conversationId,
     conversationUrl: snapshot.conversationUrl,
@@ -313,7 +320,7 @@ function reportConversationUpdate(force = false): void {
   }).catch(error => log.warn('conversation-update:failed', { error: error instanceof Error ? error.message : String(error) }))
 }
 
-function reportRoleError(messageId: string | undefined, reason: string, chatId = assignedRole ? getAssignedChatId(assignedRole) : '', roleId = assignedRole?.roleId || ''): void {
+function reportRoleError(messageId: string | undefined, reason: string, chatId = assignedRole ? getAssignedChatId(assignedRole) : '', roleId = assignedRole?.roleId || '', replyAttemptId = activeReplyAttemptId): void {
   if (!chatId || !roleId) {
     log.warn('role-error:skipped-missing-identity', { messageId, reason, assignedRole })
     return
@@ -325,6 +332,7 @@ function reportRoleError(messageId: string | undefined, reason: string, chatId =
     chatId,
     roleId,
     messageId,
+    replyAttemptId,
     reason,
   }).catch(error => log.warn('role-error:failed', { error: error instanceof Error ? error.message : String(error) }))
 }
@@ -734,6 +742,7 @@ function ensureHostPanel(state: TeamRoomState): void {
 function assignRole(role: AssignedRole): void {
   assignedRole = role
   activeMessageId = undefined
+  activeReplyAttemptId = undefined
   clearPromptReplyBaseline()
   replyTimeout.clear()
   replyTracker.seed(getConversationId(), getAllAssistantReplies())
@@ -788,6 +797,7 @@ function registerMessageHandlers(): void {
     })
     capturePromptReplyBaseline(message.messageId)
     activeMessageId = message.messageId
+    activeReplyAttemptId = message.replyAttemptId
     replyTimeout.clear()
     sendRuntimeMessage({ type: 'TEAM_ROLE_STATUS', status: 'sending' })
       .then(() => {
@@ -813,9 +823,10 @@ function registerMessageHandlers(): void {
         const reason = error instanceof Error ? error.message : String(error)
         log.warn('message:send-prompt:failed', { messageId: message.messageId, error: reason, diagnostics: collectPromptDiagnostics() })
         activeMessageId = undefined
+        activeReplyAttemptId = undefined
         clearPromptReplyBaseline()
         replyTimeout.clear()
-        reportRoleError(message.messageId, reason, promptChatId, promptRoleId)
+        reportRoleError(message.messageId, reason, promptChatId, promptRoleId, message.replyAttemptId)
         sendRuntimeMessage({ type: 'TEAM_ROLE_STATUS', status: 'error', error: reason }).catch(() => undefined)
         sendResponse({ ok: false, messageId: message.messageId, error: reason })
       })

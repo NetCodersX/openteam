@@ -1037,6 +1037,7 @@
       .message-tools {
         display: flex;
         justify-content: flex-end;
+        gap: 6px;
         margin-top: -2px;
         padding: 0 8px 7px;
         opacity: 0;
@@ -1472,10 +1473,20 @@
         margin-bottom: 16px;
       }
 
+      .modal-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
       .modal-grid {
         display: grid;
         grid-template-columns: minmax(220px, 0.9fr) minmax(280px, 1.1fr);
         gap: 14px;
+      }
+
+      .modal-grid.single-column {
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .modal-grid-wide {
@@ -1491,13 +1502,17 @@
 
       .select-row {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-columns: auto minmax(0, 1fr) auto;
         gap: 10px;
-        align-items: start;
+        align-items: center;
         border: 1px solid rgba(132, 153, 171, 0.14);
         border-radius: 8px;
         padding: 10px;
         background: rgba(14, 24, 35, 0.46);
+      }
+
+      .select-row-content {
+        min-width: 0;
       }
 
       .site-picker {
@@ -1610,6 +1625,13 @@
         border: 1px solid rgba(132, 153, 171, 0.14);
         border-radius: 12px;
         background: rgba(7, 14, 22, 0.64);
+        transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+      }
+
+      #iframe-host .role-frame-shell.jump-highlight {
+        border-color: rgba(53, 209, 140, 0.92);
+        box-shadow: 0 0 0 3px rgba(53, 209, 140, 0.28), 0 0 42px rgba(53, 209, 140, 0.34);
+        transform: translateY(-2px);
       }
 
       #iframe-host .role-frame-label {
@@ -1880,35 +1902,33 @@
         <div class="modal-header">
           <div>
             <h2 id="add-person-title">添加人员</h2>
-            <p class="tiny">可从人员库批量添加，也可只为当前群聊临时添加。</p>
+            <p class="tiny">从人员库或临时草稿中选择人员，并为每个人指定站点。</p>
           </div>
+          <div class="modal-header-actions">
+            <button id="open-temporary-person" class="btn btn-ghost" type="button">临时添加</button>
           <button id="close-add-person" class="icon-btn" type="button" aria-label="关闭添加人员">×</button>
-        </div>
-        <div class="modal-grid">
-          <div class="field modal-grid-wide site-picker">
-            <label>站点</label>
-            <div class="site-segmented">
-              <label class="site-segment" for="add-person-site-gemini">
-                <input id="add-person-site-gemini" type="radio" name="add-person-chat-site" value="gemini" checked />
-                <span>Gemini</span>
-              </label>
-              <label class="site-segment" for="add-person-site-chatgpt">
-                <input id="add-person-site-chatgpt" type="radio" name="add-person-chat-site" value="chatgpt" />
-                <span>ChatGPT</span>
-              </label>
-              <label class="site-segment" for="add-person-site-claude">
-                <input id="add-person-site-claude" type="radio" name="add-person-chat-site" value="claude" />
-                <span>Claude</span>
-              </label>
-            </div>
           </div>
-          <form id="add-library-people-form" class="modal-form modal-card">
-            <h3>从人员库添加</h3>
+        </div>
+        <div class="modal-grid single-column">
+          <form id="add-library-people-form" class="modal-form modal-card modal-grid-wide">
+            <h3>选择人员</h3>
             <div id="add-library-people-list" class="select-list"></div>
             <button class="btn btn-primary" type="submit">加入选中人员</button>
           </form>
-          <form id="add-temporary-person-form" class="modal-form modal-card">
-            <h3>临时添加</h3>
+        </div>
+      </section>
+    </div>
+
+    <div id="temporary-person-modal" class="modal-backdrop" hidden>
+      <section class="modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="temporary-person-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="temporary-person-title">临时添加</h2>
+            <p class="tiny">临时人员会先进入待选列表，确认后才加入当前群聊。</p>
+          </div>
+          <button id="close-temporary-person" class="icon-btn" type="button" aria-label="关闭临时添加">×</button>
+        </div>
+          <form id="add-temporary-person-form" class="modal-form">
             <div class="field">
               <label for="temporary-person-name">人员名称</label>
               <input id="temporary-person-name" type="text" autocomplete="off" />
@@ -1921,9 +1941,8 @@
               <label for="temporary-person-prompt">人设</label>
               <textarea id="temporary-person-prompt"></textarea>
             </div>
-            <button class="btn btn-primary" type="submit">仅加入当前群聊</button>
+            <button class="btn btn-primary" type="submit">加入待选列表</button>
           </form>
-        </div>
       </section>
     </div>
 

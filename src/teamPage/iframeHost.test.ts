@@ -234,6 +234,31 @@ describe('IframeHost', () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' })
   })
 
+  it('focuses a role frame and highlights its chat group', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const scrollIntoView = vi.fn()
+    const originalScrollIntoView = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    const host = createIframeHost({ visibleHost })
+
+    try {
+      host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
+      host.activateChat(makeChat('chat-2', ['role-2']), [makeRole('chat-2', 'role-2')])
+      const focused = host.focusRoleFrame('chat-1', 'role-1')
+
+      expect(focused).toBe(true)
+      expect(host.isChatActive('chat-1')).toBe(true)
+      expect(host.getChatGroup('chat-1')?.dataset.activeChat).toBe('true')
+      expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.classList.contains('jump-highlight')).toBe(true)
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
+      vi.advanceTimersByTime(2400)
+      expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.classList.contains('jump-highlight')).toBe(false)
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView
+    }
+  })
+
   it('updates host tab id used in role assignment messages', () => {
     const visibleHost = document.createElement('div')
     document.body.append(visibleHost)

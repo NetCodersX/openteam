@@ -27,9 +27,8 @@ describe('team.html chat creation UI', () => {
     expect(html).toContain('id="template-site-chatgpt"')
     expect(html).toContain('id="template-site-claude"')
     expect(html).toContain('id="add-person-modal"')
-    expect(html).toContain('id="add-person-site-gemini"')
-    expect(html).toContain('id="add-person-site-chatgpt"')
-    expect(html).toContain('id="add-person-site-claude"')
+    expect(html).toContain('id="open-temporary-person"')
+    expect(html).toContain('id="temporary-person-modal"')
     expect(html).toContain('id="add-library-people-form"')
     expect(html).toContain('id="add-temporary-person-form"')
     expect(html).toContain('id="toggle-people-drawer"')
@@ -46,12 +45,10 @@ describe('team.html chat creation UI', () => {
   it('uses template default sites for library people and the add-person picker for temporary people', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
 
-    expect(source).toContain('function readAddPersonChatSite(): ChatSite')
-    expect(source).toContain("querySelector<HTMLInputElement>('input[name=\"add-person-chat-site\"]:checked')")
-    expect(source).toContain('const chatSite = readAddPersonChatSite()')
-    expect(source).toContain("{ source: 'library', roleTemplateId }")
-    expect(source).not.toContain("{ source: 'library', roleTemplateId, chatSite }")
-    expect(source).toContain("{ source: 'temporary', ...draft, chatSite }")
+    expect(source).toContain('function addPersonSiteControl(itemKey: string, chatSite: ChatSite): HTMLElement')
+    expect(source).toContain('const chatSite = addPersonSiteByKey.get(item.key) ?? item.chatSite')
+    expect(source).toContain("if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, chatSite }")
+    expect(source).toContain("source: 'temporary'")
     expect(source).toContain("selected?.value === 'claude'")
   })
 
@@ -65,7 +62,7 @@ describe('team.html chat creation UI', () => {
     expect(source).toContain('const templateSiteGeminiEl')
     expect(source).toContain('function readTemplateChatSite(): ChatSite')
     expect(source).toContain('defaultChatSite: readTemplateChatSite()')
-    expect(source).toContain("roleTemplateId }))")
+    expect(source).toContain('template.defaultChatSite ?? store.settings.defaultChatSite')
     expect(html).not.toContain('默认站点：Gemini')
     expect(html).not.toContain('默认站点：ChatGPT')
     expect(html).not.toContain('默认站点：Claude')
@@ -114,11 +111,10 @@ describe('team.html chat creation UI', () => {
     expect(html).toMatch(/\.role-site-menu\s*{[^}]*position:\s*absolute;/s)
   })
 
-  it('uses a compact segmented picker for add-person target sites', () => {
+  it('does not keep a global add-person site picker', () => {
     const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
 
-    expect(html).toContain('class="site-segmented"')
-    expect(html).toMatch(/\.site-segmented\s*{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s)
+    expect(html).not.toContain('name="add-person-chat-site"')
     expect(html).not.toContain('为这次加入群聊的人员统一指定 Gemini。')
     expect(html).not.toContain('为这次加入群聊的人员统一指定 ChatGPT。')
     expect(html).not.toContain('为这次加入群聊的人员统一指定 Claude。')
@@ -206,7 +202,11 @@ describe('team.html chat creation UI', () => {
     expect(source).toContain("menu.className = 'chat-action-menu'")
     expect(source).toContain("rename.textContent = '编辑名称'")
     expect(source).toContain("duplicate.textContent = '复制群聊'")
+    expect(source).toContain("clearMessages.textContent = '清空消息'")
+    expect(source).toContain("closeFrames.textContent = '关闭群聊'")
     expect(source).toContain("remove.textContent = '删除群聊'")
+    expect(source).toContain("runCommand('GROUP_CHAT_CLEAR_MESSAGES'")
+    expect(source).toContain("runCommand('GROUP_CHAT_CLOSE'")
     expect(source).toContain("runCommand('GROUP_CHAT_UPDATE'")
     expect(source).toContain("runCommand('GROUP_CHAT_DUPLICATE'")
     expect(source).toContain("sendRuntimeMessage('GROUP_CHAT_DELETE'")
@@ -215,6 +215,44 @@ describe('team.html chat creation UI', () => {
     expect(html).toMatch(/\.chat-action-menu\s*{[^}]*position:\s*absolute;/s)
     expect(html).toMatch(/\.chat-action-menu\s*{[^}]*right:\s*14px;/s)
     expect(html).not.toMatch(/\.chat-action-menu\s*{[^}]*grid-column:\s*2 \/ 4;/s)
+  })
+
+  it('adds message jump and retry controls for role outputs', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(source).toContain("jump.textContent = '跳转'")
+    expect(source).toContain('focusRoleFrame(message.chatId, message.roleId)')
+    expect(source).toContain('setWindowMinimized(true)')
+    expect(html).toContain('.role-frame-shell.jump-highlight')
+    expect(source).toContain("retry.textContent = '打断重试'")
+    expect(source).toContain("runCommand('GROUP_ROLE_RETRY_REPLY'")
+  })
+
+  it('keeps add-person sites per person and moves temporary people into a separate draft flow', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+    const addPersonModal = html.match(/<div id="add-person-modal"[\s\S]*?<div id="temporary-person-modal"/)?.[0] ?? ''
+    const temporaryModal = html.match(/<div id="temporary-person-modal"[\s\S]*?<div id="iframe-host"/)?.[0] ?? ''
+
+    expect(addPersonModal).toContain('id="open-temporary-person"')
+    expect(addPersonModal).not.toContain('id="add-person-site-gemini"')
+    expect(addPersonModal).not.toContain('id="add-person-site-chatgpt"')
+    expect(addPersonModal).not.toContain('id="add-person-site-claude"')
+    expect(addPersonModal).not.toContain('id="add-temporary-person-form"')
+    expect(temporaryModal).toContain('id="add-temporary-person-form"')
+    expect(temporaryModal).toContain('id="close-temporary-person"')
+    expect(source).toContain('temporaryPersonDrafts')
+    expect(source).toContain('addPersonSiteControl')
+    expect(source).toContain('selectedAddPersonItems()')
+  })
+
+  it('shows an add-person call to action when the selected chat has no people', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(source).toContain("emptyChatPeopleCard('暂无人员'")
+    expect(source).toContain("button.textContent = '添加人员'")
+    expect(source).toContain('openAddPersonDialog()')
   })
 
   it('switches chats from the whole chat row while keeping row menus isolated', () => {
