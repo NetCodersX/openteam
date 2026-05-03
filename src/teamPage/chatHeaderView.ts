@@ -36,7 +36,8 @@ export function createChatHeaderView(deps: ChatHeaderViewDependencies): ChatHead
     deps.chatStatusEl.className = `status-pill status-${chat.status}`
     deps.chatStatusEl.textContent = chatStatusLabel(chat.status)
     deps.togglePeopleDrawerEl.disabled = false
-    deps.togglePeopleDrawerEl.textContent = `成员 ${roles.length} ${deps.state.peopleDrawerOpen ? '▴' : '▾'}`
+    deps.togglePeopleDrawerEl.textContent = `成员 ${roles.length}`
+    deps.togglePeopleDrawerEl.setAttribute('aria-label', deps.state.peopleDrawerOpen ? '收起成员面板' : '打开成员面板')
     deps.togglePeopleDrawerEl.setAttribute('aria-expanded', String(deps.state.peopleDrawerOpen))
   }
 

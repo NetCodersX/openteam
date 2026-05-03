@@ -226,6 +226,7 @@ const teamUiController = createTeamUiController({
   createChatFormEl,
   newChatNameEl,
   togglePeopleDrawerEl,
+  rolePanelEl,
   iframeHost,
   refreshCurrentChat,
   getCurrentChat,

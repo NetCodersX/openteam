@@ -15,6 +15,7 @@ export interface TeamUiControllerDependencies {
   createChatFormEl: HTMLFormElement
   newChatNameEl: HTMLInputElement
   togglePeopleDrawerEl: HTMLButtonElement
+  rolePanelEl: HTMLElement
   iframeHost: TeamUiIframeHost
   refreshCurrentChat(): Promise<void>
   getCurrentChat(): GroupChat | undefined
@@ -70,19 +71,24 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
     })
 
     document.addEventListener('click', event => {
+      const target = event.target as Element | null
       if (!deps.settingsMenuEl.hidden && !deps.settingsMenuEl.contains(event.target as Node) && event.target !== deps.settingsButtonEl) {
         deps.settingsMenuEl.hidden = true
         deps.settingsButtonEl.setAttribute('aria-expanded', 'false')
       }
-      if (deps.state.chatMenuChatId && !(event.target as Element | null)?.closest('.chat-action-menu, .chat-menu-btn')) {
+      if (deps.state.peopleDrawerOpen && target && !deps.rolePanelEl.contains(target) && !deps.togglePeopleDrawerEl.contains(target)) {
+        deps.state.peopleDrawerOpen = false
+        deps.render()
+      }
+      if (deps.state.chatMenuChatId && !target?.closest('.chat-action-menu, .chat-menu-btn')) {
         deps.state.chatMenuChatId = undefined
         deps.renderChatList()
       }
-      if (deps.state.roleSiteMenuRoleId && !(event.target as Element | null)?.closest('.role-site-menu, .site-pill, .role-more')) {
+      if (deps.state.roleSiteMenuRoleId && !target?.closest('.role-site-menu, .site-pill, .role-more')) {
         deps.state.roleSiteMenuRoleId = undefined
         deps.renderRolePanel()
       }
-      if (deps.state.addPersonSiteMenuId && !(event.target as Element | null)?.closest('.role-site-menu, .site-pill')) {
+      if (deps.state.addPersonSiteMenuId && !target?.closest('.role-site-menu, .site-pill')) {
         deps.state.addPersonSiteMenuId = undefined
         deps.renderAddPersonDialog()
       }
@@ -100,6 +106,7 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
     })
 
     requireElement<HTMLButtonElement>('#close-window').addEventListener('click', () => {
+      if (!window.confirm('确定要关闭 OpenTeam 窗口吗？')) return
       window.close()
     })
 

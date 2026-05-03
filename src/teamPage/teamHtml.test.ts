@@ -343,9 +343,17 @@ describe('team.html chat creation UI', () => {
     expect(uiSource).toContain('refreshCurrentChat().catch')
   })
 
+  it('asks for confirmation before closing the OpenTeam window', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/teamUiController.ts'), 'utf8')
+
+    expect(source).toContain("window.confirm('确定要关闭 OpenTeam 窗口吗？')")
+    expect(source).toContain('window.close()')
+  })
+
   it('uses a lighter composer and simplified chat header', () => {
     const html = readTeamDocument()
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/chatHeaderView.ts'), 'utf8')
+    const uiSource = readFileSync(resolve(process.cwd(), 'src/teamPage/teamUiController.ts'), 'utf8')
 
     expect(html).toContain('placeholder="输入消息，@成员可指定回复；不 @ 默认发给全部成员。"')
     expect(html).toMatch(/\.chat-header\s*{[^}]*min-height:\s*72px;/s)
@@ -354,7 +362,10 @@ describe('team.html chat creation UI', () => {
     expect(html).toMatch(/\.composer\s*{[^}]*border-top:\s*1px solid rgba\(132,\s*153,\s*171,\s*0\.12\);/s)
     expect(html).toMatch(/\.drawer-summary\s*{[^}]*min-height:\s*30px;/s)
     expect(source).toContain("togglePeopleDrawerEl.textContent = '成员 0'")
-    expect(source).toContain('deps.togglePeopleDrawerEl.textContent = `成员 ${roles.length} ${deps.state.peopleDrawerOpen ?')
+    expect(source).toContain('deps.togglePeopleDrawerEl.textContent = `成员 ${roles.length}`')
+    expect(source).toContain("deps.togglePeopleDrawerEl.setAttribute('aria-label', deps.state.peopleDrawerOpen ? '收起成员面板' : '打开成员面板')")
+    expect(uiSource).toContain('deps.state.peopleDrawerOpen && target && !deps.rolePanelEl.contains(target) && !deps.togglePeopleDrawerEl.contains(target)')
+    expect(uiSource).toContain('deps.state.peopleDrawerOpen = false')
     expect(source).not.toContain('人回复中')
   })
 
