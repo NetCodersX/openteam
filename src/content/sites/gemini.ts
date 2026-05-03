@@ -1,6 +1,10 @@
 import type { ChatSiteAdapter, ConversationSnapshot } from './types'
 import { keepDeepestResponseContainers } from '../responseContainers'
+import { readResponseTextFromCopyAction, findClickableCopyButton } from './clipboardCopy'
+import { readEditorText, setContentEditableText } from './contentEditable'
 import { extractMarkdownFromDom } from './domMarkdown'
+import { buttonLabelMatches, describeElement, extractCleanTextFromDom, findClosestMatchingAncestor } from './domText'
+import { isClickableButton, waitForClickableButton, waitForElement } from './waitForElement'
 
 const GEMINI_ORIGIN = 'https://gemini.google.com'
 const GEMINI_HOME_URL = `${GEMINI_ORIGIN}/`
@@ -18,22 +22,6 @@ const GEMINI_SELECTORS = {
     'button[data-test-id="copy-button"], copy-button button, button[mattooltip="复制回答"], button[aria-label="复制"], button[aria-label*="Copy"], button[aria-label*="复制"]',
   turn: 'model-response',
 }
-
-const BLOCK_TAGS = new Set([
-  'P',
-  'DIV',
-  'BR',
-  'LI',
-  'TR',
-  'PRE',
-  'BLOCKQUOTE',
-  'H1',
-  'H2',
-  'H3',
-  'H4',
-  'H5',
-  'H6',
-])
 
 const SKIP_TAGS = new Set([
   'MAT-ICON',
@@ -86,7 +74,7 @@ export function createGeminiAdapter(options: GeminiAdapterOptions = {}): ChatSit
 
     if (!autoSend) return
 
-    const sendButton = await waitForClickableButton(GEMINI_SELECTORS.sendButton, inputTimeoutMs)
+    const sendButton = await waitForClickableButton(GEMINI_SELECTORS.sendButton, inputTimeoutMs, 'Gemini 发送按钮暂不可用，请稍后重试')
     sendButton.click()
   }
 
@@ -116,24 +104,6 @@ export function getGeminiConversationLocation(href: string): ConversationSnapsho
   }
 }
 
-export function setContentEditableText(editor: HTMLElement, content: string): void {
-  editor.focus()
-  editor.replaceChildren()
-
-  const block = document.createElement('p')
-  block.textContent = content
-  editor.append(block)
-
-  editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: content }))
-  editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: content }))
-  editor.dispatchEvent(new Event('change', { bubbles: true }))
-}
-
-export function isClickableButton(element: HTMLElement): boolean {
-  if (!(element instanceof HTMLButtonElement)) return true
-  return !element.disabled && element.getAttribute('aria-disabled') !== 'true'
-}
-
 function parseSafeGeminiUrl(value: string | undefined): URL | undefined {
   if (!value || !value.startsWith(GEMINI_HOME_URL)) return undefined
 
@@ -152,29 +122,6 @@ function extractConversationId(url: URL): string | undefined {
   return conversationId ? decodeURIComponent(conversationId) : undefined
 }
 
-function querySelectorFirst(selectors: string): HTMLElement | null {
-  for (const selector of selectors.split(',').map(item => item.trim())) {
-    const element = document.querySelector(selector) as HTMLElement | null
-    if (element) return element
-  }
-
-  return null
-}
-
-function describeElement(element: Element): Record<string, unknown> {
-  const htmlElement = element as HTMLElement
-  return {
-    tagName: element.tagName,
-    id: htmlElement.id || undefined,
-    className: typeof htmlElement.className === 'string' ? htmlElement.className.slice(0, 120) : undefined,
-    role: element.getAttribute('role') || undefined,
-    ariaLabel: element.getAttribute('aria-label') || undefined,
-    ariaDisabled: element.getAttribute('aria-disabled') || undefined,
-    disabled: element instanceof HTMLButtonElement ? element.disabled : undefined,
-    contentEditable: htmlElement.contentEditable || undefined,
-  }
-}
-
 function collectPromptDiagnostics(): Record<string, unknown> {
   return {
     href: location.href,
@@ -187,158 +134,25 @@ function collectPromptDiagnostics(): Record<string, unknown> {
   }
 }
 
-function waitForElement(selectors: string, timeoutMs: number): Promise<HTMLElement> {
-  const immediate = querySelectorFirst(selectors)
-  if (immediate) return Promise.resolve(immediate)
-
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now()
-    const timer = window.setInterval(() => {
-      const element = querySelectorFirst(selectors)
-      if (element) {
-        window.clearInterval(timer)
-        resolve(element)
-        return
-      }
-
-      if (Date.now() - startedAt >= timeoutMs) {
-        window.clearInterval(timer)
-        reject(new Error(`Element not found: ${selectors}`))
-      }
-    }, 250)
-  })
-}
-
-function waitForClickableButton(selectors: string, timeoutMs: number): Promise<HTMLElement> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now()
-    const timer = window.setInterval(() => {
-      const button = querySelectorFirst(selectors)
-      if (button && isClickableButton(button)) {
-        window.clearInterval(timer)
-        resolve(button)
-        return
-      }
-
-      if (Date.now() - startedAt >= timeoutMs) {
-        window.clearInterval(timer)
-        reject(new Error('Gemini 发送按钮暂不可用，请稍后重试'))
-      }
-    }, 250)
-  })
-}
-
 function extractCleanText(node: Node): string {
-  const buffer: string[] = []
-
-  function visit(current: Node): void {
-    if (current.nodeType === Node.TEXT_NODE) {
-      buffer.push(current.textContent || '')
-      return
-    }
-
-    if (current.nodeType !== Node.ELEMENT_NODE) return
-
-    const element = current as Element
-    if (element.getAttribute('aria-hidden') === 'true') return
-    if (SKIP_TAGS.has(element.tagName)) return
-    if (BLOCK_TAGS.has(element.tagName)) buffer.push('\n')
-
-    for (const child of element.childNodes) {
-      visit(child)
-    }
-  }
-
-  visit(node)
-
-  return buffer
-    .join('')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  return extractCleanTextFromDom(node, { skipTags: SKIP_TAGS })
 }
 
 function findResponseContainer(element: Element | null): Element | null {
-  while (element) {
-    if (element.matches(GEMINI_SELECTORS.response)) return element
-
-    element = element.parentElement
-  }
-
-  return null
+  return findClosestMatchingAncestor(element, GEMINI_SELECTORS.response)
 }
 
 async function readResponseTextFromCopy(node: Node, timeoutMs: number, pollMs: number): Promise<string | undefined> {
-  if (node.nodeType !== Node.ELEMENT_NODE) return undefined
-
-  const copyButton = findCopyButton(node as Element)
-  const clipboard = navigator.clipboard
-  if (!copyButton || !clipboard?.readText) return undefined
-
-  let previousText: string | undefined
-  try {
-    previousText = await clipboard.readText()
-  } catch {
-    previousText = undefined
-  }
-
-  try {
-    copyButton.click()
-    const copiedText = await waitForClipboardText(previousText, timeoutMs, pollMs)
-    return copiedText?.trim() || undefined
-  } catch {
-    return undefined
-  } finally {
-    if (previousText !== undefined && clipboard.writeText) {
-      clipboard.writeText(previousText).catch(() => undefined)
-    }
-  }
+  return readResponseTextFromCopyAction({ node, timeoutMs, pollMs, findCopyButton })
 }
 
 function findCopyButton(response: Element): HTMLButtonElement | undefined {
   const turn = response.closest(GEMINI_SELECTORS.turn) ?? response.parentElement
-  const copyButton = turn?.querySelector<HTMLButtonElement>(GEMINI_SELECTORS.copyButton)
-  return copyButton && isClickableButton(copyButton) ? copyButton : undefined
-}
-
-function waitForClipboardText(previousText: string | undefined, timeoutMs: number, pollMs: number): Promise<string | undefined> {
-  const clipboard = navigator.clipboard
-  if (!clipboard?.readText) return Promise.resolve(undefined)
-
-  return new Promise(resolve => {
-    const startedAt = Date.now()
-    const timer = window.setInterval(() => {
-      clipboard.readText()
-        .then(text => {
-          const trimmed = text.trim()
-          if (trimmed && (previousText === undefined || text !== previousText)) {
-            window.clearInterval(timer)
-            resolve(text)
-            return
-          }
-          if (Date.now() - startedAt >= timeoutMs) {
-            window.clearInterval(timer)
-            resolve(undefined)
-          }
-        })
-        .catch(() => {
-          window.clearInterval(timer)
-          resolve(undefined)
-        })
-    }, pollMs)
-  })
+  return findClickableCopyButton(turn, GEMINI_SELECTORS.copyButton)
 }
 
 function isGeminiGenerating(): boolean {
   return [...document.querySelectorAll('button')].some(button => {
-    const label = [button.getAttribute('aria-label'), button.getAttribute('title'), button.textContent]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-    return /stop|stopping|停止|中止/.test(label) && isClickableButton(button as HTMLElement)
+    return buttonLabelMatches(button, /stop|stopping|停止|中止/) && isClickableButton(button as HTMLElement)
   })
-}
-
-function readEditorText(editor: HTMLElement): string {
-  return (editor.innerText || editor.textContent || '').trim()
 }
