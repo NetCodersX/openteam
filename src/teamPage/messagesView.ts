@@ -130,7 +130,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       const mentions = renderMessageMentions(message)
       if (mentions) appendMentionsToBody(body, mentions)
     }
-    if (message.contentFormat === 'markdown') {
+    if (shouldRenderMarkdownMessage(message)) {
       renderMarkdownMessageBody(body, message.content)
     } else {
       renderPlainMessageBody(body, message.content)
@@ -176,6 +176,10 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
 
   function renderPlainMessageBody(body: HTMLElement, content: string): void {
     body.append(document.createTextNode(content))
+  }
+
+  function shouldRenderMarkdownMessage(message: GroupMessage): boolean {
+    return message.contentFormat === 'markdown' || message.type === 'assistant'
   }
 
   function createMessageIconButton(label: string, icon: MessageActionIcon, onClick: (button: HTMLButtonElement) => void): HTMLButtonElement {

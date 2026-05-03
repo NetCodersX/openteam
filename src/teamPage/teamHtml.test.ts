@@ -405,7 +405,8 @@ describe('team.html chat creation UI', () => {
     const html = readTeamDocument()
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/messagesView.ts'), 'utf8')
 
-    expect(source).toContain("message.contentFormat === 'markdown'")
+    expect(source).toContain('shouldRenderMarkdownMessage(message)')
+    expect(source).toContain("message.contentFormat === 'markdown' || message.type === 'assistant'")
     expect(source).toContain('renderMarkdownMessageBody(body, message.content)')
     expect(source).toContain('renderPlainMessageBody(body, message.content)')
     expect(source).toContain('pill.textContent = message.content')
