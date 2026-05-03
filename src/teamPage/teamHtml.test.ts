@@ -406,13 +406,14 @@ describe('team.html chat creation UI', () => {
 
   it('keeps chat switching to one store write and one store application', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+    const runtimeSource = readFileSync(resolve(process.cwd(), 'src/teamPage/runtimeClient.ts'), 'utf8')
 
     expect(source).toContain("runCommand('GROUP_CHAT_SWITCH', { chatId })")
     expect(source).toContain('renderSelectedChat()')
     expect(source).toContain('window.requestAnimationFrame(() => {')
     expect(source).not.toContain("runCommand('GROUP_CHAT_MARK_READ', { chatId })")
-    expect(source).toMatch(/if \(response\.store\) \{\s*applyStore\(response\.store\)\s*return\s*\}/s)
-    expect(source).not.toMatch(/if \(response\.store\) applyStore\(response\.store\)\s*await refreshStore\(false\)/s)
+    expect(runtimeSource).toMatch(/if \(response\.store\) \{\s*deps\.applyStore\(response\.store\)\s*return\s*\}/s)
+    expect(runtimeSource).not.toMatch(/if \(response\.store\) deps\.applyStore\(response\.store\)\s*await deps\.refreshStore\(false\)/s)
   })
 
   it('avoids layout-changing iframe group transitions while switching chats', () => {

@@ -1,0 +1,63 @@
+// @vitest-environment jsdom
+
+import { describe, expect, it } from 'vitest'
+
+describe('team page dom refs', () => {
+  it('collects required team page elements and fails clearly when a selector is missing', async () => {
+    document.body.innerHTML = `
+      <main id="app"><div id="iframe-host"></div></main>
+      <div id="floating-drag-handle"></div>
+      <button id="toggle-window-size"></button>
+      <section id="store-summary"></section>
+      <section id="chat-list"></section>
+      <h1 id="chat-title"></h1>
+      <p id="chat-subtitle"></p>
+      <div id="chat-status"></div>
+      <section id="messages"></section>
+      <div id="role-summary"></div>
+      <section id="role-list"></section>
+      <select id="role-template-select"></select>
+      <section id="template-list"></section>
+      <div id="target-preview"></div>
+      <div id="busy-preview"></div>
+      <button id="send-message"></button>
+      <textarea id="message-input"></textarea>
+      <div id="reference-draft"></div>
+      <div id="mention-panel"></div>
+      <div id="error"></div>
+      <input id="new-chat-name" />
+      <form id="create-chat-form"></form>
+      <button id="quick-create-chat"></button>
+      <input id="template-name" />
+      <textarea id="template-description"></textarea>
+      <textarea id="template-prompt"></textarea>
+      <div id="template-form-title"></div>
+      <button id="settings-button"></button>
+      <div id="settings-menu"></div>
+      <div id="people-library-modal"></div>
+      <div id="person-template-modal"></div>
+      <div id="add-person-modal"></div>
+      <div id="temporary-person-modal"></div>
+      <div id="people-library-summary"></div>
+      <div id="people-library-list"></div>
+      <div id="add-library-people-list"></div>
+      <input id="template-site-gemini" />
+      <input id="template-site-chatgpt" />
+      <input id="template-site-claude" />
+      <input id="temporary-person-name" />
+      <textarea id="temporary-person-description"></textarea>
+      <textarea id="temporary-person-prompt"></textarea>
+      <button id="toggle-people-drawer"></button>
+      <aside class="role-panel"></aside>
+      <button id="window-launcher"></button>
+    `
+
+    const { createTeamPageDomRefs, requireElement } = await import('./domRefs')
+    const refs = createTeamPageDomRefs()
+
+    expect(refs.appShellEl.id).toBe('app')
+    expect(refs.messageInputEl.tagName).toBe('TEXTAREA')
+    expect(refs.rolePanelEl.className).toBe('role-panel')
+    expect(() => requireElement('#missing')).toThrow('Missing element: #missing')
+  })
+})

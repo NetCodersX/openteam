@@ -3,23 +3,11 @@ import { getDefaultChatSiteUrl } from '../group/conversationUrl'
 import type { ChatSite, GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RoleStatus, RoleTemplate, RoomMode } from '../group/types'
 import { createDefaultStore, loadStore, saveStore } from '../group/store'
 import { parseGroupMentions } from '../group/mentionParser'
+import { createTeamPageState } from './appState'
+import { createTeamPageDomRefs, requireElement } from './domRefs'
 import { createIframeHost } from './iframeHost'
+import { createTeamPageRuntimeClient, type StorePushMessage } from './runtimeClient'
 import { buildChatRenderItems, formatChatListTime, getAvatarInitial, getChatStartupNotice, getVisibleThinkingRoles, isUnavailableRolesError, shouldAutoReconnectRole, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter, THINKING_TIMEOUT_MS } from './chatExperience'
-
-interface RuntimeResponse<T = unknown> {
-  ok?: boolean
-  error?: string
-  store?: OpenTeamStore
-  data?: T
-}
-
-type StorePushMessage =
-  | { type: 'GROUP_STORE_UPDATED'; store: OpenTeamStore }
-  | { type: 'GROUP_ROLE_STATUS_UPDATED'; store?: OpenTeamStore }
-  | { type: 'GROUP_MESSAGE_DELIVERED'; store?: OpenTeamStore }
-  | { type: 'GROUP_MESSAGE_RECEIVED'; store?: OpenTeamStore }
-  | { type: 'GROUP_DELIVERY_ERROR'; store?: OpenTeamStore; error?: string }
-  | { type: 'TEAM_FRAME_ROLE_READY'; chatId: string; roleId: string; store?: OpenTeamStore }
 
 type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultChatSite'>
 type CachedMessageNode = { signature: string; node: HTMLElement }
@@ -33,6 +21,7 @@ const MAX_CACHED_MESSAGE_NODES = 400
 const AUTO_RECONNECT_TIMEOUT_MS = 20_000
 const COPY_FEEDBACK_MS = 1200
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const appState = createTeamPageState()
 
 interface RoleReadyWaiter {
   chatId: string
@@ -42,12 +31,11 @@ interface RoleReadyWaiter {
   timeoutId: number
 }
 
-let store: OpenTeamStore = createDefaultStore()
+let store: OpenTeamStore = appState.store
 let selectedChatId: string | undefined
 let selectedRoleId: string | undefined
 let selectedTemplateId: string | undefined
 let selectedReference: MessageReference | undefined
-let hostTabId: number | undefined
 let mentionIndex = 0
 let peopleDrawerOpen = false
 let chatMenuChatId: string | undefined
@@ -62,51 +50,52 @@ const roleReadyWaiters = new Set<RoleReadyWaiter>()
 const temporaryPersonDrafts: TemporaryPersonDraft[] = []
 const addPersonSiteByKey = new Map<string, ChatSite>()
 
-const appShellEl = requireElement<HTMLElement>('#app')
-const floatingDragHandleEl = requireElement<HTMLElement>('#floating-drag-handle')
-const toggleWindowSizeEl = requireElement<HTMLButtonElement>('#toggle-window-size')
-const storeSummaryEl = requireElement<HTMLElement>('#store-summary')
-const chatListEl = requireElement<HTMLElement>('#chat-list')
-const chatTitleEl = requireElement<HTMLElement>('#chat-title')
-const chatSubtitleEl = requireElement<HTMLElement>('#chat-subtitle')
-const chatStatusEl = requireElement<HTMLElement>('#chat-status')
-const messagesEl = requireElement<HTMLElement>('#messages')
-const roleSummaryEl = requireElement<HTMLElement>('#role-summary')
-const roleListEl = requireElement<HTMLElement>('#role-list')
-const roleTemplateSelectEl = requireElement<HTMLSelectElement>('#role-template-select')
-const templateListEl = requireElement<HTMLElement>('#template-list')
-const targetPreviewEl = requireElement<HTMLElement>('#target-preview')
-const busyPreviewEl = requireElement<HTMLElement>('#busy-preview')
-const sendButtonEl = requireElement<HTMLButtonElement>('#send-message')
-const messageInputEl = requireElement<HTMLTextAreaElement>('#message-input')
-const referenceDraftEl = requireElement<HTMLElement>('#reference-draft')
-const mentionPanelEl = requireElement<HTMLElement>('#mention-panel')
-const errorEl = requireElement<HTMLElement>('#error')
-const newChatNameEl = requireElement<HTMLInputElement>('#new-chat-name')
-const createChatFormEl = requireElement<HTMLFormElement>('#create-chat-form')
-const quickCreateChatEl = requireElement<HTMLButtonElement>('#quick-create-chat')
-const templateNameEl = requireElement<HTMLInputElement>('#template-name')
-const templateDescriptionEl = requireElement<HTMLTextAreaElement>('#template-description')
-const templatePromptEl = requireElement<HTMLTextAreaElement>('#template-prompt')
-const templateFormTitleEl = requireElement<HTMLElement>('#template-form-title')
-const settingsButtonEl = requireElement<HTMLButtonElement>('#settings-button')
-const settingsMenuEl = requireElement<HTMLElement>('#settings-menu')
-const peopleLibraryModalEl = requireElement<HTMLElement>('#people-library-modal')
-const personTemplateModalEl = requireElement<HTMLElement>('#person-template-modal')
-const addPersonModalEl = requireElement<HTMLElement>('#add-person-modal')
-const temporaryPersonModalEl = requireElement<HTMLElement>('#temporary-person-modal')
-const peopleLibrarySummaryEl = requireElement<HTMLElement>('#people-library-summary')
-const peopleLibraryListEl = requireElement<HTMLElement>('#people-library-list')
-const addLibraryPeopleListEl = requireElement<HTMLElement>('#add-library-people-list')
-const templateSiteGeminiEl = requireElement<HTMLInputElement>('#template-site-gemini')
-const templateSiteChatGptEl = requireElement<HTMLInputElement>('#template-site-chatgpt')
-const templateSiteClaudeEl = requireElement<HTMLInputElement>('#template-site-claude')
-const temporaryPersonNameEl = requireElement<HTMLInputElement>('#temporary-person-name')
-const temporaryPersonDescriptionEl = requireElement<HTMLTextAreaElement>('#temporary-person-description')
-const temporaryPersonPromptEl = requireElement<HTMLTextAreaElement>('#temporary-person-prompt')
-const togglePeopleDrawerEl = requireElement<HTMLButtonElement>('#toggle-people-drawer')
-const rolePanelEl = requireElement<HTMLElement>('.role-panel')
-const windowLauncherEl = requireElement<HTMLButtonElement>('#window-launcher')
+const teamDomRefs = createTeamPageDomRefs()
+const appShellEl = teamDomRefs.appShellEl
+const floatingDragHandleEl = teamDomRefs.floatingDragHandleEl
+const toggleWindowSizeEl = teamDomRefs.toggleWindowSizeEl
+const storeSummaryEl = teamDomRefs.storeSummaryEl
+const chatListEl = teamDomRefs.chatListEl
+const chatTitleEl = teamDomRefs.chatTitleEl
+const chatSubtitleEl = teamDomRefs.chatSubtitleEl
+const chatStatusEl = teamDomRefs.chatStatusEl
+const messagesEl = teamDomRefs.messagesEl
+const roleSummaryEl = teamDomRefs.roleSummaryEl
+const roleListEl = teamDomRefs.roleListEl
+const roleTemplateSelectEl = teamDomRefs.roleTemplateSelectEl
+const templateListEl = teamDomRefs.templateListEl
+const targetPreviewEl = teamDomRefs.targetPreviewEl
+const busyPreviewEl = teamDomRefs.busyPreviewEl
+const sendButtonEl = teamDomRefs.sendButtonEl
+const messageInputEl = teamDomRefs.messageInputEl
+const referenceDraftEl = teamDomRefs.referenceDraftEl
+const mentionPanelEl = teamDomRefs.mentionPanelEl
+const errorEl = teamDomRefs.errorEl
+const newChatNameEl = teamDomRefs.newChatNameEl
+const createChatFormEl = teamDomRefs.createChatFormEl
+const quickCreateChatEl = teamDomRefs.quickCreateChatEl
+const templateNameEl = teamDomRefs.templateNameEl
+const templateDescriptionEl = teamDomRefs.templateDescriptionEl
+const templatePromptEl = teamDomRefs.templatePromptEl
+const templateFormTitleEl = teamDomRefs.templateFormTitleEl
+const settingsButtonEl = teamDomRefs.settingsButtonEl
+const settingsMenuEl = teamDomRefs.settingsMenuEl
+const peopleLibraryModalEl = teamDomRefs.peopleLibraryModalEl
+const personTemplateModalEl = teamDomRefs.personTemplateModalEl
+const addPersonModalEl = teamDomRefs.addPersonModalEl
+const temporaryPersonModalEl = teamDomRefs.temporaryPersonModalEl
+const peopleLibrarySummaryEl = teamDomRefs.peopleLibrarySummaryEl
+const peopleLibraryListEl = teamDomRefs.peopleLibraryListEl
+const addLibraryPeopleListEl = teamDomRefs.addLibraryPeopleListEl
+const templateSiteGeminiEl = teamDomRefs.templateSiteGeminiEl
+const templateSiteChatGptEl = teamDomRefs.templateSiteChatGptEl
+const templateSiteClaudeEl = teamDomRefs.templateSiteClaudeEl
+const temporaryPersonNameEl = teamDomRefs.temporaryPersonNameEl
+const temporaryPersonDescriptionEl = teamDomRefs.temporaryPersonDescriptionEl
+const temporaryPersonPromptEl = teamDomRefs.temporaryPersonPromptEl
+const togglePeopleDrawerEl = teamDomRefs.togglePeopleDrawerEl
+const rolePanelEl = teamDomRefs.rolePanelEl
+const windowLauncherEl = teamDomRefs.windowLauncherEl
 const log = {
   debug(event: string, details?: Record<string, unknown>): void {
     console.debug('[OpenTeam][team-page]', event, details || {})
@@ -120,53 +109,26 @@ const log = {
 }
 
 const iframeHost = createIframeHost({
-  visibleHost: requireElement<HTMLElement>('#iframe-host'),
+  visibleHost: teamDomRefs.iframeHostEl,
   onEvent(event) {
     log.debug(`iframe-host:${event.type}`, event)
   },
 })
 
-function requireElement<T extends Element>(selector: string): T {
-  const element = document.querySelector<T>(selector)
-  if (!element) throw new Error(`Missing element: ${selector}`)
-  return element
-}
-
-function sendRuntimeMessage<T>(type: string, payload: Record<string, unknown> = {}): Promise<RuntimeResponse<T>> {
-  return new Promise((resolve, reject) => {
-    const message: Record<string, unknown> = { type, ...payload }
-    if (hostTabId !== undefined && typeof message.hostTabId !== 'number') message.hostTabId = hostTabId
-    log.debug('runtime-send:start', { type, hostTabId: message.hostTabId })
-
-    chrome.runtime.sendMessage(message, response => {
-      const lastError = chrome.runtime.lastError
-      if (lastError) {
-        log.warn('runtime-send:failed', { type, error: lastError.message })
-        reject(new Error(lastError.message))
-        return
-      }
-
-      log.debug('runtime-send:response', { type, ok: response?.ok, error: response?.error })
-      resolve((response ?? {}) as RuntimeResponse<T>)
-    })
-  })
-}
-
-async function runCommand(type: string, payload: Record<string, unknown> = {}): Promise<void> {
-  const response = await sendRuntimeMessage(type, payload)
-  if (response.ok === false) throw new Error(response.error || `${type} failed`)
-  if (response.store) {
-    applyStore(response.store)
-    return
-  }
-  await refreshStore(false)
-}
+const runtimeClient = createTeamPageRuntimeClient({
+  getHostTabId: () => appState.hostTabId,
+  applyStore,
+  refreshStore,
+  log,
+})
+const sendRuntimeMessage = runtimeClient.sendRuntimeMessage
+const runCommand = runtimeClient.runCommand
 
 async function resolveHostTabId(): Promise<void> {
   const tab = await chrome.tabs.getCurrent()
-  hostTabId = tab?.id
-  log.info('host-tab:resolved', { hostTabId, url: tab?.url })
-  iframeHost.setHostTabId(hostTabId)
+  appState.hostTabId = tab?.id
+  log.info('host-tab:resolved', { hostTabId: appState.hostTabId, url: tab?.url })
+  iframeHost.setHostTabId(appState.hostTabId)
 }
 
 async function refreshStore(showFailure = true): Promise<void> {
@@ -194,7 +156,8 @@ async function refreshCurrentChat(): Promise<void> {
 }
 
 function applyStore(nextStore: OpenTeamStore): void {
-  store = nextStore
+  appState.store = nextStore
+  store = appState.store
   selectedChatId = pickCurrentChatId()
   const roles = getCurrentRoles()
   if (!selectedRoleId || !roles.some(role => role.id === selectedRoleId)) selectedRoleId = roles[0]?.id

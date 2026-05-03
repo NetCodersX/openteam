@@ -1,0 +1,105 @@
+export interface TeamPageDomRefs {
+  appShellEl: HTMLElement
+  floatingDragHandleEl: HTMLElement
+  toggleWindowSizeEl: HTMLButtonElement
+  storeSummaryEl: HTMLElement
+  chatListEl: HTMLElement
+  chatTitleEl: HTMLElement
+  chatSubtitleEl: HTMLElement
+  chatStatusEl: HTMLElement
+  messagesEl: HTMLElement
+  roleSummaryEl: HTMLElement
+  roleListEl: HTMLElement
+  roleTemplateSelectEl: HTMLSelectElement
+  templateListEl: HTMLElement
+  targetPreviewEl: HTMLElement
+  busyPreviewEl: HTMLElement
+  sendButtonEl: HTMLButtonElement
+  messageInputEl: HTMLTextAreaElement
+  referenceDraftEl: HTMLElement
+  mentionPanelEl: HTMLElement
+  errorEl: HTMLElement
+  newChatNameEl: HTMLInputElement
+  createChatFormEl: HTMLFormElement
+  quickCreateChatEl: HTMLButtonElement
+  templateNameEl: HTMLInputElement
+  templateDescriptionEl: HTMLTextAreaElement
+  templatePromptEl: HTMLTextAreaElement
+  templateFormTitleEl: HTMLElement
+  settingsButtonEl: HTMLButtonElement
+  settingsMenuEl: HTMLElement
+  peopleLibraryModalEl: HTMLElement
+  personTemplateModalEl: HTMLElement
+  addPersonModalEl: HTMLElement
+  temporaryPersonModalEl: HTMLElement
+  peopleLibrarySummaryEl: HTMLElement
+  peopleLibraryListEl: HTMLElement
+  addLibraryPeopleListEl: HTMLElement
+  templateSiteGeminiEl: HTMLInputElement
+  templateSiteChatGptEl: HTMLInputElement
+  templateSiteClaudeEl: HTMLInputElement
+  temporaryPersonNameEl: HTMLInputElement
+  temporaryPersonDescriptionEl: HTMLTextAreaElement
+  temporaryPersonPromptEl: HTMLTextAreaElement
+  togglePeopleDrawerEl: HTMLButtonElement
+  rolePanelEl: HTMLElement
+  windowLauncherEl: HTMLButtonElement
+  iframeHostEl: HTMLElement
+}
+
+export function requireElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector)
+  if (!element) throw new Error(`Missing element: ${selector}`)
+  return element
+}
+
+export function createTeamPageDomRefs(): TeamPageDomRefs {
+  return {
+    appShellEl: requireElement<HTMLElement>('#app'),
+    floatingDragHandleEl: requireElement<HTMLElement>('#floating-drag-handle'),
+    toggleWindowSizeEl: requireElement<HTMLButtonElement>('#toggle-window-size'),
+    storeSummaryEl: requireElement<HTMLElement>('#store-summary'),
+    chatListEl: requireElement<HTMLElement>('#chat-list'),
+    chatTitleEl: requireElement<HTMLElement>('#chat-title'),
+    chatSubtitleEl: requireElement<HTMLElement>('#chat-subtitle'),
+    chatStatusEl: requireElement<HTMLElement>('#chat-status'),
+    messagesEl: requireElement<HTMLElement>('#messages'),
+    roleSummaryEl: requireElement<HTMLElement>('#role-summary'),
+    roleListEl: requireElement<HTMLElement>('#role-list'),
+    roleTemplateSelectEl: requireElement<HTMLSelectElement>('#role-template-select'),
+    templateListEl: requireElement<HTMLElement>('#template-list'),
+    targetPreviewEl: requireElement<HTMLElement>('#target-preview'),
+    busyPreviewEl: requireElement<HTMLElement>('#busy-preview'),
+    sendButtonEl: requireElement<HTMLButtonElement>('#send-message'),
+    messageInputEl: requireElement<HTMLTextAreaElement>('#message-input'),
+    referenceDraftEl: requireElement<HTMLElement>('#reference-draft'),
+    mentionPanelEl: requireElement<HTMLElement>('#mention-panel'),
+    errorEl: requireElement<HTMLElement>('#error'),
+    newChatNameEl: requireElement<HTMLInputElement>('#new-chat-name'),
+    createChatFormEl: requireElement<HTMLFormElement>('#create-chat-form'),
+    quickCreateChatEl: requireElement<HTMLButtonElement>('#quick-create-chat'),
+    templateNameEl: requireElement<HTMLInputElement>('#template-name'),
+    templateDescriptionEl: requireElement<HTMLTextAreaElement>('#template-description'),
+    templatePromptEl: requireElement<HTMLTextAreaElement>('#template-prompt'),
+    templateFormTitleEl: requireElement<HTMLElement>('#template-form-title'),
+    settingsButtonEl: requireElement<HTMLButtonElement>('#settings-button'),
+    settingsMenuEl: requireElement<HTMLElement>('#settings-menu'),
+    peopleLibraryModalEl: requireElement<HTMLElement>('#people-library-modal'),
+    personTemplateModalEl: requireElement<HTMLElement>('#person-template-modal'),
+    addPersonModalEl: requireElement<HTMLElement>('#add-person-modal'),
+    temporaryPersonModalEl: requireElement<HTMLElement>('#temporary-person-modal'),
+    peopleLibrarySummaryEl: requireElement<HTMLElement>('#people-library-summary'),
+    peopleLibraryListEl: requireElement<HTMLElement>('#people-library-list'),
+    addLibraryPeopleListEl: requireElement<HTMLElement>('#add-library-people-list'),
+    templateSiteGeminiEl: requireElement<HTMLInputElement>('#template-site-gemini'),
+    templateSiteChatGptEl: requireElement<HTMLInputElement>('#template-site-chatgpt'),
+    templateSiteClaudeEl: requireElement<HTMLInputElement>('#template-site-claude'),
+    temporaryPersonNameEl: requireElement<HTMLInputElement>('#temporary-person-name'),
+    temporaryPersonDescriptionEl: requireElement<HTMLTextAreaElement>('#temporary-person-description'),
+    temporaryPersonPromptEl: requireElement<HTMLTextAreaElement>('#temporary-person-prompt'),
+    togglePeopleDrawerEl: requireElement<HTMLButtonElement>('#toggle-people-drawer'),
+    rolePanelEl: requireElement<HTMLElement>('.role-panel'),
+    windowLauncherEl: requireElement<HTMLButtonElement>('#window-launcher'),
+    iframeHostEl: requireElement<HTMLElement>('#iframe-host'),
+  }
+}
