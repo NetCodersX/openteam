@@ -324,7 +324,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     bubble.className = 'message-bubble'
     const body = document.createElement('div')
     body.className = `message-body${stopped ? '' : ' thinking-dots'}`
-    body.textContent = stopped ? `${role.name} 已停止回复` : `${role.name} 正在回复中 `
+    body.textContent = stopped ? '已停止回复' : '正在回复中 '
     bubble.append(body)
     const tools = document.createElement('div')
     tools.className = 'message-tools'
