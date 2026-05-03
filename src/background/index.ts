@@ -13,7 +13,7 @@ import {
   updateRoleTemplate,
 } from '../group/roleTemplates'
 import { loadStore, updateStoreQueued } from '../group/store'
-import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RoleStatus, RoomMode, RuntimeFrameBinding } from '../group/types'
+import type { ChatSite, GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RoleStatus, RoomMode, RuntimeFrameBinding } from '../group/types'
 import { createRuntimeFrameRegistry } from './runtimeFrames'
 
 type RuntimeMessage = { type?: string; [key: string]: unknown }
@@ -506,6 +506,7 @@ async function handleRoleTemplateCreate(message: RuntimeMessage) {
     name: requireString(message.name, '人员名称不能为空'),
     description: readOptionalString(message.description),
     systemPrompt: readOptionalString(message.systemPrompt),
+    defaultChatSite: readChatSite(message.defaultChatSite),
   }, newId('template'), now()))
   log.info('role-template:create', { templateId: result.id, nameLength: result.name.length, personaLength: result.systemPrompt.length })
   await broadcastStoreUpdated(store)
@@ -518,6 +519,7 @@ async function handleRoleTemplateUpdate(message: RuntimeMessage) {
     name: requireString(patch.name, '人员名称不能为空'),
     description: readOptionalString(patch.description),
     systemPrompt: readOptionalString(patch.systemPrompt),
+    defaultChatSite: readChatSite(patch.defaultChatSite),
   }, now()))
   log.info('role-template:update', { templateId: result.id, patchKeys: ['name', 'description', 'systemPrompt'], personaLength: result.systemPrompt.length })
   await broadcastStoreUpdated(store)
@@ -1148,6 +1150,10 @@ function requireString(value: unknown, error: string): string {
   const result = readOptionalString(value)
   if (!result) throw new Error(error)
   return result
+}
+
+function readChatSite(value: unknown): ChatSite | undefined {
+  return value === 'chatgpt' || value === 'claude' || value === 'gemini' ? value : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

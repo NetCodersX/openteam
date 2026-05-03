@@ -18,8 +18,14 @@ describe('team.html chat creation UI', () => {
     expect(html).toContain('id="settings-button"')
     expect(html).toContain('id="settings-menu"')
     expect(html).toContain('id="open-people-library"')
+    expect(html).not.toContain('id="default-site-gemini"')
+    expect(html).not.toContain('id="default-site-chatgpt"')
+    expect(html).not.toContain('id="default-site-claude"')
     expect(html).toContain('id="people-library-modal"')
     expect(html).toContain('id="people-library-list"')
+    expect(html).toContain('id="template-site-gemini"')
+    expect(html).toContain('id="template-site-chatgpt"')
+    expect(html).toContain('id="template-site-claude"')
     expect(html).toContain('id="add-person-modal"')
     expect(html).toContain('id="add-person-site-gemini"')
     expect(html).toContain('id="add-person-site-chatgpt"')
@@ -37,15 +43,62 @@ describe('team.html chat creation UI', () => {
     expect(html).not.toContain('System Prompt')
   })
 
-  it('lets the add-person modal choose a target site before creating roles', () => {
+  it('uses template default sites for library people and the add-person picker for temporary people', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
 
     expect(source).toContain('function readAddPersonChatSite(): ChatSite')
     expect(source).toContain("querySelector<HTMLInputElement>('input[name=\"add-person-chat-site\"]:checked')")
     expect(source).toContain('const chatSite = readAddPersonChatSite()')
-    expect(source).toContain("{ source: 'library', roleTemplateId, chatSite }")
+    expect(source).toContain("{ source: 'library', roleTemplateId }")
+    expect(source).not.toContain("{ source: 'library', roleTemplateId, chatSite }")
     expect(source).toContain("{ source: 'temporary', ...draft, chatSite }")
     expect(source).toContain("selected?.value === 'claude'")
+  })
+
+  it('stores a default target site on people-library entries instead of the settings menu', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(source).not.toContain("'#default-site-gemini'")
+    expect(source).not.toContain("'#default-site-chatgpt'")
+    expect(source).not.toContain("'#default-site-claude'")
+    expect(source).toContain('const templateSiteGeminiEl')
+    expect(source).toContain('function readTemplateChatSite(): ChatSite')
+    expect(source).toContain('defaultChatSite: readTemplateChatSite()')
+    expect(source).toContain("roleTemplateId }))")
+    expect(html).not.toContain('默认站点：Gemini')
+    expect(html).not.toContain('默认站点：ChatGPT')
+    expect(html).not.toContain('默认站点：Claude')
+  })
+
+  it('keeps long people-library lists scrolling inside the left list pane', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+
+    expect(html).toMatch(/#people-library-modal \.modal\s*{[^}]*overflow:\s*hidden;/s)
+    expect(html).toMatch(/#people-library-list\s*{[^}]*overflow:\s*auto;/s)
+    expect(html).toMatch(/#people-library-list\s*{[^}]*max-height:\s*calc\(100vh - 220px\);/s)
+  })
+
+  it('shows role sites as compact pills with a menu instead of always-visible switch buttons', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
+
+    expect(source).toContain("sitePill.className = `site-pill site-pill-${role.chatSite ?? 'gemini'}`")
+    expect(source).toContain("menu.className = 'role-site-menu'")
+    expect(source).toContain("option.className = `role-site-option${role.chatSite === site ? ' active' : ''}`")
+    expect(source).not.toContain("siteActions.className = 'chat-row tiny'")
+    expect(html).toMatch(/\.site-pill\s*{[^}]*border-radius:\s*999px;/s)
+    expect(html).toMatch(/\.role-site-menu\s*{[^}]*position:\s*absolute;/s)
+  })
+
+  it('uses a compact segmented picker for add-person target sites', () => {
+    const html = readFileSync(resolve(process.cwd(), 'public/team.html'), 'utf8')
+
+    expect(html).toContain('class="site-segmented"')
+    expect(html).toMatch(/\.site-segmented\s*{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s)
+    expect(html).not.toContain('为这次加入群聊的人员统一指定 Gemini。')
+    expect(html).not.toContain('为这次加入群聊的人员统一指定 ChatGPT。')
+    expect(html).not.toContain('为这次加入群聊的人员统一指定 Claude。')
   })
 
   it('uses a clean page background without decorative side panels', () => {

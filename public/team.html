@@ -216,6 +216,12 @@
         padding: 0 0 18px;
       }
 
+      #settings-button {
+        width: 40px;
+        height: 40px;
+        font-size: 22px;
+      }
+
       .sidebar,
       .role-panel {
         display: flex;
@@ -371,7 +377,7 @@
         left: 52px;
         bottom: 18px;
         z-index: 8;
-        width: 148px;
+        width: 112px;
         border: 1px solid rgba(132, 153, 171, 0.24);
         border-radius: 10px;
         padding: 8px;
@@ -453,6 +459,41 @@
         color: var(--subtle);
         font-size: 11px;
         line-height: 1.35;
+      }
+
+      .site-segmented {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid rgba(132, 153, 171, 0.18);
+        border-radius: 8px;
+        padding: 3px;
+        background: rgba(6, 13, 21, 0.72);
+      }
+
+      .site-segment {
+        position: relative;
+        display: grid;
+        place-items: center;
+        min-height: 34px;
+        border-radius: 6px;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .site-segment input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+
+      .site-segment:has(input:checked) {
+        background: rgba(47, 216, 204, 0.14);
+        color: #eaffff;
+        box-shadow: inset 0 0 0 1px rgba(47, 216, 204, 0.42);
       }
 
       .field,
@@ -1175,6 +1216,7 @@
       }
 
       .role-card {
+        position: relative;
         display: grid;
         grid-template-columns: 44px minmax(0, 1fr) auto;
         gap: 10px;
@@ -1225,8 +1267,110 @@
       }
 
       .role-more {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        background: transparent;
         color: #95a7b5;
+        cursor: pointer;
         font-size: 18px;
+        line-height: 1;
+      }
+
+      .role-more:hover {
+        background: rgba(132, 153, 171, 0.1);
+        color: var(--text);
+      }
+
+      .role-meta {
+        justify-content: flex-start;
+        gap: 8px;
+        margin-top: 5px;
+        flex-wrap: wrap;
+      }
+
+      .role-site-control {
+        position: relative;
+        display: inline-flex;
+      }
+
+      .site-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-height: 24px;
+        border: 1px solid rgba(132, 153, 171, 0.18);
+        border-radius: 999px;
+        padding: 0 9px;
+        background: rgba(132, 153, 171, 0.08);
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 820;
+        line-height: 1;
+      }
+
+      .site-pill::after {
+        content: "⌄";
+        color: currentColor;
+        font-size: 10px;
+        opacity: 0.72;
+      }
+
+      .site-pill-gemini {
+        border-color: rgba(47, 216, 204, 0.34);
+        background: rgba(47, 216, 204, 0.1);
+        color: #8ff5ed;
+      }
+
+      .site-pill-chatgpt {
+        border-color: rgba(83, 230, 166, 0.3);
+        background: rgba(83, 230, 166, 0.09);
+        color: #9ef4c8;
+      }
+
+      .site-pill-claude {
+        border-color: rgba(248, 184, 78, 0.32);
+        background: rgba(248, 184, 78, 0.1);
+        color: #f5cd82;
+      }
+
+      .role-site-menu {
+        position: absolute;
+        left: 0;
+        top: calc(100% + 6px);
+        z-index: 9;
+        display: grid;
+        gap: 4px;
+        min-width: 128px;
+        border: 1px solid rgba(132, 153, 171, 0.2);
+        border-radius: 8px;
+        padding: 6px;
+        background: rgba(8, 16, 24, 0.96);
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), var(--glow);
+      }
+
+      .role-site-option {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        min-height: 30px;
+        border-radius: 6px;
+        padding: 0 9px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 740;
+        text-align: left;
+      }
+
+      .role-site-option:hover,
+      .role-site-option.active {
+        background: rgba(47, 216, 204, 0.1);
+        color: var(--text);
       }
 
       .role-description,
@@ -1268,6 +1412,29 @@
         padding: 20px;
         background: rgba(9, 17, 25, 0.98);
         box-shadow: var(--shadow), var(--glow);
+      }
+
+      #people-library-modal .modal {
+        display: flex;
+        min-height: min(620px, calc(100vh - 48px));
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      #people-library-modal .modal-grid {
+        min-height: 0;
+        flex: 1;
+      }
+
+      .people-library-pane {
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      #people-library-list {
+        max-height: calc(100vh - 220px);
+        overflow: auto;
+        padding-right: 2px;
       }
 
       .modal-header {
@@ -1495,9 +1662,6 @@
           <button id="settings-button" class="rail-btn" type="button" aria-label="设置" aria-expanded="false" aria-controls="settings-menu">⚙</button>
           <div id="settings-menu" class="settings-menu" hidden>
             <button id="open-people-library" class="btn btn-ghost" type="button">人员库</button>
-            <button id="default-site-gemini" class="btn btn-ghost" type="button">默认站点：Gemini</button>
-            <button id="default-site-chatgpt" class="btn btn-ghost" type="button">默认站点：ChatGPT</button>
-            <button id="default-site-claude" class="btn btn-ghost" type="button">默认站点：Claude</button>
           </div>
         </div>
       </nav>
@@ -1624,7 +1788,7 @@
           <button id="close-people-library" class="icon-btn" type="button" aria-label="关闭人员库">×</button>
         </div>
         <div class="modal-grid">
-          <div>
+          <div class="people-library-pane">
             <div class="section-title">
               <h3>人员列表</h3>
               <span id="people-library-summary" class="tiny">0 人</span>
@@ -1644,6 +1808,23 @@
             <div class="field">
               <label for="template-prompt">人设</label>
               <textarea id="template-prompt"></textarea>
+            </div>
+            <div class="field">
+              <label>默认站点</label>
+              <div class="site-segmented">
+                <label class="site-segment" for="template-site-gemini">
+                  <input id="template-site-gemini" type="radio" name="template-chat-site" value="gemini" checked />
+                  <span>Gemini</span>
+                </label>
+                <label class="site-segment" for="template-site-chatgpt">
+                  <input id="template-site-chatgpt" type="radio" name="template-chat-site" value="chatgpt" />
+                  <span>ChatGPT</span>
+                </label>
+                <label class="site-segment" for="template-site-claude">
+                  <input id="template-site-claude" type="radio" name="template-chat-site" value="claude" />
+                  <span>Claude</span>
+                </label>
+              </div>
             </div>
             <div class="template-actions">
               <button class="btn btn-primary" type="submit">保存人员</button>
@@ -1667,27 +1848,18 @@
         <div class="modal-grid">
           <div class="field modal-grid-wide site-picker">
             <label>站点</label>
-            <div class="mode-options">
-              <label class="mode-option" for="add-person-site-gemini">
+            <div class="site-segmented">
+              <label class="site-segment" for="add-person-site-gemini">
                 <input id="add-person-site-gemini" type="radio" name="add-person-chat-site" value="gemini" checked />
-                <span>
-                  <span class="mode-name">Gemini</span>
-                  <span class="mode-help">为这次加入群聊的人员统一指定 Gemini。</span>
-                </span>
+                <span>Gemini</span>
               </label>
-              <label class="mode-option" for="add-person-site-chatgpt">
+              <label class="site-segment" for="add-person-site-chatgpt">
                 <input id="add-person-site-chatgpt" type="radio" name="add-person-chat-site" value="chatgpt" />
-                <span>
-                  <span class="mode-name">ChatGPT</span>
-                  <span class="mode-help">为这次加入群聊的人员统一指定 ChatGPT。</span>
-                </span>
+                <span>ChatGPT</span>
               </label>
-              <label class="mode-option" for="add-person-site-claude">
+              <label class="site-segment" for="add-person-site-claude">
                 <input id="add-person-site-claude" type="radio" name="add-person-chat-site" value="claude" />
-                <span>
-                  <span class="mode-name">Claude</span>
-                  <span class="mode-help">为这次加入群聊的人员统一指定 Claude。</span>
-                </span>
+                <span>Claude</span>
               </label>
             </div>
           </div>

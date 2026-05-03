@@ -4,6 +4,7 @@ export interface RoleTemplateInput {
   name: string
   description?: string
   systemPrompt?: string
+  defaultChatSite?: ChatSite
 }
 
 export interface GroupRoleInput {
@@ -64,6 +65,7 @@ export function createRoleTemplate(
   const template: RoleTemplate = {
     id,
     name,
+    defaultChatSite: input.defaultChatSite ?? store.settings.defaultChatSite,
     systemPrompt,
     createdAt: now,
     updatedAt: now,
@@ -87,6 +89,7 @@ export function updateRoleTemplate(
   if (!template) throw new Error(`找不到人员库人员：${templateId}`)
 
   template.name = assertValidRoleName(patch.name, [])
+  template.defaultChatSite = patch.defaultChatSite ?? template.defaultChatSite ?? store.settings.defaultChatSite
   template.systemPrompt = assertValidSystemPrompt(patch.systemPrompt)
   template.updatedAt = now
 
@@ -139,7 +142,7 @@ export function createGroupRole(
   const role: GroupRole = {
     id,
     chatId: input.chatId,
-    chatSite: input.chatSite ?? store.settings.defaultChatSite,
+    chatSite: input.chatSite ?? template?.defaultChatSite ?? store.settings.defaultChatSite,
     name,
     status: 'pending',
     contextCursor: 0,
@@ -252,7 +255,7 @@ function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index
     if (!template) throw new Error(`找不到人员库人员：${item.roleTemplateId}`)
     return {
       templateId: item.roleTemplateId,
-      chatSite: item.chatSite,
+      chatSite: item.chatSite ?? template.defaultChatSite,
       name: assertValidRoleName(template.name, []),
       description: template.description,
       systemPrompt: assertValidSystemPrompt(template.systemPrompt),

@@ -20,7 +20,7 @@ type StorePushMessage =
   | { type: 'GROUP_DELIVERY_ERROR'; store?: OpenTeamStore; error?: string }
   | { type: 'TEAM_FRAME_ROLE_READY'; chatId: string; roleId: string; store?: OpenTeamStore }
 
-type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt'>
+type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultChatSite'>
 type CachedMessageNode = { signature: string; node: HTMLElement }
 
 const MAX_CACHED_MESSAGE_NODES = 400
@@ -43,6 +43,7 @@ let hostTabId: number | undefined
 let mentionIndex = 0
 let peopleDrawerOpen = false
 let chatMenuChatId: string | undefined
+let roleSiteMenuRoleId: string | undefined
 let pendingSwitchAnimationFrame: number | undefined
 let thinkingTimeoutTimers: ReturnType<typeof window.setTimeout>[] = []
 const loggedThinkingTimeoutRoleIds = new Set<string>()
@@ -80,14 +81,14 @@ const templateFormTitleEl = requireElement<HTMLElement>('#template-form-title')
 const deleteTemplateEl = requireElement<HTMLButtonElement>('#delete-template')
 const settingsButtonEl = requireElement<HTMLButtonElement>('#settings-button')
 const settingsMenuEl = requireElement<HTMLElement>('#settings-menu')
-const defaultSiteGeminiEl = requireElement<HTMLButtonElement>('#default-site-gemini')
-const defaultSiteChatGptEl = requireElement<HTMLButtonElement>('#default-site-chatgpt')
-const defaultSiteClaudeEl = requireElement<HTMLButtonElement>('#default-site-claude')
 const peopleLibraryModalEl = requireElement<HTMLElement>('#people-library-modal')
 const addPersonModalEl = requireElement<HTMLElement>('#add-person-modal')
 const peopleLibrarySummaryEl = requireElement<HTMLElement>('#people-library-summary')
 const peopleLibraryListEl = requireElement<HTMLElement>('#people-library-list')
 const addLibraryPeopleListEl = requireElement<HTMLElement>('#add-library-people-list')
+const templateSiteGeminiEl = requireElement<HTMLInputElement>('#template-site-gemini')
+const templateSiteChatGptEl = requireElement<HTMLInputElement>('#template-site-chatgpt')
+const templateSiteClaudeEl = requireElement<HTMLInputElement>('#template-site-claude')
 const addPersonSiteGeminiEl = requireElement<HTMLInputElement>('#add-person-site-gemini')
 const addPersonSiteChatGptEl = requireElement<HTMLInputElement>('#add-person-site-chatgpt')
 const addPersonSiteClaudeEl = requireElement<HTMLInputElement>('#add-person-site-claude')
@@ -284,20 +285,9 @@ function syncIframeHost(): void {
 }
 
 function render(): void {
-  renderSettingsMenu()
   renderSelectedChat()
   renderTemplates()
   renderAddPersonDialog()
-}
-
-function renderSettingsMenu(): void {
-  const defaultChatSite = store.settings.defaultChatSite
-  defaultSiteGeminiEl.disabled = defaultChatSite === 'gemini'
-  defaultSiteChatGptEl.disabled = defaultChatSite === 'chatgpt'
-  defaultSiteClaudeEl.disabled = defaultChatSite === 'claude'
-  defaultSiteGeminiEl.setAttribute('aria-pressed', String(defaultChatSite === 'gemini'))
-  defaultSiteChatGptEl.setAttribute('aria-pressed', String(defaultChatSite === 'chatgpt'))
-  defaultSiteClaudeEl.setAttribute('aria-pressed', String(defaultChatSite === 'claude'))
 }
 
 function renderSelectedChat(): void {
@@ -802,13 +792,20 @@ function renderTemplates(): void {
   deleteTemplateEl.disabled = !selectedTemplate || used
   deleteTemplateEl.title = used ? '该人员已被群聊使用，不能删除' : ''
   if (selectedTemplate) {
+    const defaultChatSite = selectedTemplate.defaultChatSite ?? store.settings.defaultChatSite
     templateNameEl.value = selectedTemplate.name
     templateDescriptionEl.value = selectedTemplate.description ?? ''
     templatePromptEl.value = selectedTemplate.systemPrompt
+    templateSiteGeminiEl.checked = defaultChatSite === 'gemini'
+    templateSiteChatGptEl.checked = defaultChatSite === 'chatgpt'
+    templateSiteClaudeEl.checked = defaultChatSite === 'claude'
   } else {
     templateNameEl.value = ''
     templateDescriptionEl.value = ''
     templatePromptEl.value = ''
+    templateSiteGeminiEl.checked = store.settings.defaultChatSite === 'gemini'
+    templateSiteChatGptEl.checked = store.settings.defaultChatSite === 'chatgpt'
+    templateSiteClaudeEl.checked = store.settings.defaultChatSite === 'claude'
   }
 }
 
@@ -817,6 +814,7 @@ function roleCard(role: GroupRole): HTMLElement {
   card.className = `role-card${role.id === selectedRoleId ? ' active' : ''}`
   card.addEventListener('click', () => {
     selectedRoleId = role.id
+    roleSiteMenuRoleId = undefined
     renderRolePanel()
   })
 
@@ -839,28 +837,20 @@ function roleCard(role: GroupRole): HTMLElement {
   description.textContent = role.description || '未填写人员描述'
 
   const meta = document.createElement('div')
-  meta.className = 'chat-row tiny'
-  meta.append(textNode(siteLabel(role.chatSite)), textNode(`cursor ${role.contextCursor}`), textNode(role.geminiConversationUrl ? '已有会话' : '未绑定会话'))
+  meta.className = 'chat-row tiny role-meta'
+  meta.append(roleSiteControl(role), textNode(`cursor ${role.contextCursor}`), textNode(role.geminiConversationUrl ? '已有会话' : '未绑定会话'))
+  main.append(row, description, meta)
 
-  const siteActions = document.createElement('div')
-  siteActions.className = 'chat-row tiny'
-  for (const site of ['gemini', 'chatgpt', 'claude'] as const) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'btn btn-ghost'
-    button.textContent = siteLabel(site)
-    button.disabled = role.chatSite === site
-    button.addEventListener('click', event => {
-      event.stopPropagation()
-      switchRoleSite(role, site).catch(error => showError(error instanceof Error ? error.message : String(error)))
-    })
-    siteActions.append(button)
-  }
-  main.append(row, description, meta, siteActions)
-
-  const more = document.createElement('div')
+  const more = document.createElement('button')
+  more.type = 'button'
   more.className = 'role-more'
+  more.setAttribute('aria-label', `切换 ${role.name} 的站点`)
   more.textContent = '···'
+  more.addEventListener('click', event => {
+    event.stopPropagation()
+    roleSiteMenuRoleId = roleSiteMenuRoleId === role.id ? undefined : role.id
+    renderRolePanel()
+  })
   card.append(avatar, main, more)
 
   if (role.status === 'error') {
@@ -870,6 +860,46 @@ function roleCard(role: GroupRole): HTMLElement {
     main.append(error)
   }
   return card
+}
+
+function roleSiteControl(role: GroupRole): HTMLElement {
+  const control = document.createElement('div')
+  control.className = 'role-site-control'
+  const sitePill = document.createElement('button')
+  sitePill.type = 'button'
+  sitePill.className = `site-pill site-pill-${role.chatSite ?? 'gemini'}`
+  sitePill.setAttribute('aria-expanded', String(roleSiteMenuRoleId === role.id))
+  sitePill.textContent = siteLabel(role.chatSite)
+  sitePill.addEventListener('click', event => {
+    event.stopPropagation()
+    roleSiteMenuRoleId = roleSiteMenuRoleId === role.id ? undefined : role.id
+    renderRolePanel()
+  })
+  control.append(sitePill)
+  if (roleSiteMenuRoleId === role.id) control.append(roleSiteMenu(role))
+  return control
+}
+
+function roleSiteMenu(role: GroupRole): HTMLElement {
+  const menu = document.createElement('div')
+  menu.className = 'role-site-menu'
+  menu.addEventListener('click', event => event.stopPropagation())
+  for (const site of ['gemini', 'chatgpt', 'claude'] as const) {
+    const option = document.createElement('button')
+    option.type = 'button'
+    option.className = `role-site-option${role.chatSite === site ? ' active' : ''}`
+    option.textContent = role.chatSite === site ? `✓ ${siteLabel(site)}` : siteLabel(site)
+    option.addEventListener('click', () => {
+      roleSiteMenuRoleId = undefined
+      if (role.chatSite === site) {
+        renderRolePanel()
+        return
+      }
+      switchRoleSite(role, site).catch(error => showError(error instanceof Error ? error.message : String(error)))
+    })
+    menu.append(option)
+  }
+  return menu
 }
 
 function isTemplateUsed(templateId: string): boolean {
@@ -912,7 +942,10 @@ function templateCard(template: RoleTemplate): HTMLElement {
   const description = document.createElement('div')
   description.className = 'template-description'
   description.textContent = template.description || '未填写人员库描述'
-  card.append(row, description)
+  const site = document.createElement('div')
+  site.className = 'template-description'
+  site.textContent = `默认站点：${siteLabel(template.defaultChatSite ?? store.settings.defaultChatSite)}`
+  card.append(row, description, site)
   return card
 }
 
@@ -941,7 +974,10 @@ function renderAddPersonDialog(): void {
     const description = document.createElement('div')
     description.className = 'template-description'
     description.textContent = template.description || '未填写描述'
-    content.append(name, description)
+    const site = document.createElement('div')
+    site.className = 'template-description'
+    site.textContent = `默认站点：${siteLabel(template.defaultChatSite ?? store.settings.defaultChatSite)}`
+    content.append(name, description, site)
     label.append(checkbox, content)
     addLibraryPeopleListEl.append(label)
   }
@@ -1004,7 +1040,9 @@ function textNode(content: string): Text {
 function switchChat(chatId: string): void {
   if (chatId === selectedChatId) {
     chatMenuChatId = undefined
+    roleSiteMenuRoleId = undefined
     renderChatList()
+    renderRolePanel()
     return
   }
   selectedChatId = chatId
@@ -1012,6 +1050,7 @@ function switchChat(chatId: string): void {
   selectedReference = undefined
   peopleDrawerOpen = false
   chatMenuChatId = undefined
+  roleSiteMenuRoleId = undefined
   renderSelectedChat()
   if (pendingSwitchAnimationFrame !== undefined) window.cancelAnimationFrame(pendingSwitchAnimationFrame)
   pendingSwitchAnimationFrame = window.requestAnimationFrame(() => {
@@ -1169,6 +1208,7 @@ function readTemplateDraft(): TemplateDraft {
     name: templateNameEl.value.trim(),
     description: templateDescriptionEl.value.trim(),
     systemPrompt: templatePromptEl.value.trim(),
+    defaultChatSite: readTemplateChatSite(),
   }
 }
 
@@ -1181,6 +1221,13 @@ function validatePersonDraft(draft: TemplateDraft): string | undefined {
 
 function selectedLibraryTemplateIds(): string[] {
   return Array.from(addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value)
+}
+
+function readTemplateChatSite(): ChatSite {
+  const selected = document.querySelector<HTMLInputElement>('input[name="template-chat-site"]:checked')
+  if (selected?.value === 'chatgpt') return 'chatgpt'
+  if (selected?.value === 'claude') return 'claude'
+  return 'gemini'
 }
 
 function readAddPersonChatSite(): ChatSite {
@@ -1329,24 +1376,6 @@ function registerUi(): void {
     renderTemplates()
   })
 
-  defaultSiteGeminiEl.addEventListener('click', () => {
-    settingsMenuEl.hidden = true
-    settingsButtonEl.setAttribute('aria-expanded', 'false')
-    runCommand('GROUP_SETTINGS_UPDATE', { defaultChatSite: 'gemini' }).catch(error => showError(error.message))
-  })
-
-  defaultSiteChatGptEl.addEventListener('click', () => {
-    settingsMenuEl.hidden = true
-    settingsButtonEl.setAttribute('aria-expanded', 'false')
-    runCommand('GROUP_SETTINGS_UPDATE', { defaultChatSite: 'chatgpt' }).catch(error => showError(error.message))
-  })
-
-  defaultSiteClaudeEl.addEventListener('click', () => {
-    settingsMenuEl.hidden = true
-    settingsButtonEl.setAttribute('aria-expanded', 'false')
-    runCommand('GROUP_SETTINGS_UPDATE', { defaultChatSite: 'claude' }).catch(error => showError(error.message))
-  })
-
   requireElement<HTMLButtonElement>('#close-people-library').addEventListener('click', () => {
     peopleLibraryModalEl.hidden = true
   })
@@ -1374,6 +1403,10 @@ function registerUi(): void {
       chatMenuChatId = undefined
       renderChatList()
     }
+    if (roleSiteMenuRoleId && !(event.target as Element | null)?.closest('.role-site-menu, .site-pill, .role-more')) {
+      roleSiteMenuRoleId = undefined
+      renderRolePanel()
+    }
   })
 
   document.addEventListener('keydown', event => {
@@ -1383,7 +1416,9 @@ function registerUi(): void {
     peopleLibraryModalEl.hidden = true
     addPersonModalEl.hidden = true
     chatMenuChatId = undefined
+    roleSiteMenuRoleId = undefined
     renderChatList()
+    renderRolePanel()
   })
 
   requireElement<HTMLButtonElement>('#close-window').addEventListener('click', () => {
@@ -1461,8 +1496,7 @@ function registerUi(): void {
   requireElement<HTMLFormElement>('#add-library-people-form').addEventListener('submit', event => {
     event.preventDefault()
     const templateIds = selectedLibraryTemplateIds()
-    const chatSite = readAddPersonChatSite()
-    addPeopleToCurrentChat(templateIds.map(roleTemplateId => ({ source: 'library', roleTemplateId, chatSite })))
+    addPeopleToCurrentChat(templateIds.map(roleTemplateId => ({ source: 'library', roleTemplateId })))
       .then(() => {
         addPersonModalEl.hidden = true
       })

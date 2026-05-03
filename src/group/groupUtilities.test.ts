@@ -52,18 +52,30 @@ describe('role template utilities', () => {
     expect(role.chatSite).toBe('chatgpt')
   })
 
+  it('uses a role template default site when creating library people', () => {
+    const store = createDefaultStore()
+    store.settings.defaultChatSite = 'gemini'
+    store.chatsById['chat-1'] = makeChat('chat-1')
+    const template = createRoleTemplate(store, { name: '研究员', systemPrompt: '关注调研', defaultChatSite: 'claude' }, 'template-1', 1)
+
+    const role = createGroupRole(store, { chatId: 'chat-1', templateId: template.id }, 'role-1', 2)
+
+    expect(template).toMatchObject({ defaultChatSite: 'claude' })
+    expect(role.chatSite).toBe('claude')
+  })
+
   it('creates group roles in a validated batch without saving temporary people as templates', () => {
     const store = createDefaultStore()
     store.chatsById['chat-1'] = makeChat('chat-1')
-    createRoleTemplate(store, { name: '工程师', systemPrompt: '从工程角度分析' }, 'template-1', 1)
+    createRoleTemplate(store, { name: '工程师', systemPrompt: '从工程角度分析', defaultChatSite: 'claude' }, 'template-1', 1)
 
     const roles = createGroupRolesBatch(store, 'chat-1', [
-      { source: 'library', roleTemplateId: 'template-1', chatSite: 'chatgpt' },
+      { source: 'library', roleTemplateId: 'template-1' },
       { source: 'temporary', name: '法务', description: '关注合规', systemPrompt: '从法务角度分析', chatSite: 'gemini' },
     ], () => `role-${store.chatsById['chat-1'].roleIds.length + 1}`, 2)
 
     expect(roles).toHaveLength(2)
-    expect(roles[0]).toMatchObject({ templateId: 'template-1', name: '工程师', systemPrompt: '从工程角度分析', chatSite: 'chatgpt' })
+    expect(roles[0]).toMatchObject({ templateId: 'template-1', name: '工程师', systemPrompt: '从工程角度分析', chatSite: 'claude' })
     expect(roles[1]).toMatchObject({ name: '法务', systemPrompt: '从法务角度分析', chatSite: 'gemini' })
     expect(roles[1].templateId).toBeUndefined()
     expect(store.roleTemplateOrder).toEqual(['template-1'])

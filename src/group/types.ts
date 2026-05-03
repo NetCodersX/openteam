@@ -48,6 +48,7 @@ export interface RoleTemplate {
   id: string
   name: string
   description?: string
+  defaultChatSite?: ChatSite
   systemPrompt: string
   createdAt: number
   updatedAt: number
