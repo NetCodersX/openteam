@@ -1,4 +1,4 @@
-import type { RoleToBackgroundMessage, TeamRole, TeamRoomState } from '../team/types'
+import type { FrameRoleReadyResponse, RoleToBackgroundMessage } from '../group/runtimeProtocol'
 import type { ContentLogger } from './runtimeClient'
 import type { RoleSession } from './roleSession'
 import type { ChatSiteAdapter } from './sites/types'
@@ -9,7 +9,6 @@ export function registerFrameRoleHandshake(options: {
   siteAdapter: ChatSiteAdapter
   roleSession: RoleSession
   log: ContentLogger
-  getCurrentState(): TeamRoomState | null
   seedStoredRoleReplies(replies: string[] | undefined): void
   sendRuntimeMessage<T>(message: RoleToBackgroundMessage): Promise<T>
 }): void {
@@ -25,13 +24,7 @@ export function registerFrameRoleHandshake(options: {
     const snapshot = options.siteAdapter.getConversationSnapshot()
     options.log.info('frame-role:assignment-received', { chatId, roleId, hostTabId, conversationId: snapshot.conversationId })
     options
-      .sendRuntimeMessage<{
-        ok: boolean
-        role?: TeamRole
-        state?: TeamRoomState
-        replyHistory?: string[]
-        error?: string
-      }>({
+      .sendRuntimeMessage<FrameRoleReadyResponse>({
         type: 'TEAM_FRAME_ROLE_READY',
         chatId,
         roleId,
@@ -50,7 +43,7 @@ export function registerFrameRoleHandshake(options: {
           chatId,
           roleId: response.role.id,
           roleName: response.role.name,
-          roomId: response.state?.roomId || options.getCurrentState()?.roomId || chatId,
+          roomId: response.role.chatId || chatId,
         })
       })
       .catch(error => options.log.warn('frame-role:ready-error', { roleId, error: error instanceof Error ? error.message : String(error) }))

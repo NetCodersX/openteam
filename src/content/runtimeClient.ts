@@ -1,9 +1,6 @@
-import type { BackgroundToHostMessage, BackgroundToRoleMessage, HostToBackgroundMessage, RoleToBackgroundMessage, TeamRoomState } from '../team/types'
+import type { BackgroundToRoleMessage, RoleToBackgroundMessage } from '../group/runtimeProtocol'
 
-export type ContentRuntimeMessage =
-  | BackgroundToHostMessage
-  | BackgroundToRoleMessage
-  | { type: 'TEAM_STATE_UPDATED'; state: TeamRoomState }
+export type ContentRuntimeMessage = BackgroundToRoleMessage
 
 export interface ContentLogger {
   debug(event: string, details?: Record<string, unknown>): void
@@ -24,7 +21,7 @@ export const contentLog: ContentLogger = {
 }
 
 export async function sendRuntimeMessage<T>(
-  message: HostToBackgroundMessage | RoleToBackgroundMessage,
+  message: RoleToBackgroundMessage,
   log: ContentLogger = contentLog,
 ): Promise<T> {
   return new Promise((resolve, reject) => {

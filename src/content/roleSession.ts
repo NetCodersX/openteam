@@ -1,4 +1,3 @@
-import type { TeamRoomState } from '../team/types'
 import type { ChatSiteAdapter } from './sites/types'
 import type { ContentLogger } from './runtimeClient'
 
@@ -20,7 +19,7 @@ export interface RoleSession {
   getActiveMessageId(): string | undefined
   getActiveReplyAttemptId(): string | undefined
   getAssignedChatId(role?: AssignedRole | null): string
-  assignRole(role: AssignedRole, options?: { currentState?: TeamRoomState | null }): void
+  assignRole(role: AssignedRole): void
   startPrompt(messageId: string, replyAttemptId?: string): void
   clearActivePrompt(messageId?: string): string | undefined
 }

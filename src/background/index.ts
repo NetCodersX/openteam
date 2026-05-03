@@ -1,7 +1,6 @@
 import { loadStore } from '../group/store'
 import type { GroupChat, OpenTeamStore } from '../group/types'
 import { createChatHandlers } from './chatHandlers'
-import { createLegacyHandlers, toLegacyState } from './legacyAdapter'
 import { createMessageHandlers } from './messageHandlers'
 import {
   broadcastStoreUpdated as broadcastRuntimeStoreUpdated,
@@ -45,7 +44,7 @@ function newId(prefix: string): string {
 }
 
 async function broadcastStoreUpdated(store: OpenTeamStore, excludeTabId?: number): Promise<void> {
-  await broadcastRuntimeStoreUpdated(store, { excludeTabId, legacyState: toLegacyState(store, runtimeFrames) })
+  await broadcastRuntimeStoreUpdated(store, { excludeTabId })
 }
 
 function getChatStatusFromRoles(store: OpenTeamStore, chat: GroupChat): GroupChat['status'] {
@@ -59,7 +58,7 @@ function getChatStatusFromRoles(store: OpenTeamStore, chat: GroupChat): GroupCha
 async function handleStoreGet(message: RuntimeMessage, sender: chrome.runtime.MessageSender) {
   rememberHost(sender, message.hostTabId)
   const store = await loadStore()
-  return { ok: true, store, state: toLegacyState(store, runtimeFrames), bindings: runtimeFrames.list() }
+  return { ok: true, store, bindings: runtimeFrames.list() }
 }
 
 async function handleSettingsUpdate(message: RuntimeMessage) {
@@ -77,14 +76,12 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() || undefined : undefined
 }
 
-const routeLegacyMessage = (message: RuntimeMessage, sender: chrome.runtime.MessageSender) => routeMessage(message, sender)
 const routeMessage = createMessageRouter([
   { type: 'GROUP_STORE_GET', handler: handleStoreGet },
   ...createChatHandlers({ broadcastStoreUpdated, getChatStatusFromRoles, log, newId, now, runtimeFrames }),
   { type: 'GROUP_SETTINGS_UPDATE', handler: handleSettingsUpdate },
   ...createRoleHandlers({ broadcastStoreUpdated, log, newId, now, runtimeFrames, sendPrompt }),
   ...createMessageHandlers({ broadcastStoreUpdated, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendError, sendPrompt }),
-  ...createLegacyHandlers({ log, routeMessage: routeLegacyMessage, runtimeFrames }),
 ])
 
 chrome.runtime.onInstalled.addListener(() => {

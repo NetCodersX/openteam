@@ -1,4 +1,4 @@
-import type { RoleToBackgroundMessage } from '../team/types'
+import type { RoleToBackgroundMessage } from '../group/runtimeProtocol'
 import type { ContentLogger } from './runtimeClient'
 import type { RoleSession } from './roleSession'
 import type { ChatSiteAdapter } from './sites/types'

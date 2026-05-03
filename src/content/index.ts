@@ -1,8 +1,7 @@
-import type { BackgroundToRoleMessage, HostToBackgroundMessage, RoleToBackgroundMessage, TeamRole, TeamRoomState } from '../team/types'
+import type { BackgroundToRoleMessage, RoleToBackgroundMessage } from '../group/runtimeProtocol'
 import { createConversationMonitor, type ConversationMonitor } from './conversationMonitor'
 import { registerFrameRoleHandshake } from './frameHandshake'
 import { isDirectEmbeddedFrame, isEmbeddedFrame } from './frameEnvironment'
-import { createLegacyHostPanel } from './legacyHostPanel'
 import { waitBeforePromptInput, PROMPT_INPUT_DELAY_MS } from './promptDelay'
 import { createReplyObserver, type ReplyObserverController } from './replyObserver'
 import { contentLog as log, sendRuntimeMessage, type ContentRuntimeMessage } from './runtimeClient'
@@ -23,11 +22,6 @@ const roleSession = createRoleSession({
     replyObserver?.resetForAssignedRole()
     conversationMonitor?.reportConversationUpdate(true)
   },
-})
-
-const legacyPanel = createLegacyHostPanel({
-  log,
-  sendRuntimeMessage: message => sendBackgroundMessage(message),
 })
 
 conversationMonitor = createConversationMonitor({
@@ -53,7 +47,7 @@ function collectPromptDiagnostics(): Record<string, unknown> {
   }
 }
 
-function sendBackgroundMessage<T>(message: HostToBackgroundMessage | RoleToBackgroundMessage): Promise<T> {
+function sendBackgroundMessage<T>(message: RoleToBackgroundMessage): Promise<T> {
   return sendRuntimeMessage<T>(message, log)
 }
 
@@ -87,37 +81,8 @@ function reportRoleError(
   }).catch(error => log.warn('role-error:failed', { error: error instanceof Error ? error.message : String(error) }))
 }
 
-function assignLegacyRole(message: Extract<BackgroundToRoleMessage, { type: 'TEAM_ASSIGN_ROLE' }>): void {
-  roleSession.assignRole({
-    chatId: message.chatId || message.roomId,
-    roleId: message.roleId,
-    roleName: message.roleName,
-    roomId: message.roomId,
-  })
-}
-
 function registerMessageHandlers(): void {
   chrome.runtime.onMessage.addListener((message: ContentRuntimeMessage, _sender, sendResponse) => {
-    if (message?.type === 'TEAM_ASSIGN_ROLE') {
-      log.info('message:assign-role', { chatId: message.chatId, roleId: message.roleId, roleName: message.roleName, roomId: message.roomId })
-      assignLegacyRole(message)
-      sendResponse({ ok: true })
-      return false
-    }
-
-    if (message?.type === 'TEAM_STATE_UPDATED') {
-      log.debug('message:state-updated', { roles: message.state.roles.length, messages: message.state.messages.length })
-      legacyPanel.ensureHostPanel(message.state)
-      sendResponse({ ok: true })
-      return false
-    }
-
-    if (message?.type === 'TEAM_ERROR') {
-      log.warn('message:team-error', { message: message.message })
-      sendResponse({ ok: true })
-      return false
-    }
-
     if (message?.type !== 'TEAM_SEND_PROMPT') return false
 
     handleSendPromptMessage(message, sendResponse)
@@ -170,43 +135,6 @@ function handleSendPromptMessage(message: Extract<BackgroundToRoleMessage, { typ
     })
 }
 
-async function identifyPage(): Promise<void> {
-  const response = await sendBackgroundMessage<{
-    ok: boolean
-    mode?: 'host' | 'role'
-    state?: TeamRoomState
-    role?: TeamRole
-    error?: string
-  }>({
-    type: 'TEAM_CONTENT_READY',
-    conversationId: siteAdapter.getConversationId(),
-  })
-
-  if (!response.ok) {
-    log.warn('identify:failed', { error: response.error })
-    return
-  }
-
-  if (response.mode === 'role' && response.role) {
-    log.info('identify:role', { roleId: response.role.id, roleName: response.role.name, tabId: response.role.tabId })
-    roleSession.assignRole({
-      chatId: legacyPanel.getCurrentState()?.roomId || '',
-      roleId: response.role.id,
-      roleName: response.role.name,
-      roomId: legacyPanel.getCurrentState()?.roomId || '',
-    })
-    return
-  }
-
-  if (response.mode === 'host' && response.state) {
-    log.info('identify:host', { roles: response.state.roles.length, messages: response.state.messages.length })
-    legacyPanel.ensureHostPanel(response.state)
-    sendBackgroundMessage({ type: 'TEAM_HOST_READY' }).catch(error =>
-      log.warn('host-ready:failed', { error: error instanceof Error ? error.message : String(error) }),
-    )
-  }
-}
-
 function startOpenTeam(): void {
   const embedded = isEmbeddedFrame()
   const directEmbedded = isDirectEmbeddedFrame()
@@ -221,7 +149,6 @@ function startOpenTeam(): void {
         siteAdapter,
         roleSession,
         log,
-        getCurrentState: legacyPanel.getCurrentState,
         seedStoredRoleReplies: replies => replyObserver?.seedStoredRoleReplies(replies),
         sendRuntimeMessage: message => sendBackgroundMessage(message),
       })
@@ -231,7 +158,6 @@ function startOpenTeam(): void {
 
   conversationMonitor?.start()
   replyObserver?.startReplyReporting()
-  identifyPage().catch(error => log.warn('boot:failed', { error: error instanceof Error ? error.message : String(error) }))
 }
 
 function bootWhenReady(): void {

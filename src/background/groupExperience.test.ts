@@ -792,8 +792,8 @@ describe('background group chat experience handlers', () => {
     expect(result.ok).toBe(true)
     expect(result.store.chatsById['chat-1'].messageIds).toEqual(['msg-1'])
     expect(result.store.rolesById['role-1'].status).toBe('loading')
-    const legacyState = await harness.invoke({ type: 'GROUP_STORE_GET' }) as { bindings: unknown[] }
-    expect(legacyState.bindings).toEqual([])
+    const snapshot = await harness.invoke({ type: 'GROUP_STORE_GET' }) as { bindings: unknown[] }
+    expect(snapshot.bindings).toEqual([])
   })
 
   it('retries an interrupted role reply with a new attempt id for the pending user message', async () => {

@@ -2,7 +2,8 @@ import { buildUnsyncedContext } from '../group/contextSync'
 import { extractSupportedConversationId, normalizeSupportedChatConversationUrl } from '../group/conversationUrl'
 import { parseGroupMentions } from '../group/mentionParser'
 import { buildPrompt } from '../group/promptBuilder'
-import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RoleStatus, RuntimeFrameBinding } from '../group/types'
+import { mapRuntimeRoleStatus } from '../group/runtimeProtocol'
+import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RuntimeFrameBinding } from '../group/types'
 import type { BackgroundMessageRoute } from './messageRouter'
 import type { PromptDelivery, PromptSender } from './promptDelivery'
 import { messageTabId, rememberHost, senderFrameId, senderTabId, type RuntimeMessage } from './runtimeClient'
@@ -483,24 +484,6 @@ function updateConversation(role: GroupRole, conversationUrl: string | undefined
 
 function isMeaningfulConversationId(value: string | undefined): value is string {
   return Boolean(value && value !== '__default__')
-}
-
-function mapRuntimeRoleStatus(value: unknown): RoleStatus | undefined {
-  switch (value) {
-    case 'opening':
-    case 'offline':
-      return 'loading'
-    case 'sending':
-    case 'generating':
-      return 'thinking'
-    case 'online':
-    case 'idle':
-      return 'ready'
-    case 'error':
-      return 'error'
-    default:
-      return undefined
-  }
 }
 
 async function markDeliveryError(deps: MessageHandlersDependencies, chatId: string, roleId: string, messageId: string, reason: string): Promise<void> {

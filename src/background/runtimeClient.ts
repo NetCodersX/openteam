@@ -4,11 +4,9 @@ export type RuntimeMessage = { type?: string; [key: string]: unknown }
 
 export interface BroadcastStoreUpdatedOptions {
   excludeTabId?: number
-  legacyState?: unknown
 }
 
 export const GROUP_PUSH_TYPE = 'OPENTEAM_GROUP_PUSH'
-export const LEGACY_PUSH_TYPE = 'OPENTEAM_HOST_PUSH'
 
 const hostTabIds = new Set<number>()
 
@@ -64,12 +62,6 @@ export async function broadcastStoreUpdated(store: OpenTeamStore, options: Broad
     await chrome.runtime.sendMessage({ type: GROUP_PUSH_TYPE, payload: message })
   } catch (error) {
     log.debug('group-store-updated:runtime-failed', { error: error instanceof Error ? error.message : String(error) })
-  }
-
-  try {
-    await chrome.runtime.sendMessage({ type: LEGACY_PUSH_TYPE, payload: { type: 'TEAM_STATE_UPDATED', state: options.legacyState } })
-  } catch (error) {
-    log.debug('legacy-store-updated:runtime-failed', { error: error instanceof Error ? error.message : String(error) })
   }
 }
 

@@ -1,13 +1,4 @@
-export type SendPromptMessage = {
-  type: 'TEAM_SEND_PROMPT'
-  chatId: string
-  roleId: string
-  messageId: string
-  replyAttemptId?: string
-  content: string
-  autoSend?: boolean
-  includesPersona?: boolean
-}
+import type { SendPromptMessage } from '../group/runtimeProtocol'
 
 export interface PromptDelivery {
   roleId: string

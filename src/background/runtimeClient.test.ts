@@ -35,13 +35,12 @@ describe('background runtime client', () => {
 
     rememberHost({}, 101)
     rememberHost({}, 202)
-    await broadcastStoreUpdated(store, { legacyState: { roomId: 'legacy-room' } })
+    await broadcastStoreUpdated(store)
 
     expect(tabsSendMessage).toHaveBeenCalledTimes(2)
     expect(tabsSendMessage).toHaveBeenNthCalledWith(1, 101, { type: 'GROUP_STORE_UPDATED', store })
     expect(tabsSendMessage).toHaveBeenNthCalledWith(2, 202, { type: 'GROUP_STORE_UPDATED', store })
     expect(runtimeSendMessage).toHaveBeenCalledWith({ type: 'OPENTEAM_GROUP_PUSH', payload: { type: 'GROUP_STORE_UPDATED', store } })
-    expect(runtimeSendMessage).toHaveBeenCalledWith({ type: 'OPENTEAM_HOST_PUSH', payload: { type: 'TEAM_STATE_UPDATED', state: { roomId: 'legacy-room' } } })
     expect(listHostTabIds()).toEqual([101])
   })
 })

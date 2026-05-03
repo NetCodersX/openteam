@@ -1,0 +1,71 @@
+import type { ChatSite, GroupRole, OpenTeamStore, RoleStatus } from './types'
+
+export type RuntimeRoleStatus =
+  | 'opening'
+  | 'online'
+  | 'sending'
+  | 'generating'
+  | 'idle'
+  | 'offline'
+  | 'error'
+
+export type SendPromptMessage = {
+  type: 'TEAM_SEND_PROMPT'
+  chatId: string
+  roleId: string
+  messageId: string
+  replyAttemptId?: string
+  content: string
+  autoSend?: boolean
+  includesPersona?: boolean
+}
+
+export type BackgroundToRoleMessage = SendPromptMessage
+
+export type RoleToBackgroundMessage =
+  | { type: 'TEAM_FRAME_ROLE_READY'; chatId?: string; roleId: string; hostTabId?: number; conversationId: string; conversationUrl?: string }
+  | { type: 'TEAM_ROLE_CONVERSATION_UPDATED'; chatId: string; roleId: string; conversationId?: string; conversationUrl?: string }
+  | { type: 'TEAM_SEND_ACK'; chatId: string; roleId: string; messageId: string }
+  | { type: 'TEAM_ROLE_ERROR'; chatId: string; roleId: string; messageId?: string; reason: string; replyAttemptId?: string }
+  | { type: 'TEAM_ROLE_STATUS'; status: RuntimeRoleStatus; error?: string }
+  | {
+      type: 'TEAM_ROLE_REPLY'
+      chatId?: string
+      roleId?: string
+      messageId?: string
+      replyAttemptId?: string
+      content: string
+      contentFormat?: 'markdown'
+      conversationId?: string
+      conversationUrl?: string
+    }
+
+export interface FrameRoleReadyResponse {
+  ok: boolean
+  role?: Pick<GroupRole, 'id' | 'name' | 'chatId'>
+  store?: OpenTeamStore
+  replyHistory?: string[]
+  error?: string
+}
+
+export function mapRuntimeRoleStatus(value: unknown): RoleStatus | undefined {
+  switch (value) {
+    case 'opening':
+    case 'offline':
+      return 'loading'
+    case 'sending':
+    case 'generating':
+      return 'thinking'
+    case 'online':
+    case 'idle':
+      return 'ready'
+    case 'error':
+      return 'error'
+    default:
+      return undefined
+  }
+}
+
+export function isRuntimeChatSite(value: unknown): value is ChatSite {
+  return value === 'gemini' || value === 'chatgpt' || value === 'claude'
+}

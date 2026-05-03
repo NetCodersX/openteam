@@ -1,4 +1,4 @@
-import type { RoleToBackgroundMessage } from '../team/types'
+import type { RoleToBackgroundMessage } from '../group/runtimeProtocol'
 import { findLatestCompensationCandidate, findLatestCompensationReply } from './replyCompensation'
 import { createReplyTimeout } from './replyTimeout'
 import { createReplyTracker } from './replyTracker'
