@@ -170,11 +170,32 @@
         <div class="modal-header">
           <div>
             <h2 id="all-notes-title">全部笔记</h2>
-            <p class="tiny">查看全局笔记和所有群聊笔记，已删除群聊的笔记也会保留。</p>
+            <p class="tiny">全局、群聊、已删除群聊</p>
           </div>
           <button id="close-all-notes" class="icon-btn" type="button" aria-label="关闭全部笔记">×</button>
         </div>
-        <div id="all-notes-list" class="all-notes-list"></div>
+        <div class="all-notes-workspace">
+          <div id="all-notes-list" class="all-notes-list" aria-label="笔记范围"></div>
+          <section class="all-notes-editor-shell" aria-labelledby="all-notes-active-title">
+            <div class="all-notes-editor-header">
+              <div>
+                <h3 id="all-notes-active-title">全局笔记</h3>
+                <p id="all-notes-active-meta" class="tiny">手动记录</p>
+              </div>
+            </div>
+            <div class="note-toolbar all-note-toolbar">
+              <button id="all-note-bold" class="note-tool-btn" type="button" aria-label="加粗"><b>B</b></button>
+              <button id="all-note-italic" class="note-tool-btn" type="button" aria-label="斜体"><i>I</i></button>
+              <button id="all-note-strike" class="note-tool-btn" type="button" aria-label="删除线"><s>S</s></button>
+              <button id="all-note-bullet-list" class="note-tool-btn" type="button" aria-label="项目列表">•</button>
+              <button id="all-note-ordered-list" class="note-tool-btn" type="button" aria-label="编号列表">1.</button>
+              <span class="note-toolbar-spacer"></span>
+              <button id="all-note-undo" class="note-tool-btn" type="button" aria-label="撤销">↶</button>
+              <button id="all-note-redo" class="note-tool-btn" type="button" aria-label="重做">↷</button>
+            </div>
+            <div id="all-notes-editor" class="notes-editor all-notes-editor" aria-label="当前笔记富文本编辑器"></div>
+          </section>
+        </div>
       </section>
     </div>
 

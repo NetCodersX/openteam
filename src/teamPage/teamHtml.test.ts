@@ -72,6 +72,8 @@ describe('team.html chat creation UI', () => {
     expect(html).toContain('id="open-all-notes"')
     expect(html).toContain('id="all-notes-modal"')
     expect(html).toContain('id="all-notes-list"')
+    expect(html).toContain('id="all-notes-editor"')
+    expect(html).toContain('id="all-note-bold"')
     expect(html).toContain('id="notes-panel"')
     expect(html).toContain('id="notes-drag-handle"')
     expect(html).toContain('id="notes-editor"')
@@ -105,8 +107,9 @@ describe('team.html chat creation UI', () => {
     expect(html).toContain('id="open-all-notes"')
     expect(html).not.toContain('aria-label="消息"')
     expect(html).not.toContain('aria-label="实验"')
-    expect(html).toMatch(/\.all-notes-modal\s*{[^}]*width:\s*min\(760px,\s*calc\(100vw - 48px\)\);/s)
-    expect(html).toMatch(/\.all-note-item\.deleted-chat\s*{[^}]*border-color:\s*rgba\(248,\s*184,\s*78,\s*0\.22\);/s)
+    expect(html).toMatch(/\.all-notes-modal\s*{[^}]*width:\s*min\(980px,\s*calc\(100vw - 48px\)\);/s)
+    expect(html).toMatch(/\.all-notes-workspace\s*{[^}]*grid-template-columns:\s*240px minmax\(0,\s*1fr\);/s)
+    expect(html).toMatch(/\.all-note-target\.deleted-chat\s*{[^}]*border-color:\s*rgba\(248,\s*184,\s*78,\s*0\.22\);/s)
   })
 
   it('styles window controls as visible mac-style traffic lights', () => {

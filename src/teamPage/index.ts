@@ -28,7 +28,8 @@ const { appShellEl, toggleWindowSizeEl, toggleFullscreenEl, storeSummaryEl, chat
 const { roleSummaryEl, roleListEl, roleTemplateSelectEl, templateListEl, targetPreviewEl, busyPreviewEl, composerFormEl, sendButtonEl } = teamDomRefs
 const { messageInputEl, referenceDraftEl, mentionPanelEl, errorEl, newChatNameEl, createChatFormEl, quickCreateChatEl } = teamDomRefs
 const { templateNameEl, templateDescriptionEl, templatePromptEl, templateFormTitleEl, settingsButtonEl, settingsMenuEl } = teamDomRefs
-const { openAllNotesEl, closeAllNotesEl, allNotesModalEl, allNotesListEl } = teamDomRefs
+const { openAllNotesEl, closeAllNotesEl, allNotesModalEl, allNotesListEl, allNotesActiveTitleEl, allNotesActiveMetaEl, allNotesEditorEl } = teamDomRefs
+const { allNoteBoldEl, allNoteItalicEl, allNoteStrikeEl, allNoteBulletListEl, allNoteOrderedListEl, allNoteUndoEl, allNoteRedoEl } = teamDomRefs
 const { openPeopleLibraryEl, closePeopleLibraryEl, peopleLibraryModalEl, personTemplateModalEl, addPersonModalEl, temporaryPersonModalEl } = teamDomRefs
 const { notesPanelEl, notesDragHandleEl, toggleNotesPanelEl, closeNotesPanelEl, globalNoteTabEl, chatNoteTabEl, notesEditorEl } = teamDomRefs
 const { noteBoldEl, noteItalicEl, noteStrikeEl, noteBulletListEl, noteOrderedListEl, noteUndoEl, noteRedoEl } = teamDomRefs
@@ -77,7 +78,22 @@ const allNotesView = createAllNotesView({
   closeAllNotesEl,
   allNotesModalEl,
   allNotesListEl,
+  allNotesActiveTitleEl,
+  allNotesActiveMetaEl,
+  allNotesEditorEl,
+  noteToolbarButtons: {
+    bold: allNoteBoldEl,
+    italic: allNoteItalicEl,
+    strike: allNoteStrikeEl,
+    bulletList: allNoteBulletListEl,
+    orderedList: allNoteOrderedListEl,
+    undo: allNoteUndoEl,
+    redo: allNoteRedoEl,
+  },
   getStore: () => store,
+  getCurrentChat,
+  runCommand,
+  showError,
 })
 const renderAllNotes = allNotesView.renderAllNotes
 const registerAllNotesEvents = allNotesView.registerAllNotesEvents

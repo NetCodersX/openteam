@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite'
+/// <reference types="vitest" />
+import { configDefaults, defineConfig } from 'vitest/config'
 import { build as buildWithEsbuild } from 'esbuild'
 import { resolve } from 'path'
 import { copyFileSync, mkdirSync, readFileSync } from 'fs'
@@ -77,5 +78,8 @@ export default defineConfig(({ mode }) => ({
         entryFileNames: '[name].js'
       }
     }
+  },
+  test: {
+    exclude: [...configDefaults.exclude, '**/.worktrees/**'],
   }
 }))

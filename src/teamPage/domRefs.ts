@@ -33,6 +33,16 @@ export interface TeamPageDomRefs {
   closeAllNotesEl: HTMLButtonElement
   allNotesModalEl: HTMLElement
   allNotesListEl: HTMLElement
+  allNotesActiveTitleEl: HTMLElement
+  allNotesActiveMetaEl: HTMLElement
+  allNotesEditorEl: HTMLElement
+  allNoteBoldEl: HTMLButtonElement
+  allNoteItalicEl: HTMLButtonElement
+  allNoteStrikeEl: HTMLButtonElement
+  allNoteBulletListEl: HTMLButtonElement
+  allNoteOrderedListEl: HTMLButtonElement
+  allNoteUndoEl: HTMLButtonElement
+  allNoteRedoEl: HTMLButtonElement
   openPeopleLibraryEl: HTMLButtonElement
   closePeopleLibraryEl: HTMLButtonElement
   peopleLibraryModalEl: HTMLElement
@@ -125,6 +135,16 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     closeAllNotesEl: requireElement<HTMLButtonElement>('#close-all-notes'),
     allNotesModalEl: requireElement<HTMLElement>('#all-notes-modal'),
     allNotesListEl: requireElement<HTMLElement>('#all-notes-list'),
+    allNotesActiveTitleEl: requireElement<HTMLElement>('#all-notes-active-title'),
+    allNotesActiveMetaEl: requireElement<HTMLElement>('#all-notes-active-meta'),
+    allNotesEditorEl: requireElement<HTMLElement>('#all-notes-editor'),
+    allNoteBoldEl: requireElement<HTMLButtonElement>('#all-note-bold'),
+    allNoteItalicEl: requireElement<HTMLButtonElement>('#all-note-italic'),
+    allNoteStrikeEl: requireElement<HTMLButtonElement>('#all-note-strike'),
+    allNoteBulletListEl: requireElement<HTMLButtonElement>('#all-note-bullet-list'),
+    allNoteOrderedListEl: requireElement<HTMLButtonElement>('#all-note-ordered-list'),
+    allNoteUndoEl: requireElement<HTMLButtonElement>('#all-note-undo'),
+    allNoteRedoEl: requireElement<HTMLButtonElement>('#all-note-redo'),
     openPeopleLibraryEl: requireElement<HTMLButtonElement>('#open-people-library'),
     closePeopleLibraryEl: requireElement<HTMLButtonElement>('#close-people-library'),
     peopleLibraryModalEl: requireElement<HTMLElement>('#people-library-modal'),
