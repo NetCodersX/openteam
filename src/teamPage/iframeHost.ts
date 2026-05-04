@@ -1,11 +1,11 @@
-import { getSafeSupportedChatIframeSrcForSite, getSupportedChatOrigin } from '../group/conversationUrl'
+import { getSafeSupportedChatIframeSrcForRole, getSupportedChatOrigin } from '../group/conversationUrl'
 import type { GroupChat, GroupRole } from '../group/types'
 
 export const FRAME_ASSIGN_MESSAGE = 'OPENTEAM_ASSIGN_FRAME_ROLE'
 export const CHAT_IFRAME_ALLOW = 'clipboard-read; clipboard-write; microphone; camera; geolocation; autoplay; fullscreen; picture-in-picture; storage-access; web-share'
 
 export type IframeHostChat = Pick<GroupChat, 'id' | 'name' | 'roleIds'>
-export type IframeHostRole = Pick<GroupRole, 'id' | 'chatId' | 'name' | 'chatSite' | 'geminiConversationUrl'>
+export type IframeHostRole = Pick<GroupRole, 'id' | 'chatId' | 'name' | 'chatSite' | 'geminiConversationUrl' | 'chatGptGptsUrl'>
 
 export interface FrameAssignmentMessage {
   type: typeof FRAME_ASSIGN_MESSAGE
@@ -296,7 +296,7 @@ export class IframeHost {
     label.textContent = role.name
 
     const iframe = this.document.createElement('iframe')
-    const src = getSafeSupportedChatIframeSrcForSite(role.geminiConversationUrl, role.chatSite)
+    const src = getSafeSupportedChatIframeSrcForRole(role.geminiConversationUrl, role)
     iframe.className = 'role-frame'
     iframe.title = `${role.name} chat`
     iframe.src = src
@@ -331,7 +331,7 @@ export class IframeHost {
       chatId: role.chatId,
       roleId: role.id,
       iframe,
-      srcKind: src === getSafeSupportedChatIframeSrcForSite(undefined, role.chatSite) ? 'site-home' : 'conversation',
+      srcKind: src === getSafeSupportedChatIframeSrcForRole(undefined, role) ? 'site-home' : 'conversation',
     })
     return record
   }
@@ -480,7 +480,7 @@ function chatActivationSignature(chat: IframeHostChat, roles: IframeHostRole[]):
   const roleIds = new Set(chat.roleIds)
   const roleSignature = roles
     .filter(role => role.chatId === chat.id && roleIds.has(role.id))
-    .map(role => `${role.id}:${role.name}:${role.geminiConversationUrl ?? ''}`)
+    .map(role => `${role.id}:${role.name}:${role.geminiConversationUrl ?? ''}:${role.chatGptGptsUrl ?? ''}`)
     .sort()
     .join('|')
   return `${chat.id}:${chat.name}:${chat.roleIds.join(',')}:${roleSignature}`

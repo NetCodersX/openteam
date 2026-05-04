@@ -138,9 +138,9 @@ function parseSafeChatGptUrl(value: string | undefined): URL | undefined {
 }
 
 function extractConversationId(url: URL): string | undefined {
-  if (!url.pathname.startsWith('/c/')) return undefined
-
-  const conversationId = url.pathname.slice('/c/'.length).split('/')[0]
+  const directConversationId = url.pathname.startsWith('/c/') ? url.pathname.slice('/c/'.length).split('/')[0] : undefined
+  const gptsConversationId = url.pathname.match(/^\/g\/[^/]+\/c\/([^/]+)/)?.[1]
+  const conversationId = directConversationId ?? gptsConversationId
   return conversationId ? decodeURIComponent(conversationId) : undefined
 }
 

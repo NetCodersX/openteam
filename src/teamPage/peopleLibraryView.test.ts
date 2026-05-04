@@ -40,6 +40,13 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
   const peopleLibraryListEl = document.createElement('div')
   const peopleLibraryPaginationEl = document.createElement('div')
   const templateListEl = document.createElement('div')
+  const templateSiteChatGptEl = document.createElement('input')
+  const templateChatGptGptsFieldEl = Object.assign(document.createElement('div'), { hidden: true })
+  const templateChatGptGptsUrlEl = document.createElement('input')
+  const templateNameEl = document.createElement('input')
+  const templateDescriptionEl = document.createElement('textarea')
+  const templatePromptEl = document.createElement('textarea')
+  const peopleLibraryFormEl = document.createElement('form')
   const runCommand = vi.fn(async () => undefined)
   const view = createPeopleLibraryView({
     state: createTeamPageState(),
@@ -58,16 +65,18 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
     addLibraryPeopleListEl,
     roleTemplateSelectEl: document.createElement('select'),
     templateListEl,
-    templateNameEl: document.createElement('input'),
-    templateDescriptionEl: document.createElement('textarea'),
-    templatePromptEl: document.createElement('textarea'),
+    templateNameEl,
+    templateDescriptionEl,
+    templatePromptEl,
     templateFormTitleEl: document.createElement('div'),
     templateSiteGeminiEl: document.createElement('input'),
-    templateSiteChatGptEl: document.createElement('input'),
+    templateSiteChatGptEl,
     templateSiteClaudeEl: document.createElement('input'),
     templateSiteDeepSeekEl: document.createElement('input'),
     templateSiteQwenEl: document.createElement('input'),
     templateSiteKimiEl: document.createElement('input'),
+    templateChatGptGptsFieldEl,
+    templateChatGptGptsUrlEl,
     temporaryPersonNameEl: document.createElement('input'),
     temporaryPersonDescriptionEl: document.createElement('textarea'),
     temporaryPersonPromptEl: document.createElement('textarea'),
@@ -79,7 +88,7 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
     addRoleFormEl: document.createElement('form'),
     addLibraryPeopleFormEl,
     addTemporaryPersonFormEl: document.createElement('form'),
-    peopleLibraryFormEl: document.createElement('form'),
+    peopleLibraryFormEl,
     getCurrentChat: () => options.currentChat,
     getTemplates: () => options.templates,
     emptyCard: () => document.createElement('div'),
@@ -87,7 +96,22 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
     showError: vi.fn(),
     log: { info: vi.fn() },
   })
-  return { view, addLibraryPeopleFormEl, addLibraryPeopleListEl, peopleLibraryListEl, peopleLibraryPaginationEl, runCommand, templateListEl }
+  return {
+    view,
+    addLibraryPeopleFormEl,
+    addLibraryPeopleListEl,
+    peopleLibraryListEl,
+    peopleLibraryPaginationEl,
+    runCommand,
+    templateListEl,
+    templateNameEl,
+    templateDescriptionEl,
+    templatePromptEl,
+    templateSiteChatGptEl,
+    templateChatGptGptsFieldEl,
+    templateChatGptGptsUrlEl,
+    peopleLibraryFormEl,
+  }
 }
 
 describe('team page people library view boundary', () => {
@@ -154,6 +178,86 @@ describe('team page people library view boundary', () => {
         { source: 'library', roleTemplateId: template.id, chatSite: 'gemini' },
         { source: 'library', roleTemplateId: template.id, chatSite: 'claude' },
       ],
+    })
+  })
+
+  it('submits a ChatGPT GPTs prefix when creating a library person', async () => {
+    const store = createDefaultStore()
+    const {
+      view,
+      runCommand,
+      templateNameEl,
+      templatePromptEl,
+      templateSiteChatGptEl,
+      templateChatGptGptsFieldEl,
+      templateChatGptGptsUrlEl,
+      peopleLibraryFormEl,
+    } = setupPeopleLibraryView({ store, templates: [] })
+
+    view.registerPeopleLibraryEvents()
+    view.renderTemplates()
+    templateNameEl.value = '飞飞教练'
+    templatePromptEl.value = '以教练方式回应'
+    templateSiteChatGptEl.checked = true
+    templateSiteChatGptEl.dispatchEvent(new Event('change', { bubbles: true }))
+    templateChatGptGptsUrlEl.value = 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/69f7fabe-9878-83a8-a867-88ebb36967d4'
+    peopleLibraryFormEl.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await Promise.resolve()
+
+    expect(templateChatGptGptsFieldEl.hidden).toBe(false)
+    expect(templateChatGptGptsFieldEl.style.display).toBe('')
+    expect(runCommand).toHaveBeenCalledWith('ROLE_TEMPLATE_CREATE', {
+      name: '飞飞教练',
+      description: '',
+      systemPrompt: '以教练方式回应',
+      defaultChatSite: 'chatgpt',
+      chatGptGptsUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/69f7fabe-9878-83a8-a867-88ebb36967d4',
+    })
+  })
+
+  it('hides the ChatGPT GPTs prefix field when another site is selected', () => {
+    const store = createDefaultStore()
+    const {
+      view,
+      templateSiteChatGptEl,
+      templateChatGptGptsFieldEl,
+      templateChatGptGptsUrlEl,
+    } = setupPeopleLibraryView({ store, templates: [] })
+
+    view.registerPeopleLibraryEvents()
+    view.renderTemplates()
+    templateSiteChatGptEl.checked = false
+    templateChatGptGptsUrlEl.value = 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian'
+    templateSiteChatGptEl.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(templateChatGptGptsFieldEl.hidden).toBe(true)
+    expect(templateChatGptGptsFieldEl.style.display).toBe('none')
+    expect(templateChatGptGptsUrlEl.value).toBe('')
+  })
+
+  it('submits library people with an empty persona', async () => {
+    const store = createDefaultStore()
+    const {
+      view,
+      runCommand,
+      templateNameEl,
+      templatePromptEl,
+      peopleLibraryFormEl,
+    } = setupPeopleLibraryView({ store, templates: [] })
+
+    view.registerPeopleLibraryEvents()
+    view.renderTemplates()
+    templateNameEl.value = '观察员'
+    templatePromptEl.value = ''
+    peopleLibraryFormEl.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await Promise.resolve()
+
+    expect(runCommand).toHaveBeenCalledWith('ROLE_TEMPLATE_CREATE', {
+      name: '观察员',
+      description: '',
+      systemPrompt: '',
+      defaultChatSite: 'gemini',
+      chatGptGptsUrl: undefined,
     })
   })
 })

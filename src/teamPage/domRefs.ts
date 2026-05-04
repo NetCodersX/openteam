@@ -54,6 +54,8 @@ export interface TeamPageDomRefs {
   templateSiteDeepSeekEl: HTMLInputElement
   templateSiteQwenEl: HTMLInputElement
   templateSiteKimiEl: HTMLInputElement
+  templateChatGptGptsFieldEl: HTMLElement
+  templateChatGptGptsUrlEl: HTMLInputElement
   temporaryPersonNameEl: HTMLInputElement
   temporaryPersonDescriptionEl: HTMLTextAreaElement
   temporaryPersonPromptEl: HTMLTextAreaElement
@@ -126,6 +128,8 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     templateSiteDeepSeekEl: requireElement<HTMLInputElement>('#template-site-deepseek'),
     templateSiteQwenEl: requireElement<HTMLInputElement>('#template-site-qwen'),
     templateSiteKimiEl: requireElement<HTMLInputElement>('#template-site-kimi'),
+    templateChatGptGptsFieldEl: requireElement<HTMLElement>('#template-chatgpt-gpts-field'),
+    templateChatGptGptsUrlEl: requireElement<HTMLInputElement>('#template-chatgpt-gpts-url'),
     temporaryPersonNameEl: requireElement<HTMLInputElement>('#temporary-person-name'),
     temporaryPersonDescriptionEl: requireElement<HTMLTextAreaElement>('#temporary-person-description'),
     temporaryPersonPromptEl: requireElement<HTMLTextAreaElement>('#temporary-person-prompt'),

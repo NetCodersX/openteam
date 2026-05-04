@@ -49,6 +49,7 @@ export interface RoleTemplate {
   name: string
   description?: string
   defaultChatSite?: ChatSite
+  chatGptGptsUrl?: string
   systemPrompt: string
   createdAt: number
   updatedAt: number
@@ -67,6 +68,7 @@ export interface GroupRole {
   contextCursor: number
   geminiConversationId?: string
   geminiConversationUrl?: string
+  chatGptGptsUrl?: string
   lastPromptMessageId?: string
   replyAttemptId?: string
   lastReplyAt?: number

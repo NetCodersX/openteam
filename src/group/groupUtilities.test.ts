@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractGeminiConversationId, extractSupportedConversationId, getSafeGeminiUrl, getSafeSupportedChatUrl, isSafeGeminiUrl, isSafeSupportedChatUrl } from './conversationUrl'
+import { extractGeminiConversationId, extractSupportedConversationId, getSafeGeminiUrl, getSafeSupportedChatUrl, isSafeGeminiUrl, isSafeSupportedChatUrl, normalizeChatGptGptsUrl } from './conversationUrl'
 import { buildUnsyncedContext, getContextCursorAfterAck, getUnsyncedMessagesForRole } from './contextSync'
 import { parseGroupMentions } from './mentionParser'
 import { buildInitPrompt, buildPrompt } from './promptBuilder'
@@ -42,6 +42,19 @@ describe('role template utilities', () => {
     expect(store.roleTemplatesById['template-1']).toBeUndefined()
   })
 
+  it('allows empty persona text for templates and temporary people', () => {
+    const store = createDefaultStore()
+    store.chatsById['chat-1'] = makeChat('chat-1')
+
+    const template = createRoleTemplate(store, { name: '观察员', systemPrompt: '' }, 'template-1', 1)
+    const libraryRole = createGroupRole(store, { chatId: 'chat-1', templateId: template.id }, 'role-1', 2)
+    const temporaryRole = createGroupRole(store, { chatId: 'chat-1', name: '记录员', systemPrompt: '' }, 'role-2', 3)
+
+    expect(template.systemPrompt).toBe('')
+    expect(libraryRole.systemPrompt).toBeUndefined()
+    expect(temporaryRole.systemPrompt).toBeUndefined()
+  })
+
   it('applies the default chat site to new roles', () => {
     const store = createDefaultStore()
     store.settings.defaultChatSite = 'chatgpt'
@@ -62,6 +75,26 @@ describe('role template utilities', () => {
 
     expect(template).toMatchObject({ defaultChatSite: 'claude' })
     expect(role.chatSite).toBe('claude')
+  })
+
+  it('inherits a ChatGPT GPTs start URL from library people', () => {
+    const store = createDefaultStore()
+    store.settings.defaultChatSite = 'gemini'
+    store.chatsById['chat-1'] = makeChat('chat-1')
+    const template = createRoleTemplate(store, {
+      name: '飞飞教练',
+      systemPrompt: '以教练方式回应',
+      defaultChatSite: 'chatgpt',
+      chatGptGptsUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/69f7fabe-9878-83a8-a867-88ebb36967d4',
+    }, 'template-1', 1)
+
+    const role = createGroupRole(store, { chatId: 'chat-1', templateId: template.id }, 'role-1', 2)
+
+    expect(template.chatGptGptsUrl).toBe('https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian')
+    expect(role).toMatchObject({
+      chatSite: 'chatgpt',
+      chatGptGptsUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian',
+    })
   })
 
   it('creates group roles in a validated batch without saving temporary people as templates', () => {
@@ -350,6 +383,7 @@ describe('Gemini conversation URL utilities', () => {
 
   it('accepts safe ChatGPT URLs as supported chat conversation URLs', () => {
     expect(isSafeSupportedChatUrl('https://chatgpt.com/c/abc123')).toBe(true)
+    expect(isSafeSupportedChatUrl('https://chatgpt.com/g/g-abc-coach/c/abc123')).toBe(true)
     expect(isSafeSupportedChatUrl('https://chat.openai.com/c/abc123')).toBe(true)
     expect(isSafeSupportedChatUrl('https://claude.ai/chat/abc123')).toBe(true)
     expect(isSafeSupportedChatUrl('https://chat.deepseek.com/a/chat/s/abc123')).toBe(true)
@@ -367,12 +401,20 @@ describe('Gemini conversation URL utilities', () => {
     expect(getSafeSupportedChatUrl('https://www.qianwen.com/chat/abc123')).toBe('https://www.qianwen.com/chat/abc123')
     expect(getSafeSupportedChatUrl('https://evil.example/c/abc123')).toBe('https://gemini.google.com/')
     expect(extractSupportedConversationId('https://chatgpt.com/c/%E6%B5%8B%E8%AF%95')).toBe('测试')
+    expect(extractSupportedConversationId('https://chatgpt.com/g/g-abc-coach/c/%E6%B5%8B%E8%AF%95')).toBe('测试')
     expect(extractSupportedConversationId('https://claude.ai/chat/%E6%B5%8B%E8%AF%95')).toBe('测试')
     expect(extractSupportedConversationId('https://chat.deepseek.com/a/chat/s/%E6%B5%8B%E8%AF%95')).toBe('测试')
     expect(extractSupportedConversationId('https://www.kimi.com/chat/%E6%B5%8B%E8%AF%95')).toBe('测试')
     expect(extractSupportedConversationId('https://www.qianwen.com/chat/%E6%B5%8B%E8%AF%95')).toBe('测试')
     expect(extractSupportedConversationId('https://chatgpt.com/')).toBeUndefined()
     expect(getSafeSupportedChatUrl('https://evil.example/chat/abc123')).toBe('https://gemini.google.com/')
+  })
+
+  it('normalizes ChatGPT GPTs start URLs and rejects unsafe origins', () => {
+    expect(normalizeChatGptGptsUrl('https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/69f7fabe-9878-83a8-a867-88ebb36967d4')).toBe('https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian')
+    expect(normalizeChatGptGptsUrl('https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian?model=gpt-5')).toBe('https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian')
+    expect(normalizeChatGptGptsUrl('https://chatgpt.com/g/')).toBeUndefined()
+    expect(normalizeChatGptGptsUrl('https://chatgpt.com.evil.example/g/g-LrdzaEiqT-fei-fei-jiao-lian')).toBeUndefined()
   })
 })
 

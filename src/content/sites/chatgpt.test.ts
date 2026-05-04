@@ -13,6 +13,15 @@ describe('ChatGPT site adapter', () => {
     })
   })
 
+  it('extracts conversation ids from ChatGPT GPTs conversation urls', () => {
+    const adapter = createChatGptAdapter({ href: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/abc-123?model=gpt-5' })
+
+    expect(adapter.getConversationSnapshot()).toEqual({
+      conversationId: 'abc-123',
+      conversationUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/abc-123?model=gpt-5',
+    })
+  })
+
   it('does not report non-ChatGPT urls', () => {
     const adapter = createChatGptAdapter({ href: 'https://chatgpt.com.evil.example/c/abc-123' })
 

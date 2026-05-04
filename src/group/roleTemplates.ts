@@ -1,3 +1,4 @@
+import { normalizeChatGptGptsUrl } from './conversationUrl'
 import type { ChatSite, GroupChat, GroupRole, OpenTeamStore, RoleTemplate } from './types'
 
 export interface RoleTemplateInput {
@@ -5,6 +6,7 @@ export interface RoleTemplateInput {
   description?: string
   systemPrompt?: string
   defaultChatSite?: ChatSite
+  chatGptGptsUrl?: string
 }
 
 export interface GroupRoleInput {
@@ -15,6 +17,7 @@ export interface GroupRoleInput {
   description?: string
   systemPrompt?: string
   avatarColor?: string
+  chatGptGptsUrl?: string
 }
 
 export type GroupRoleBatchInput =
@@ -35,7 +38,7 @@ export type GroupRoleBatchInput =
 
 type PreparedGroupRoleBatchItem = Omit<GroupRoleInput, 'chatId'> & {
   name: string
-  systemPrompt: string
+  systemPrompt?: string
 }
 
 interface GraphemeSegment {
@@ -79,14 +82,17 @@ export function createRoleTemplate(
 ): RoleTemplate {
   const name = assertValidRoleName(input.name, [])
   const systemPrompt = assertValidSystemPrompt(input.systemPrompt)
+  const defaultChatSite = input.defaultChatSite ?? store.settings.defaultChatSite
   const template: RoleTemplate = {
     id,
     name,
-    defaultChatSite: input.defaultChatSite ?? store.settings.defaultChatSite,
+    defaultChatSite,
     systemPrompt,
     createdAt: now,
     updatedAt: now,
   }
+  const chatGptGptsUrl = defaultChatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(input.chatGptGptsUrl) : undefined
+  if (chatGptGptsUrl) template.chatGptGptsUrl = chatGptGptsUrl
 
   const description = input.description?.trim()
   if (description) template.description = description
@@ -109,6 +115,12 @@ export function updateRoleTemplate(
   template.defaultChatSite = patch.defaultChatSite ?? template.defaultChatSite ?? store.settings.defaultChatSite
   template.systemPrompt = assertValidSystemPrompt(patch.systemPrompt)
   template.updatedAt = now
+  const chatGptGptsUrl = template.defaultChatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(patch.chatGptGptsUrl) : undefined
+  if (chatGptGptsUrl) {
+    template.chatGptGptsUrl = chatGptGptsUrl
+  } else {
+    delete template.chatGptGptsUrl
+  }
 
   const description = patch.description?.trim()
   if (description) {
@@ -171,12 +183,14 @@ export function createGroupRole(
 
   if (input.templateId) role.templateId = input.templateId
 
+  const chatGptGptsUrl = chatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(input.chatGptGptsUrl ?? template?.chatGptGptsUrl) : undefined
+  if (chatGptGptsUrl) role.chatGptGptsUrl = chatGptGptsUrl
+
   const description = (input.description ?? template?.description)?.trim()
   if (description) role.description = description
 
   const systemPrompt = (input.systemPrompt ?? template?.systemPrompt)?.trim()
-  if (!systemPrompt) throw new Error('人设不能为空')
-  role.systemPrompt = systemPrompt
+  if (systemPrompt) role.systemPrompt = systemPrompt
 
   const avatarColor = input.avatarColor?.trim()
   if (avatarColor) role.avatarColor = avatarColor
@@ -220,8 +234,17 @@ export function updateGroupRole(
     role.status = 'pending'
     delete role.geminiConversationId
     delete role.geminiConversationUrl
+    if (patch.chatSite !== 'chatgpt') delete role.chatGptGptsUrl
     delete role.lastPromptMessageId
     delete role.lastReplyAt
+  }
+  if (patch.chatGptGptsUrl !== undefined) {
+    const chatGptGptsUrl = normalizeOptionalChatGptGptsUrl(patch.chatGptGptsUrl)
+    if (nextChatSite === 'chatgpt' && chatGptGptsUrl) {
+      role.chatGptGptsUrl = chatGptGptsUrl
+    } else {
+      delete role.chatGptGptsUrl
+    }
   }
   if (patch.avatarColor !== undefined) {
     const avatarColor = patch.avatarColor.trim()
@@ -281,8 +304,9 @@ function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index
       chatSite: item.chatSite ?? template.defaultChatSite ?? store.settings.defaultChatSite,
       name: assertValidRoleName(template.name, []),
       description: template.description,
-      systemPrompt: assertValidSystemPrompt(template.systemPrompt),
+      systemPrompt: normalizeSystemPrompt(template.systemPrompt),
       avatarColor: item.avatarColor,
+      chatGptGptsUrl: template.chatGptGptsUrl,
     }
   }
 
@@ -291,7 +315,7 @@ function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index
       chatSite: item.chatSite ?? store.settings.defaultChatSite,
       name: assertValidRoleName(item.name, []),
       description: item.description,
-      systemPrompt: assertValidSystemPrompt(item.systemPrompt),
+      systemPrompt: normalizeSystemPrompt(item.systemPrompt),
       avatarColor: item.avatarColor,
     }
   }
@@ -314,9 +338,20 @@ function duplicateRoleSiteMessage(name: string, chatSite: ChatSite): string {
 }
 
 function assertValidSystemPrompt(systemPrompt: string | undefined): string {
+  return normalizeSystemPrompt(systemPrompt)
+}
+
+function normalizeSystemPrompt(systemPrompt: string | undefined): string {
   const trimmed = systemPrompt?.trim() ?? ''
-  if (!trimmed) throw new Error('人设不能为空')
   return trimmed
+}
+
+function normalizeOptionalChatGptGptsUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) return undefined
+  const normalized = normalizeChatGptGptsUrl(trimmed)
+  if (!normalized) throw new Error('GPTs 链接必须是 chatgpt.com/g/... 格式')
+  return normalized
 }
 
 function countUserPerceivedCharacters(value: string): number {

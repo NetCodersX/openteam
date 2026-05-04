@@ -154,6 +154,20 @@ describe('IframeHost', () => {
     expect(host.getRoleFrame('chat-1', 'role-1')?.src).toBe('https://chatgpt.com/c/restored')
   })
 
+  it('uses a ChatGPT GPTs start URL before a role has a conversation URL', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const host = createIframeHost({ visibleHost })
+
+    host.activateChat(makeChat('chat-1', ['role-1']), [{
+      ...makeRole('chat-1', 'role-1'),
+      chatSite: 'chatgpt',
+      chatGptGptsUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian',
+    }])
+
+    expect(host.getRoleFrame('chat-1', 'role-1')?.src).toBe('https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian')
+  })
+
   it('uses safe Claude conversation URLs for role frames', () => {
     const visibleHost = document.createElement('div')
     document.body.append(visibleHost)

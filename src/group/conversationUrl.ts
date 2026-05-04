@@ -1,3 +1,5 @@
+import type { ChatSite } from './types'
+
 const GEMINI_ORIGIN = 'https://gemini.google.com'
 const GEMINI_HOME_URL = `${GEMINI_ORIGIN}/`
 const GEMINI_APP_PREFIX = '/app/'
@@ -12,7 +14,11 @@ const KIMI_ORIGIN = 'https://www.kimi.com'
 const KIMI_HOME_URL = `${KIMI_ORIGIN}/chat/`
 const QWEN_ORIGIN = 'https://www.qianwen.com'
 const QWEN_HOME_URL = `${QWEN_ORIGIN}/`
-type ChatSite = 'gemini' | 'chatgpt' | 'claude' | 'deepseek' | 'kimi' | 'qwen'
+
+interface ChatSiteStartUrlRole {
+  chatSite?: ChatSite
+  chatGptGptsUrl?: string
+}
 
 export function isSafeGeminiUrl(value: string | undefined): value is string {
   if (!value || !value.startsWith(GEMINI_HOME_URL)) return false
@@ -54,12 +60,31 @@ export function getDefaultChatSiteUrl(site: ChatSite | undefined): string {
   return GEMINI_HOME_URL
 }
 
+export function getDefaultChatSiteUrlForRole(role: ChatSiteStartUrlRole, fallbackSite?: ChatSite): string {
+  const site = role.chatSite ?? fallbackSite
+  if (site === 'chatgpt') return normalizeChatGptGptsUrl(role.chatGptGptsUrl) ?? CHATGPT_HOME_URL
+  return getDefaultChatSiteUrl(site)
+}
+
 export function getSafeSupportedChatIframeSrcForSite(value: string | undefined, site: ChatSite | undefined): string {
   return isSafeSupportedChatUrl(value) ? value : getDefaultChatSiteUrl(site)
 }
 
+export function getSafeSupportedChatIframeSrcForRole(value: string | undefined, role: ChatSiteStartUrlRole, fallbackSite?: ChatSite): string {
+  return isSafeSupportedChatUrl(value) ? value : getDefaultChatSiteUrlForRole(role, fallbackSite)
+}
+
 export function normalizeSupportedChatConversationUrl(value: string | undefined): string | undefined {
   return isSafeSupportedChatUrl(value) ? new URL(value).href : undefined
+}
+
+export function normalizeChatGptGptsUrl(value: string | undefined): string | undefined {
+  const url = parseSafeChatGptUrl(value)
+  if (!url) return undefined
+
+  const match = url.pathname.match(/^\/g\/([^/]+)/)
+  const gptsSlug = match?.[1]
+  return gptsSlug ? `${url.origin}/g/${gptsSlug}` : undefined
 }
 
 export function extractSupportedConversationId(value: string | undefined): string | undefined {
@@ -103,24 +128,28 @@ export function normalizeGeminiConversationUrl(value: string | undefined): strin
 }
 
 function isSafeChatGptUrl(value: string | undefined): value is string {
-  if (!value || (!value.startsWith(CHATGPT_HOME_URL) && !value.startsWith('https://chat.openai.com/'))) return false
-
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' && CHATGPT_HOSTS.has(url.hostname)
-  } catch {
-    return false
-  }
+  return Boolean(parseSafeChatGptUrl(value))
 }
 
 function extractChatGptConversationId(value: string | undefined): string | undefined {
   if (!isSafeChatGptUrl(value)) return undefined
 
   const url = new URL(value)
-  if (!url.pathname.startsWith('/c/')) return undefined
-
-  const conversationId = url.pathname.slice('/c/'.length).split('/')[0]
+  const directConversationId = url.pathname.startsWith('/c/') ? url.pathname.slice('/c/'.length).split('/')[0] : undefined
+  const gptsConversationId = url.pathname.match(/^\/g\/[^/]+\/c\/([^/]+)/)?.[1]
+  const conversationId = directConversationId ?? gptsConversationId
   return conversationId ? decodeURIComponent(conversationId) : undefined
+}
+
+function parseSafeChatGptUrl(value: string | undefined): URL | undefined {
+  if (!value || (!value.startsWith(CHATGPT_HOME_URL) && !value.startsWith('https://chat.openai.com/'))) return undefined
+
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && CHATGPT_HOSTS.has(url.hostname) ? url : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function isSafeClaudeUrl(value: string | undefined): value is string {

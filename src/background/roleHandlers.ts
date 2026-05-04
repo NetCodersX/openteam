@@ -1,4 +1,4 @@
-import { getDefaultChatSiteUrl, normalizeSupportedChatConversationUrl } from '../group/conversationUrl'
+import { getDefaultChatSiteUrlForRole, normalizeSupportedChatConversationUrl } from '../group/conversationUrl'
 import { buildReinitPrompt } from '../group/promptBuilder'
 import {
   createGroupRole,
@@ -48,6 +48,7 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
       description: readOptionalString(message.description),
       systemPrompt: readOptionalString(message.systemPrompt),
       defaultChatSite: readChatSite(message.defaultChatSite),
+      chatGptGptsUrl: readOptionalString(message.chatGptGptsUrl),
     }, deps.newId('template'), deps.now()))
     deps.log.info('role-template:create', { templateId: result.id, nameLength: result.name.length, personaLength: result.systemPrompt.length })
     await deps.broadcastStoreUpdated(store)
@@ -61,6 +62,7 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
       description: readOptionalString(patch.description),
       systemPrompt: readOptionalString(patch.systemPrompt),
       defaultChatSite: readChatSite(patch.defaultChatSite),
+      chatGptGptsUrl: readOptionalString(patch.chatGptGptsUrl),
     }, deps.now()))
     deps.log.info('role-template:update', { templateId: result.id, patchKeys: ['name', 'description', 'systemPrompt'], personaLength: result.systemPrompt.length })
     await deps.broadcastStoreUpdated(store)
@@ -93,6 +95,7 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
       description: readOptionalString(message.description),
       systemPrompt: readOptionalString(message.systemPrompt),
       avatarColor: readOptionalString(message.avatarColor),
+      chatGptGptsUrl: readOptionalString(message.chatGptGptsUrl),
     }, deps.newId('role'), timestamp))
     deps.log.info('role-create:stored', { chatId, roleId: result.id, source: templateId ? 'library' : 'temporary' })
     await deps.broadcastStoreUpdated(store)
@@ -166,7 +169,7 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
       role.updatedAt = deps.now()
       chat.status = 'initializing'
       chat.updatedAt = role.updatedAt
-      return { role, iframeSrc: normalizeSupportedChatConversationUrl(role.geminiConversationUrl) ?? getDefaultChatSiteUrl(role.chatSite ?? store.settings.defaultChatSite) }
+      return { role, iframeSrc: normalizeSupportedChatConversationUrl(role.geminiConversationUrl) ?? getDefaultChatSiteUrlForRole(role, store.settings.defaultChatSite) }
     })
     deps.log.info('role-recover:ready', { roleId: result.role.id, roleName: result.role.name, iframeSrc: result.iframeSrc, status: result.role.status })
     await deps.broadcastStoreUpdated(store)
@@ -258,7 +261,7 @@ function readGroupRoleBatchItem(value: unknown): Parameters<typeof createGroupRo
       source: 'temporary',
       name: requireString(value.name, '人员名称不能为空'),
       description: readOptionalString(value.description),
-      systemPrompt: requireString(value.systemPrompt, '人设不能为空'),
+      systemPrompt: readOptionalString(value.systemPrompt) ?? '',
       chatSite,
       avatarColor: readOptionalString(value.avatarColor),
     }

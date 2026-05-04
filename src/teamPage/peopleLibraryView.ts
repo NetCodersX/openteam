@@ -1,7 +1,7 @@
 import type { ChatSite, GroupChat, OpenTeamStore, RoleTemplate } from '../group/types'
 import type { TeamPageState } from './appState'
 
-type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultChatSite'>
+type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultChatSite' | 'chatGptGptsUrl'>
 type AddPersonItem =
   | { key: string; source: 'library'; roleTemplateId: string; name: string; description?: string; chatSites: ChatSite[]; disabledSites: Set<ChatSite> }
   | { key: string; source: 'temporary'; draftId: string; name: string; description?: string; systemPrompt: string; chatSites: ChatSite[]; disabledSites: Set<ChatSite> }
@@ -36,6 +36,8 @@ export interface PeopleLibraryViewDependencies {
   templateSiteDeepSeekEl: HTMLInputElement
   templateSiteQwenEl: HTMLInputElement
   templateSiteKimiEl: HTMLInputElement
+  templateChatGptGptsFieldEl: HTMLElement
+  templateChatGptGptsUrlEl: HTMLInputElement
   temporaryPersonNameEl: HTMLInputElement
   temporaryPersonDescriptionEl: HTMLTextAreaElement
   temporaryPersonPromptEl: HTMLTextAreaElement
@@ -105,6 +107,8 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       deps.templateSiteDeepSeekEl.checked = defaultChatSite === 'deepseek'
       deps.templateSiteQwenEl.checked = defaultChatSite === 'qwen'
       deps.templateSiteKimiEl.checked = false
+      deps.templateChatGptGptsUrlEl.value = selectedTemplate.chatGptGptsUrl ?? ''
+      syncTemplateChatGptGptsField()
     } else {
       deps.templateNameEl.value = ''
       deps.templateDescriptionEl.value = ''
@@ -116,6 +120,8 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       deps.templateSiteDeepSeekEl.checked = defaultChatSite === 'deepseek'
       deps.templateSiteQwenEl.checked = defaultChatSite === 'qwen'
       deps.templateSiteKimiEl.checked = false
+      deps.templateChatGptGptsUrlEl.value = ''
+      syncTemplateChatGptGptsField()
     }
   }
 
@@ -176,6 +182,9 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
 
     deps.newTemplateEl.addEventListener('click', () => openTemplateEditor())
     deps.closePersonTemplateEl.addEventListener('click', closeTemplateEditor)
+    for (const input of templateSiteInputs()) {
+      input.addEventListener('change', syncTemplateChatGptGptsField)
+    }
 
     deps.closeAddPersonEl.addEventListener('click', () => {
       deps.addPersonModalEl.hidden = true
@@ -260,7 +269,8 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     description.textContent = template.description || '未填写人员库描述'
     const site = document.createElement('div')
     site.className = 'template-description'
-    site.textContent = `默认站点：${siteLabel(visibleChatSite(template.defaultChatSite ?? store.settings.defaultChatSite))}`
+    const defaultChatSite = visibleChatSite(template.defaultChatSite ?? store.settings.defaultChatSite)
+    site.textContent = `默认站点：${siteLabel(defaultChatSite)}${defaultChatSite === 'chatgpt' && template.chatGptGptsUrl ? ' · GPTs' : ''}`
     body.append(row, description, site)
 
     const edit = document.createElement('button')
@@ -464,13 +474,13 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       description: deps.templateDescriptionEl.value.trim(),
       systemPrompt: deps.templatePromptEl.value.trim(),
       defaultChatSite: readTemplateChatSite(),
+      chatGptGptsUrl: deps.templateSiteChatGptEl.checked ? deps.templateChatGptGptsUrlEl.value.trim() : undefined,
     }
   }
 
   function validatePersonDraft(draft: Pick<TemplateDraft, 'name' | 'description' | 'systemPrompt'>): string | undefined {
     if (!draft.name) return '人员名称不能为空'
     if (Array.from(draft.name).length > 10) return '人员名称最多 10 个字'
-    if (!draft.systemPrompt.trim()) return '人设不能为空'
     return undefined
   }
 
@@ -493,6 +503,24 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     if (deps.templateSiteClaudeEl.checked) return 'claude'
     if (deps.templateSiteDeepSeekEl.checked) return 'deepseek'
     return 'gemini'
+  }
+
+  function syncTemplateChatGptGptsField(): void {
+    const visible = deps.templateSiteChatGptEl.checked
+    deps.templateChatGptGptsFieldEl.hidden = !visible
+    deps.templateChatGptGptsFieldEl.style.display = visible ? '' : 'none'
+    if (!visible) deps.templateChatGptGptsUrlEl.value = ''
+  }
+
+  function templateSiteInputs(): HTMLInputElement[] {
+    return [
+      deps.templateSiteGeminiEl,
+      deps.templateSiteChatGptEl,
+      deps.templateSiteClaudeEl,
+      deps.templateSiteDeepSeekEl,
+      deps.templateSiteQwenEl,
+      deps.templateSiteKimiEl,
+    ]
   }
 
   async function addPeopleToCurrentChat(items: Record<string, unknown>[]): Promise<void> {

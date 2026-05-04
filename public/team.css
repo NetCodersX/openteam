@@ -502,6 +502,10 @@ h3 {
   gap: 7px;
 }
 
+.field[hidden] {
+  display: none;
+}
+
 label {
   color: var(--muted);
   font-size: 11px;
