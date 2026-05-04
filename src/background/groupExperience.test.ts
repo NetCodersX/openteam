@@ -183,6 +183,7 @@ describe('background group chat experience handlers', () => {
       text: '重点',
       startOffset: 5,
       endOffset: 7,
+      color: '#7dd3fc',
     }) as { ok: boolean; store: OpenTeamStore }
 
     expect(response.ok).toBe(true)
@@ -193,6 +194,7 @@ describe('background group chat experience handlers', () => {
         text: '重点',
         startOffset: 5,
         endOffset: 7,
+        color: '#7dd3fc',
       }),
     ])
   })

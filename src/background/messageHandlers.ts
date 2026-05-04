@@ -1,5 +1,6 @@
 import { buildUnsyncedContext } from '../group/contextSync'
 import { extractSupportedConversationId, normalizeSupportedChatConversationUrl } from '../group/conversationUrl'
+import { normalizeMessageHighlightColor } from '../group/highlightColors'
 import { parseGroupMentions } from '../group/mentionParser'
 import { buildPrompt } from '../group/promptBuilder'
 import { mapRuntimeRoleStatus } from '../group/runtimeProtocol'
@@ -286,6 +287,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     const text = requireString(message.text, '高亮内容不能为空')
     const startOffset = requireNumber(message.startOffset, '缺少高亮起点')
     const endOffset = requireNumber(message.endOffset, '缺少高亮终点')
+    const color = normalizeMessageHighlightColor(message.color)
     if (endOffset <= startOffset) throw new Error('高亮范围无效')
     const timestamp = deps.now()
 
@@ -303,6 +305,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         text,
         startOffset,
         endOffset,
+        color,
         createdAt: timestamp,
       })
     })

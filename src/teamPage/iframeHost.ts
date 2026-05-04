@@ -295,11 +295,10 @@ export class IframeHost {
     label.className = 'role-frame-label'
     label.textContent = role.name
 
-    const iframe = this.document.createElement('iframe')
     const src = getSafeSupportedChatIframeSrcForRole(role.geminiConversationUrl, role)
+    const iframe = this.document.createElement('iframe')
     iframe.className = 'role-frame'
     iframe.title = `${role.name} chat`
-    iframe.src = src
     iframe.allow = CHAT_IFRAME_ALLOW
     iframe.dataset.chatId = role.chatId
     iframe.dataset.roleId = role.id
@@ -309,7 +308,6 @@ export class IframeHost {
     iframe.setAttribute('sec-ch-ua', '"Chromium";v="122", "Google Chrome";v="122"')
     iframe.setAttribute('sec-ch-ua-mobile', '?0')
     iframe.setAttribute('sec-ch-ua-platform', '"Macintosh"')
-    shell.append(label, iframe)
 
     const record: RoleFrameRecord = {
       chatId: role.chatId,
@@ -324,8 +322,9 @@ export class IframeHost {
     }
 
     iframe.addEventListener('load', () => this.startAssignLoop(record))
+    iframe.src = src
+    shell.append(label, iframe)
     this.framesByRoleKey.set(roleKey(role.chatId, role.id), record)
-    this.startAssignLoop(record)
     this.emit({
       type: 'role-created',
       chatId: role.chatId,

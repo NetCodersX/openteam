@@ -1,5 +1,3 @@
-import { Editor } from '@tiptap/core'
-import StarterKit from '@tiptap/starter-kit'
 import type { GroupChat, OpenTeamStore, RichNoteDocument } from '../group/types'
 import type { TeamPageState } from './appState'
 
@@ -16,7 +14,7 @@ export interface NoteEditorAdapter {
 
 export type NoteToolbarCommand = 'bold' | 'italic' | 'strike' | 'bulletList' | 'orderedList' | 'undo' | 'redo'
 
-export type NoteEditorFactory = (options: { element: HTMLElement; content: RichNoteDocument; onUpdate(): void }) => NoteEditorAdapter
+export type NoteEditorFactory = (options: { element: HTMLElement; content: RichNoteDocument; onUpdate(): void }) => NoteEditorAdapter | Promise<NoteEditorAdapter>
 
 export interface NotesViewDependencies {
   state: TeamPageState
@@ -48,6 +46,7 @@ const FLOATING_PANEL_MARGIN = 12
 export function createNotesView(deps: NotesViewDependencies): NotesView {
   const createEditor = deps.createEditor ?? createTiptapNoteEditor
   let editor: NoteEditorAdapter | undefined
+  let editorLoadPromise: Promise<NoteEditorAdapter> | undefined
   let loadedScope: NoteScope | undefined
   let loadedChatId: string | undefined
   let saveTimer: number | undefined
@@ -55,7 +54,6 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
 
   function renderNotes(): void {
     const chat = deps.getCurrentChat()
-    if (!chat && deps.state.activeNoteScope === 'chat') deps.state.activeNoteScope = 'global'
     const scope = readAvailableScope(chat)
 
     deps.notesPanelEl.classList.toggle('open', deps.state.notesPanelOpen)
@@ -65,7 +63,7 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
     deps.chatNoteTabEl.classList.toggle('active', scope === 'chat')
     deps.chatNoteTabEl.disabled = !chat
 
-    ensureEditor()
+    if (deps.state.notesPanelOpen) ensureEditor()?.catch(() => undefined)
     const nextChatId = scope === 'chat' ? chat?.id : undefined
     if (loadedScope !== scope || loadedChatId !== nextChatId) {
       loadedScope = scope
@@ -76,9 +74,14 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
 
   function registerNotesEvents(): void {
     deps.toggleNotesPanelEl.addEventListener('click', () => {
-      deps.state.notesPanelOpen = !deps.state.notesPanelOpen
+      const nextOpen = !deps.state.notesPanelOpen
+      if (nextOpen) selectDefaultOpenScope()
+      deps.state.notesPanelOpen = nextOpen
       renderNotes()
-      if (deps.state.notesPanelOpen) editor?.focus()
+      if (deps.state.notesPanelOpen) {
+        ensureEditor()
+        focusEditorWhenReady()
+      }
     })
     deps.closeNotesPanelEl.addEventListener('click', () => {
       deps.state.notesPanelOpen = false
@@ -106,10 +109,18 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
   function insertTextIntoActiveNote(text: string): void {
     const trimmed = text.trim()
     if (!trimmed) return
+    selectDefaultOpenScope()
     deps.state.notesPanelOpen = true
     renderNotes()
-    editor?.insertText(trimmed)
-    saveActiveNote()
+    if (editor) {
+      editor?.insertText(trimmed)
+      saveActiveNote()
+      return
+    }
+    ensureEditor()?.then(createdEditor => {
+      createdEditor.insertText(trimmed)
+      saveActiveNote()
+    }).catch(() => undefined)
   }
 
   function destroy(): void {
@@ -178,17 +189,62 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
     deps.notesPanelEl.style.bottom = 'auto'
   }
 
-  function ensureEditor(): void {
-    if (editor) return
-    editor = createEditor({
+  function ensureEditor(): Promise<NoteEditorAdapter> | undefined {
+    if (editor) return Promise.resolve(editor)
+    if (editorLoadPromise) return editorLoadPromise
+
+    const currentScope = readAvailableScope(deps.getCurrentChat())
+    const currentChatId = currentScope === 'chat' ? deps.getCurrentChat()?.id : undefined
+    const created = createEditor({
       element: deps.notesEditorEl,
-      content: readNoteContent(readAvailableScope(deps.getCurrentChat()), deps.getCurrentChat()?.id),
+      content: readNoteContent(currentScope, currentChatId),
       onUpdate: scheduleSaveActiveNote,
     })
+    if (!isPromise(created)) {
+      editor = created
+      syncLoadedContent()
+      return Promise.resolve(editor)
+    }
+
+    editorLoadPromise = created
+      .then(createdEditor => {
+        editor = createdEditor
+        editorLoadPromise = undefined
+        syncLoadedContent()
+        if (deps.state.notesPanelOpen) editor.focus()
+        return editor
+      })
+      .catch(error => {
+        editorLoadPromise = undefined
+        handleEditorLoadError(error)
+        throw error
+      })
+    return editorLoadPromise
+  }
+
+  function syncLoadedContent(): void {
+    if (!editor || !loadedScope) return
+    editor.setContent(readNoteContent(loadedScope, loadedChatId))
+  }
+
+  function focusEditorWhenReady(): void {
+    if (editor) {
+      editor.focus()
+      return
+    }
+    editorLoadPromise?.then(createdEditor => createdEditor.focus()).catch(() => undefined)
+  }
+
+  function handleEditorLoadError(error: unknown): void {
+    deps.showError(error instanceof Error ? error.message : String(error))
   }
 
   function readAvailableScope(chat: GroupChat | undefined): NoteScope {
     return deps.state.activeNoteScope === 'chat' && chat ? 'chat' : 'global'
+  }
+
+  function selectDefaultOpenScope(): void {
+    if (deps.getCurrentChat()) deps.state.activeNoteScope = 'chat'
   }
 
   function readNoteContent(scope: NoteScope, chatId: string | undefined): RichNoteDocument {
@@ -220,39 +276,11 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
   return { renderNotes, registerNotesEvents, insertTextIntoActiveNote, destroy }
 }
 
-export function createTiptapNoteEditor(options: { element: HTMLElement; content: RichNoteDocument; onUpdate(): void }): NoteEditorAdapter {
-  const editor = new Editor({
-    element: options.element,
-    extensions: [StarterKit],
-    content: options.content,
-    onUpdate: options.onUpdate,
-  })
+function isPromise(value: NoteEditorAdapter | Promise<NoteEditorAdapter>): value is Promise<NoteEditorAdapter> {
+  return typeof (value as Promise<NoteEditorAdapter>).then === 'function'
+}
 
-  return {
-    setContent(content) {
-      editor.commands.setContent(content, { emitUpdate: false })
-    },
-    getJSON() {
-      return editor.getJSON()
-    },
-    insertText(text) {
-      editor.chain().focus().insertContent(text).run()
-    },
-    focus() {
-      editor.commands.focus()
-    },
-    destroy() {
-      editor.destroy()
-    },
-    runCommand(command) {
-      const chain = editor.chain().focus()
-      if (command === 'bold') chain.toggleBold().run()
-      if (command === 'italic') chain.toggleItalic().run()
-      if (command === 'strike') chain.toggleStrike().run()
-      if (command === 'bulletList') chain.toggleBulletList().run()
-      if (command === 'orderedList') chain.toggleOrderedList().run()
-      if (command === 'undo') chain.undo().run()
-      if (command === 'redo') chain.redo().run()
-    },
-  }
+async function createTiptapNoteEditor(options: { element: HTMLElement; content: RichNoteDocument; onUpdate(): void }): Promise<NoteEditorAdapter> {
+  const module = await import('./tiptapNoteEditor')
+  return module.createTiptapNoteEditor(options)
 }

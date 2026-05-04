@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { DEFAULT_MESSAGE_HIGHLIGHT_COLOR, MESSAGE_HIGHLIGHT_COLORS, messageHighlightColorRgb, type MessageHighlightColor } from '../group/highlightColors'
 import { roleMentionLabel } from '../group/mentionParser'
 import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, MessageReference, OpenTeamStore } from '../group/types'
 import type { TeamPageState } from './appState'
@@ -9,6 +10,9 @@ type MessageActionIcon = 'copy' | 'quote' | 'jump' | 'check' | 'stop' | 'retry'
 const MAX_CACHED_MESSAGE_NODES = 400
 const COPY_FEEDBACK_MS = 1200
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48
+const MARK_MENU_SELECTION_GAP_PX = 12
+const MARK_MENU_FALLBACK_HEIGHT_PX = 148
+const MARK_MENU_SELECTION_SETTLE_DELAY_MS = 80
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 export interface MessagesViewDependencies {
@@ -45,7 +49,11 @@ export interface MessagesView {
 
 export function createMessagesView(deps: MessagesViewDependencies): MessagesView {
   let markMenu: HTMLElement | undefined
-  let selectedMark: { message: GroupMessage; text: string; startOffset: number; endOffset: number; rect: DOMRect } | undefined
+  let selectedMark: { message: GroupMessage; text: string; startOffset: number; endOffset: number; rect: DOMRect; color: MessageHighlightColor } | undefined
+  let selectedHighlightColor: MessageHighlightColor = DEFAULT_MESSAGE_HIGHLIGHT_COLOR
+  let selectionDragActive = false
+  let ignoreNextDocumentClick = false
+  let markMenuUpdateTimer: number | undefined
 
   function renderMessages(): void {
     const chat = deps.getCurrentChat()
@@ -458,17 +466,27 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     })
   }
 
-  deps.messagesEl.addEventListener('mouseup', () => {
-    showMarkMenuFromSelection()
-  })
+  deps.messagesEl.addEventListener('mousedown', beginSelectionDrag)
+  deps.messagesEl.addEventListener('pointerdown', beginSelectionDrag)
+  deps.messagesEl.addEventListener('dragstart', cancelSelectionMarking)
+  document.addEventListener('mouseup', finishSelectionDrag)
+  document.addEventListener('pointerup', finishSelectionDrag)
 
   document.addEventListener('selectionchange', () => {
+    if (selectionDragActive) return
     const selection = window.getSelection()
-    if (!selection || selection.isCollapsed) return
-    if (!deps.messagesEl.contains(selection.anchorNode)) hideMarkMenu()
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      hideMarkMenu()
+      return
+    }
+    scheduleMarkMenuFromSelection()
   })
 
   document.addEventListener('click', event => {
+    if (ignoreNextDocumentClick) {
+      ignoreNextDocumentClick = false
+      return
+    }
     if (markMenu?.contains(event.target as Node)) return
     const target = event.target as Element | null
     if (target?.closest('.message-body')) return
@@ -478,6 +496,44 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') hideMarkMenu()
   })
+
+  function beginSelectionDrag(event: MouseEvent | PointerEvent): void {
+    const target = event.target as Element | null
+    if (!target || target.closest('button, input, textarea, select, a, [role="button"]')) return
+    if (!deps.messagesEl.contains(target)) return
+    selectionDragActive = true
+    clearMarkMenuUpdate()
+    hideMarkMenu()
+  }
+
+  function finishSelectionDrag(event: MouseEvent | PointerEvent): void {
+    const target = event.target as Node | null
+    if (!selectionDragActive && (!target || !deps.messagesEl.contains(target))) return
+    selectionDragActive = false
+    ignoreNextDocumentClick = true
+    scheduleMarkMenuFromSelection()
+  }
+
+  function cancelSelectionMarking(): void {
+    selectionDragActive = false
+    ignoreNextDocumentClick = false
+    clearMarkMenuUpdate()
+    hideMarkMenu()
+  }
+
+  function scheduleMarkMenuFromSelection(): void {
+    clearMarkMenuUpdate()
+    markMenuUpdateTimer = window.setTimeout(() => {
+      markMenuUpdateTimer = undefined
+      showMarkMenuFromSelection()
+    }, MARK_MENU_SELECTION_SETTLE_DELAY_MS)
+  }
+
+  function clearMarkMenuUpdate(): void {
+    if (markMenuUpdateTimer === undefined) return
+    window.clearTimeout(markMenuUpdateTimer)
+    markMenuUpdateTimer = undefined
+  }
 
   function showMarkMenuFromSelection(): void {
     const selection = window.getSelection()
@@ -514,6 +570,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       startOffset,
       endOffset: startOffset + selectedText.length,
       rect: rangeRect(range),
+      color: selectedHighlightColor,
     }
     renderMarkMenu()
   }
@@ -523,14 +580,28 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     markMenu?.remove()
     markMenu = document.createElement('div')
     markMenu.className = 'mark-menu'
+    const colorRow = document.createElement('div')
+    colorRow.className = 'mark-color-row'
+    colorRow.setAttribute('aria-label', '高亮颜色')
+    for (const color of MESSAGE_HIGHLIGHT_COLORS) {
+      colorRow.append(markColorButton(color.value, color.label))
+    }
     markMenu.append(
+      colorRow,
       markMenuButton('高亮', '高亮', () => applySelectedMark('highlight')),
       markMenuButton('加入笔记', '加入笔记', () => applySelectedMark('note')),
       markMenuButton('高亮并加入笔记', '高亮并加入笔记', () => applySelectedMark('both')),
     )
     document.body.append(markMenu)
-    const top = Math.max(8, selectedMark.rect.top - 42)
-    const left = Math.min(Math.max(8, selectedMark.rect.left), window.innerWidth - markMenu.offsetWidth - 8)
+    const menuRect = markMenu.getBoundingClientRect()
+    const menuHeight = menuRect.height || markMenu.offsetHeight || MARK_MENU_FALLBACK_HEIGHT_PX
+    const menuWidth = menuRect.width || markMenu.offsetWidth
+    const preferredTop = selectedMark.rect.top - menuHeight - MARK_MENU_SELECTION_GAP_PX
+    const top = preferredTop >= 8
+      ? preferredTop
+      : Math.min(Math.max(8, selectedMark.rect.bottom + MARK_MENU_SELECTION_GAP_PX), window.innerHeight - menuHeight - 8)
+    const centeredLeft = selectedMark.rect.left + selectedMark.rect.width / 2 - menuWidth / 2
+    const left = Math.min(Math.max(8, centeredLeft), window.innerWidth - menuWidth - 8)
     markMenu.style.top = `${top}px`
     markMenu.style.left = `${left}px`
   }
@@ -548,6 +619,23 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     return button
   }
 
+  function markColorButton(color: MessageHighlightColor, label: string): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'mark-color-btn'
+    button.setAttribute('aria-label', `高亮颜色：${label}`)
+    button.setAttribute('aria-pressed', String(selectedMark?.color === color))
+    button.style.setProperty('--mark-color-rgb', messageHighlightColorRgb(color))
+    button.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      selectedHighlightColor = color
+      if (selectedMark) selectedMark.color = color
+      renderMarkMenu()
+    })
+    return button
+  }
+
   function applySelectedMark(action: 'highlight' | 'note' | 'both'): void {
     const mark = selectedMark
     if (!mark) return
@@ -559,6 +647,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
         text: mark.text,
         startOffset: mark.startOffset,
         endOffset: mark.endOffset,
+        color: mark.color,
       }).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
     }
     window.getSelection()?.removeAllRanges()
@@ -566,6 +655,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
   }
 
   function hideMarkMenu(): void {
+    clearMarkMenuUpdate()
     selectedMark = undefined
     markMenu?.remove()
     markMenu = undefined
@@ -613,12 +703,12 @@ function applyHighlightsToBody(body: HTMLElement, highlights: MessageHighlight[]
   let cursor = 0
   for (const highlight of normalized) {
     if (highlight.startOffset < cursor) continue
-    wrapTextRange(body, highlight.startOffset, highlight.endOffset)
+    wrapTextRange(body, highlight.startOffset, highlight.endOffset, highlight.color)
     cursor = highlight.endOffset
   }
 }
 
-function wrapTextRange(root: HTMLElement, startOffset: number, endOffset: number): void {
+function wrapTextRange(root: HTMLElement, startOffset: number, endOffset: number, color: MessageHighlight['color']): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   let textPosition = 0
   const ranges: Array<{ node: Text; start: number; end: number }> = []
@@ -642,6 +732,7 @@ function wrapTextRange(root: HTMLElement, startOffset: number, endOffset: number
     selected.splitText(range.end - range.start)
     const mark = document.createElement('span')
     mark.className = 'message-highlight'
+    mark.style.setProperty('--message-highlight-rgb', messageHighlightColorRgb(color))
     selected.parentNode?.insertBefore(mark, selected)
     mark.append(selected)
   }

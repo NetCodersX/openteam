@@ -1,4 +1,5 @@
 import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, OpenTeamSettings, OpenTeamStore, OpenTeamViewState, RichNoteDocument, RoleTemplate } from './types'
+import { normalizeMessageHighlightColor } from './highlightColors'
 
 export const STORE_KEY = 'openteam.groupStore'
 export const META_STORE_KEY = 'openteam.meta.v2'
@@ -420,17 +421,19 @@ function readHighlightsRecord(raw: unknown): Record<string, MessageHighlight[]> 
   const result: Record<string, MessageHighlight[]> = {}
   for (const [messageId, rawHighlights] of Object.entries(raw)) {
     if (!Array.isArray(rawHighlights)) continue
-    const highlights = rawHighlights.filter((highlight): highlight is MessageHighlight => {
-      return (
-        isRecord(highlight) &&
-        typeof highlight.id === 'string' &&
-        typeof highlight.messageId === 'string' &&
-        typeof highlight.text === 'string' &&
-        typeof highlight.startOffset === 'number' &&
-        typeof highlight.endOffset === 'number' &&
-        typeof highlight.createdAt === 'number'
-      )
-    })
+    const highlights = rawHighlights
+      .filter((highlight): highlight is MessageHighlight => {
+        return (
+          isRecord(highlight) &&
+          typeof highlight.id === 'string' &&
+          typeof highlight.messageId === 'string' &&
+          typeof highlight.text === 'string' &&
+          typeof highlight.startOffset === 'number' &&
+          typeof highlight.endOffset === 'number' &&
+          typeof highlight.createdAt === 'number'
+        )
+      })
+      .map(highlight => ({ ...highlight, color: normalizeMessageHighlightColor(highlight.color) }))
     if (highlights.length > 0) result[messageId] = highlights
   }
   return result

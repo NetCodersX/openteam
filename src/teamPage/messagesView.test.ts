@@ -653,6 +653,78 @@ describe('team page messages view boundary', () => {
     expect(messagesEl.querySelector('.message-highlight')?.textContent).toBe('重点')
   })
 
+  it('renders saved message highlights with their selected color', () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-1',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '这里有一段重点内容',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      messagesById: { [message.id]: message },
+      messageHighlightsById: {
+        [message.id]: [
+          {
+            id: 'highlight-1',
+            messageId: message.id,
+            text: '重点',
+            startOffset: 5,
+            endOffset: 7,
+            color: '#7dd3fc',
+            createdAt: now,
+          },
+        ],
+      },
+    }
+    const messagesEl = document.createElement('section')
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    expect(messagesEl.querySelector<HTMLElement>('.message-highlight')?.style.getPropertyValue('--message-highlight-rgb')).toBe('125, 211, 252')
+  })
+
   it('offers selected message text actions that can highlight and add to notes', async () => {
     const now = Date.now()
     const chat: GroupChat = {
@@ -734,6 +806,7 @@ describe('team page messages view boundary', () => {
     window.getSelection()?.addRange(range)
 
     messagesEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
     document.querySelector<HTMLButtonElement>('button[aria-label="高亮并加入笔记"]')?.click()
     await Promise.resolve()
 
@@ -744,6 +817,319 @@ describe('team page messages view boundary', () => {
       text: '重点',
       startOffset: 5,
       endOffset: 7,
+      color: '#f8b84e',
     })
+  })
+
+  it('shows the mark menu from selection changes and applies the selected highlight color', async () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-1',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '这里有一段重点内容',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      messagesById: { [message.id]: message },
+    }
+    const messagesEl = document.createElement('section')
+    document.body.append(messagesEl)
+    const runCommand = vi.fn(async () => undefined)
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand,
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    const bodyText = messagesEl.querySelector('.message-body')?.firstChild?.firstChild
+    const range = document.createRange()
+    range.setStart(bodyText as Text, 5)
+    range.setEnd(bodyText as Text, 7)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    document.dispatchEvent(new Event('selectionchange'))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    document.querySelector<HTMLButtonElement>('button[aria-label="高亮颜色：蓝色"]')?.click()
+    document.querySelector<HTMLButtonElement>('button[aria-label="高亮"]')?.click()
+    await Promise.resolve()
+
+    expect(runCommand).toHaveBeenCalledWith('GROUP_MESSAGE_HIGHLIGHT_CREATE', {
+      chatId: chat.id,
+      messageId: message.id,
+      text: '重点',
+      startOffset: 5,
+      endOffset: 7,
+      color: '#7dd3fc',
+    })
+  })
+
+  it('waits until drag selection ends before showing the mark menu', async () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-1',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '这里有一段重点内容',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      messagesById: { [message.id]: message },
+    }
+    const messagesEl = document.createElement('section')
+    document.body.append(messagesEl)
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    const bodyText = messagesEl.querySelector('.message-body')?.firstChild?.firstChild
+    const range = document.createRange()
+    range.setStart(bodyText as Text, 5)
+    range.setEnd(bodyText as Text, 7)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    messagesEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    document.dispatchEvent(new Event('selectionchange'))
+    expect(document.querySelector('.mark-menu')).toBeNull()
+
+    messagesEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+    expect(document.querySelector('.mark-menu')).not.toBeNull()
+  })
+
+  it('keeps the pending mark menu when the drag-ending click lands outside the message body', async () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-1',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '这里有一段重点内容',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      messagesById: { [message.id]: message },
+    }
+    const messagesEl = document.createElement('section')
+    const outsideEl = document.createElement('div')
+    document.body.append(messagesEl, outsideEl)
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    const bodyText = messagesEl.querySelector('.message-body')?.firstChild?.firstChild
+    const range = document.createRange()
+    range.setStart(bodyText as Text, 5)
+    range.setEnd(bodyText as Text, 7)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    messagesEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    document.dispatchEvent(new Event('selectionchange'))
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    outsideEl.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 90))
+
+    expect(document.querySelector('.mark-menu')).not.toBeNull()
+  })
+
+  it('positions the mark menu well above the selected text', async () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-1',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '这里有一段重点内容',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      messagesById: { [message.id]: message },
+    }
+    const messagesEl = document.createElement('section')
+    document.body.append(messagesEl)
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    const bodyText = messagesEl.querySelector('.message-body')?.firstChild?.firstChild
+    const range = document.createRange()
+    range.setStart(bodyText as Text, 5)
+    range.setEnd(bodyText as Text, 7)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        x: 120,
+        y: 180,
+        left: 120,
+        top: 180,
+        right: 168,
+        bottom: 200,
+        width: 48,
+        height: 20,
+        toJSON: () => ({}),
+      } as DOMRect),
+    })
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    document.dispatchEvent(new Event('selectionchange'))
+    await new Promise(resolve => setTimeout(resolve, 90))
+
+    expect(document.querySelector<HTMLElement>('.mark-menu')?.style.top).toBe('20px')
   })
 })

@@ -1,4 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
+import type { MessageHighlightColor } from './highlightColors'
 
 export type RoomMode = 'independent' | 'collaborative'
 export type ChatSite = 'gemini' | 'chatgpt' | 'claude' | 'deepseek' | 'kimi' | 'qwen'
@@ -113,6 +114,7 @@ export interface MessageHighlight {
   text: string
   startOffset: number
   endOffset: number
+  color?: MessageHighlightColor
   createdAt: number
 }
 

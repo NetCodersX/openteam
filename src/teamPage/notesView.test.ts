@@ -7,6 +7,22 @@ import { createTeamPageState } from './appState'
 import { createNotesView, type NoteEditorAdapter, type NoteEditorFactory } from './notesView'
 
 describe('team page notes view', () => {
+  it('does not load the rich text editor until notes are opened', () => {
+    const chat = makeChat('chat-1')
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+    }
+    const createEditor = vi.fn(() => makeEditor())
+    const { view } = setupNotesView(store, chat, undefined, createEditor)
+
+    view.renderNotes()
+
+    expect(createEditor).not.toHaveBeenCalled()
+  })
+
   it('loads global and chat notes into one rich text editor when the scope changes', () => {
     const chat = makeChat('chat-1')
     const store: OpenTeamStore = {
@@ -20,12 +36,33 @@ describe('team page notes view', () => {
     const { view, editor } = setupNotesView(store, chat)
 
     view.registerNotesEvents()
-    view.renderNotes()
+    document.querySelector<HTMLButtonElement>('#toggle-notes-panel')?.click()
     expect(editor.setContent).toHaveBeenLastCalledWith(note('群聊笔记'))
 
     document.querySelector<HTMLButtonElement>('[data-note-scope="global"]')?.click()
 
     expect(editor.setContent).toHaveBeenLastCalledWith(note('全局笔记'))
+  })
+
+  it('defaults back to the current chat note when notes are opened after rendering without a chat', () => {
+    const chat = makeChat('chat-1')
+    let currentChat: GroupChat | undefined
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      globalNote: note('全局笔记'),
+      chatNotesById: { [chat.id]: note('群聊笔记') },
+    }
+    const { view, editor } = setupNotesView(store, () => currentChat)
+
+    view.registerNotesEvents()
+    view.renderNotes()
+    currentChat = chat
+    document.querySelector<HTMLButtonElement>('#toggle-notes-panel')?.click()
+
+    expect(editor.setContent).toHaveBeenLastCalledWith(note('群聊笔记'))
   })
 
   it('inserts selected message text into the active chat note without source metadata', () => {
@@ -89,7 +126,12 @@ describe('team page notes view', () => {
   })
 })
 
-function setupNotesView(store: OpenTeamStore, chat: GroupChat | undefined, runCommand = vi.fn(async () => undefined)): { view: ReturnType<typeof createNotesView>; editor: NoteEditorAdapter } {
+function setupNotesView(
+  store: OpenTeamStore,
+  chat: GroupChat | undefined | (() => GroupChat | undefined),
+  runCommand = vi.fn(async () => undefined),
+  createEditorOverride?: NoteEditorFactory,
+): { view: ReturnType<typeof createNotesView>; editor: NoteEditorAdapter } {
   document.body.innerHTML = `
     <button id="toggle-notes-panel"></button>
     <aside id="notes-panel">
@@ -107,15 +149,8 @@ function setupNotesView(store: OpenTeamStore, chat: GroupChat | undefined, runCo
       <button id="note-redo"></button>
     </aside>
   `
-  const editor: NoteEditorAdapter = {
-    setContent: vi.fn(),
-    getJSON: vi.fn(() => note('已更新')),
-    insertText: vi.fn(),
-    focus: vi.fn(),
-    destroy: vi.fn(),
-    runCommand: vi.fn(),
-  }
-  const createEditor: NoteEditorFactory = vi.fn(() => editor)
+  const editor = makeEditor()
+  const createEditor: NoteEditorFactory = createEditorOverride ?? vi.fn(() => editor)
   const view = createNotesView({
     state: createTeamPageState(),
     notesPanelEl: document.querySelector<HTMLElement>('#notes-panel')!,
@@ -136,11 +171,22 @@ function setupNotesView(store: OpenTeamStore, chat: GroupChat | undefined, runCo
     },
     createEditor,
     getStore: () => store,
-    getCurrentChat: () => chat,
+    getCurrentChat: typeof chat === 'function' ? chat : () => chat,
     runCommand,
     showError: vi.fn(),
   })
   return { view, editor }
+}
+
+function makeEditor(): NoteEditorAdapter {
+  return {
+    setContent: vi.fn(),
+    getJSON: vi.fn(() => note('已更新')),
+    insertText: vi.fn(),
+    focus: vi.fn(),
+    destroy: vi.fn(),
+    runCommand: vi.fn(),
+  }
 }
 
 function pointerEvent(type: string, options: { clientX: number; clientY: number; pointerId: number }): PointerEvent {

@@ -31,6 +31,12 @@ function makeRole(chatId: string, id: string, geminiConversationUrl?: string): G
   }
 }
 
+function dispatchIframeLoad(iframe: HTMLIFrameElement | undefined): asserts iframe is HTMLIFrameElement {
+  expect(iframe).toBeInstanceOf(HTMLIFrameElement)
+  if (!iframe) throw new Error('Expected iframe to exist')
+  iframe.dispatchEvent(new Event('load'))
+}
+
 describe('IframeHost', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -66,6 +72,7 @@ describe('IframeHost', () => {
     expect(iframe?.src).toBe('https://gemini.google.com/')
 
     const postMessage = vi.spyOn(iframe!.contentWindow!, 'postMessage')
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(120)
 
     expect(postMessage).toHaveBeenCalled()
@@ -87,6 +94,7 @@ describe('IframeHost', () => {
     expect(iframe?.src).toBe('https://chatgpt.com/c/abc')
 
     const postMessage = vi.spyOn(iframe!.contentWindow!, 'postMessage')
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(120)
 
     const lastCall = postMessage.mock.calls[postMessage.mock.calls.length - 1]
@@ -104,6 +112,7 @@ describe('IframeHost', () => {
     expect(iframe?.src).toBe('https://claude.ai/chat/abc')
 
     const postMessage = vi.spyOn(iframe!.contentWindow!, 'postMessage')
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(120)
 
     const lastCall = postMessage.mock.calls[postMessage.mock.calls.length - 1]
@@ -121,6 +130,7 @@ describe('IframeHost', () => {
     expect(iframe?.src).toBe('https://chat.deepseek.com/a/chat/s/abc')
 
     const postMessage = vi.spyOn(iframe!.contentWindow!, 'postMessage')
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(120)
 
     const lastCall = postMessage.mock.calls[postMessage.mock.calls.length - 1]
@@ -138,6 +148,7 @@ describe('IframeHost', () => {
     expect(iframe?.src).toBe('https://www.kimi.com/chat/abc')
 
     const postMessage = vi.spyOn(iframe!.contentWindow!, 'postMessage')
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(120)
 
     const lastCall = postMessage.mock.calls[postMessage.mock.calls.length - 1]
@@ -336,10 +347,25 @@ describe('IframeHost', () => {
     const iframe = host.getRoleFrame('chat-1', 'role-1')!
     const postMessage = vi.spyOn(iframe.contentWindow!, 'postMessage')
 
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(60)
 
     const lastCall = postMessage.mock.calls[postMessage.mock.calls.length - 1]
     expect(lastCall?.[0]).toEqual({ type: FRAME_ASSIGN_MESSAGE, chatId: 'chat-1', roleId: 'role-1', hostTabId: 456 })
+  })
+
+  it('waits for the iframe to load before posting role assignments', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const host = createIframeHost({ visibleHost, assignIntervalMs: 50 })
+    host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1', 'https://chatgpt.com/c/abc')])
+    const iframe = host.getRoleFrame('chat-1', 'role-1')!
+    const postMessage = vi.spyOn(iframe.contentWindow!, 'postMessage')
+
+    vi.advanceTimersByTime(150)
+
+    expect(postMessage).not.toHaveBeenCalled()
+    expect(host.getChatState('chat-1')[0].assignmentAttempts).toBe(0)
   })
 
   it('ignores assignment postMessage attempts before the iframe navigates to the target origin', () => {
@@ -354,6 +380,7 @@ describe('IframeHost', () => {
       )
     })
 
+    dispatchIframeLoad(iframe)
     expect(() => vi.advanceTimersByTime(60)).not.toThrow()
     expect(postMessage).toHaveBeenCalled()
     expect(host.getChatState('chat-1')[0].assignmentAttempts).toBeGreaterThan(1)
@@ -461,6 +488,7 @@ describe('IframeHost', () => {
     const iframe = host.getRoleFrame('chat-1', 'role-1')!
     const postMessage = vi.spyOn(iframe.contentWindow!, 'postMessage')
 
+    dispatchIframeLoad(iframe)
     vi.advanceTimersByTime(60)
     host.markRoleReady('chat-1', 'role-1')
     const callsAfterReady = postMessage.mock.calls.length
@@ -478,6 +506,7 @@ describe('IframeHost', () => {
     const host = createIframeHost({ visibleHost, onEvent })
 
     host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
+    dispatchIframeLoad(host.getRoleFrame('chat-1', 'role-1'))
     host.activateChat({ ...makeChat('chat-1', ['role-1']), name: 'chat-1-renamed' }, [{ ...makeRole('chat-1', 'role-1'), name: 'role-1-renamed' }])
     host.markRoleReady('chat-1', 'role-1')
     host.recoverRole(makeRole('chat-1', 'role-1'))
