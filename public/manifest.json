@@ -52,7 +52,7 @@
       {
         "id": "ai_iframe_rules",
         "enabled": true,
-        "path": "rules.json"
+        "path": "openteam-frame-rules.json"
       }
     ]
   }

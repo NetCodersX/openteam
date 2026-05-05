@@ -48,7 +48,7 @@ describe('extension security configuration', () => {
   })
 
   it('limits iframe header overrides to supported AI chat subframes', () => {
-    const rules = JSON.parse(readFileSync(resolve(process.cwd(), 'public/rules.json'), 'utf8')) as Array<{
+    const rules = JSON.parse(readFileSync(resolve(process.cwd(), 'public/openteam-frame-rules.json'), 'utf8')) as Array<{
       condition?: {
         urlFilter?: string
         resourceTypes?: string[]
