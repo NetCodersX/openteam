@@ -15,6 +15,19 @@ function readTeamDocument(): string {
 }
 
 describe('team.html chat creation UI', () => {
+  it('starts behind a local invite-code activation gate', () => {
+    const html = readTeamDocument()
+
+    expect(html).toContain('<body class="access-locked">')
+    expect(html).toContain('id="invite-gate"')
+    expect(html).toContain('id="invite-code-form"')
+    expect(html).toContain('id="invite-code-input"')
+    expect(html).toContain('id="invite-code-status"')
+    expect(html).toContain('id="activate-invite-code"')
+    expect(html).toMatch(/body\.access-locked #app\s*{[^}]*display:\s*none;/s)
+    expect(html).toMatch(/body:not\(\.access-locked\) #invite-gate\s*{[^}]*display:\s*none;/s)
+  })
+
   it('loads team styles from an external stylesheet', () => {
     const html = readTeamHtml()
     const css = readTeamCss()

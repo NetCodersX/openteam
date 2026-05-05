@@ -1,4 +1,5 @@
 import type { GroupChat, GroupMessage, GroupRole, OpenTeamStore, RoleTemplate } from '../group/types'
+import { ensureInviteGate } from '../access/inviteGate'
 import { createDefaultStore } from '../group/store'
 import { getAllRoleTemplates } from '../group/roleTemplates'
 import { createTeamPageState } from './appState'
@@ -457,6 +458,7 @@ function registerRuntimePush(): void {
 }
 
 async function boot(): Promise<void> {
+  await ensureInviteGate()
   await resolveHostTabId()
   await primaryCoordinator.start()
   window.addEventListener('pagehide', () => primaryCoordinator.dispose(), { once: true })

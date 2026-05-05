@@ -44,6 +44,64 @@ button {
   border: 0;
 }
 
+body.access-locked #app {
+  display: none;
+}
+
+body:not(.access-locked) #invite-gate {
+  display: none;
+}
+
+.invite-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(47, 216, 204, 0.16), transparent 38%),
+    #05080d;
+}
+
+.invite-card {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 18px;
+  border: 1px solid rgba(132, 153, 171, 0.24);
+  border-radius: 14px;
+  padding: 24px;
+  background: rgba(9, 17, 25, 0.98);
+  box-shadow: var(--shadow), var(--glow);
+}
+
+.invite-card .brand-mark {
+  align-items: center;
+}
+
+.invite-card h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.invite-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.invite-card input {
+  min-height: 46px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.invite-status {
+  min-height: 20px;
+}
+
 .app-shell {
   position: fixed;
   left: 50%;
