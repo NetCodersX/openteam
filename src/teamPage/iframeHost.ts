@@ -53,6 +53,7 @@ export interface IframeHostOptions {
   document?: Document
   window?: Window
   assignIntervalMs?: number
+  heartbeatIntervalMs?: number
   hostTabId?: number
   onEvent?: (event: IframeHostEvent) => void
 }
@@ -68,16 +69,19 @@ interface RoleFrameRecord {
   status: RoleFrameStatus
   assignmentAttempts: number
   assignTimer?: number
+  heartbeatTimer?: number
   lastAssignedAt?: number
 }
 
 const DEFAULT_ASSIGN_INTERVAL_MS = 1000
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000
 
 export class IframeHost {
   private readonly visibleHost: HTMLElement
   private readonly document: Document
   private readonly window: Window
   private readonly assignIntervalMs: number
+  private readonly heartbeatIntervalMs: number
   private readonly onEvent?: (event: IframeHostEvent) => void
   private readonly groupsByChatId = new Map<string, HTMLElement>()
   private readonly framesByRoleKey = new Map<string, RoleFrameRecord>()
@@ -92,6 +96,7 @@ export class IframeHost {
     this.document = options.document ?? options.visibleHost.ownerDocument
     this.window = options.window ?? this.document.defaultView ?? window
     this.assignIntervalMs = options.assignIntervalMs ?? DEFAULT_ASSIGN_INTERVAL_MS
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS
     this.hostTabId = options.hostTabId
     this.onEvent = options.onEvent
     this.visibleHost.dataset.openteamIframeHost = 'true'
@@ -178,6 +183,7 @@ export class IframeHost {
     for (const record of [...this.framesByRoleKey.values()]) {
       if (record.chatId !== chatId) continue
       this.stopAssignLoop(record)
+      this.stopHeartbeatLoop(record)
       record.shell.remove()
       this.framesByRoleKey.delete(roleKey(record.chatId, record.roleId))
       this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
@@ -246,6 +252,7 @@ export class IframeHost {
     const existing = this.framesByRoleKey.get(key)
     if (existing) {
       this.stopAssignLoop(existing)
+      this.stopHeartbeatLoop(existing)
       existing.shell.remove()
       this.framesByRoleKey.delete(key)
     }
@@ -262,6 +269,7 @@ export class IframeHost {
 
     record.status = 'assigned'
     this.stopAssignLoop(record)
+    this.startHeartbeatLoop(record)
     this.emit({ type: 'role-ready', chatId, roleId })
   }
 
@@ -285,6 +293,7 @@ export class IframeHost {
   private clearFrames(): void {
     for (const record of this.framesByRoleKey.values()) {
       this.stopAssignLoop(record)
+      this.stopHeartbeatLoop(record)
       record.shell.remove()
       this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
     }
@@ -343,7 +352,7 @@ export class IframeHost {
       assignmentAttempts: 0,
     }
 
-    iframe.addEventListener('load', () => this.startAssignLoop(record))
+    iframe.addEventListener('load', () => this.handleRoleFrameLoad(record))
     iframe.src = src
     shell.append(label, iframe)
     this.framesByRoleKey.set(roleKey(role.chatId, role.id), record)
@@ -366,6 +375,7 @@ export class IframeHost {
 
   private removeRoleFrame(record: RoleFrameRecord): void {
     this.stopAssignLoop(record)
+    this.stopHeartbeatLoop(record)
     record.shell.remove()
     this.framesByRoleKey.delete(roleKey(record.chatId, record.roleId))
     this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
@@ -433,6 +443,13 @@ export class IframeHost {
     if (record.shell.parentElement !== group) group.append(record.shell)
   }
 
+  private handleRoleFrameLoad(record: RoleFrameRecord): void {
+    if (this.framesByRoleKey.get(roleKey(record.chatId, record.roleId)) !== record) return
+    this.stopHeartbeatLoop(record)
+    record.status = 'loading'
+    this.startAssignLoop(record)
+  }
+
   private startAssignLoop(record: RoleFrameRecord): void {
     if (!this.enabled) return
     if (this.framesByRoleKey.get(roleKey(record.chatId, record.roleId)) !== record) return
@@ -448,6 +465,22 @@ export class IframeHost {
 
     this.window.clearInterval(record.assignTimer)
     record.assignTimer = undefined
+  }
+
+  private startHeartbeatLoop(record: RoleFrameRecord): void {
+    if (!this.enabled) return
+    if (this.heartbeatIntervalMs <= 0) return
+    if (this.framesByRoleKey.get(roleKey(record.chatId, record.roleId)) !== record) return
+
+    this.stopHeartbeatLoop(record)
+    record.heartbeatTimer = this.window.setInterval(() => this.assignRole(record), this.heartbeatIntervalMs)
+  }
+
+  private stopHeartbeatLoop(record: RoleFrameRecord): void {
+    if (record.heartbeatTimer === undefined) return
+
+    this.window.clearInterval(record.heartbeatTimer)
+    record.heartbeatTimer = undefined
   }
 
   private assignRole(record: RoleFrameRecord): void {
