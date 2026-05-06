@@ -347,6 +347,7 @@ describe('team.html chat creation UI', () => {
     expect(chatListSource).toContain("menu.className = 'chat-action-menu'")
     expect(chatListSource).toContain("rename.textContent = '编辑名称'")
     expect(chatListSource).toContain("duplicate.textContent = '复制群聊'")
+    expect(chatListSource).toContain("exportRecord.textContent = '导出记录'")
     expect(chatListSource).toContain("clearMessages.textContent = '清空消息'")
     expect(chatListSource).toContain("closeFrames.textContent = '关闭群聊'")
     expect(chatListSource).toContain("remove.textContent = '删除群聊'")
@@ -354,12 +355,22 @@ describe('team.html chat creation UI', () => {
     expect(chatListSource).toContain("runCommand('GROUP_CHAT_CLOSE'")
     expect(chatListSource).toContain("runCommand('GROUP_CHAT_UPDATE'")
     expect(chatListSource).toContain("runCommand('GROUP_CHAT_DUPLICATE'")
+    expect(chatListSource).toContain('formatChatExportMarkdown')
     expect(chatListSource).toContain("sendRuntimeMessage('GROUP_CHAT_DELETE'")
     expect(chatListSource).toContain("response.error === 'Unknown OpenTeam message'")
     expect(chatListSource).toContain('deleteChatFromLocalStore(chatId)')
     expect(html).toMatch(/\.chat-action-menu\s*{[^}]*position:\s*absolute;/s)
     expect(html).toMatch(/\.chat-action-menu\s*{[^}]*right:\s*14px;/s)
     expect(html).not.toMatch(/\.chat-action-menu\s*{[^}]*grid-column:\s*2 \/ 4;/s)
+  })
+
+  it('renders a bottom-right floating window resize handle', () => {
+    const html = readTeamDocument()
+
+    expect(html).toContain('id="window-resize-handle"')
+    expect(html).toContain('class="window-resize-handle"')
+    expect(html).toMatch(/\.window-resize-handle\s*{[^}]*cursor:\s*nwse-resize;/s)
+    expect(html).toMatch(/\.app-shell\.fullscreen \.window-resize-handle\s*{[^}]*display:\s*none;/s)
   })
 
   it('renders compact icon actions for assistant messages', () => {

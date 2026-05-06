@@ -68,4 +68,80 @@ describe('background role handlers', () => {
       roleTemplatesById: expect.objectContaining({ 'template-1': expect.any(Object) }),
     }))
   })
+
+  it('closes the removed person frame without deleting historical messages', async () => {
+    vi.resetModules()
+    const startingStore = createDefaultStore()
+    startingStore.chatsById['chat-1'] = {
+      id: 'chat-1',
+      name: '方案讨论',
+      mode: 'independent',
+      roleIds: ['role-1'],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    startingStore.rolesById['role-1'] = {
+      id: 'role-1',
+      chatId: 'chat-1',
+      name: '工程师',
+      status: 'ready',
+      contextCursor: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    startingStore.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'assistant',
+      content: '历史观点',
+      roleId: 'role-1',
+      roleName: '工程师',
+      createdAt: 1,
+      status: 'received',
+    }
+    vi.doMock('./storeAccess', async importOriginal => {
+      const actual = await importOriginal<typeof import('./storeAccess')>()
+      return {
+        ...actual,
+        mutateStore: vi.fn(async (mutator: (store: OpenTeamStore) => unknown) => {
+          const store = structuredClone(startingStore)
+          const result = await mutator(store)
+          return { store, result }
+        }),
+      }
+    })
+
+    const removeRole = vi.fn()
+    const broadcastStoreUpdated = vi.fn()
+    const { createRoleHandlers } = await import('./roleHandlers')
+    const routes = createRoleHandlers({
+      broadcastStoreUpdated,
+      log: { info: vi.fn(), warn: vi.fn() },
+      newId: vi.fn((prefix: string) => `${prefix}-1`),
+      now: vi.fn(() => 100),
+      runtimeFrames: {
+        getByRole: vi.fn(),
+        removeRole,
+      },
+      sendPrompt: vi.fn(),
+    })
+
+    const deleteRoute = routes.find(route => route.type === 'GROUP_ROLE_DELETE')
+    const response = await deleteRoute?.handler({ type: 'GROUP_ROLE_DELETE', roleId: 'role-1' }, {}) as { store?: OpenTeamStore } | undefined
+
+    expect(removeRole).toHaveBeenCalledWith('chat-1', 'role-1')
+    expect(response?.store?.chatsById['chat-1'].roleIds).toEqual([])
+    expect(response?.store?.messagesById['msg-1']).toMatchObject({
+      roleId: 'role-1',
+      roleName: '工程师',
+      content: '历史观点',
+    })
+    expect(broadcastStoreUpdated).toHaveBeenCalledWith(expect.objectContaining({
+      messagesById: expect.objectContaining({ 'msg-1': expect.any(Object) }),
+    }))
+  })
 })

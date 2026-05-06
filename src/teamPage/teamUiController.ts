@@ -88,6 +88,10 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
         deps.state.roleSiteMenuRoleId = undefined
         deps.renderRolePanel()
       }
+      if (deps.state.roleActionMenuRoleId && !target?.closest('.role-action-menu, .role-more')) {
+        deps.state.roleActionMenuRoleId = undefined
+        deps.renderRolePanel()
+      }
       if (deps.state.addPersonSiteMenuId && !target?.closest('.role-site-menu, .site-pill')) {
         deps.state.addPersonSiteMenuId = undefined
         deps.renderAddPersonDialog()
@@ -101,6 +105,7 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
       deps.closePeopleModals()
       deps.state.chatMenuChatId = undefined
       deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = undefined
       deps.renderChatList()
       deps.renderRolePanel()
     })

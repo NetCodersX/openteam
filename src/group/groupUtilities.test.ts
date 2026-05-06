@@ -3,7 +3,7 @@ import { extractGeminiConversationId, extractSupportedConversationId, getSafeGem
 import { buildUnsyncedContext, getContextCursorAfterAck, getUnsyncedMessagesForRole } from './contextSync'
 import { parseGroupMentions } from './mentionParser'
 import { buildInitPrompt, buildPrompt } from './promptBuilder'
-import { createGroupRole, createGroupRolesBatch, createRoleTemplate, deleteRoleTemplate, getAllRoleTemplates, getRoleTemplateById, updateGroupRole, updateRoleTemplate, validateRoleName } from './roleTemplates'
+import { createGroupRole, createGroupRolesBatch, createRoleTemplate, deleteGroupRole, deleteRoleTemplate, getAllRoleTemplates, getRoleTemplateById, updateGroupRole, updateRoleTemplate, validateRoleName } from './roleTemplates'
 import { createDefaultStore } from './store'
 import type { GroupChat, GroupMessage, GroupRole } from './types'
 
@@ -232,6 +232,32 @@ describe('role template utilities', () => {
     expect(role.lastReplyAt).toBeUndefined()
     expect(role.contextCursor).toBe(0)
     expect(role.status).toBe('pending')
+  })
+
+  it('removes a group person while keeping historical messages', () => {
+    const store = createDefaultStore()
+    const chat = makeChat('chat-1')
+    chat.roleIds = ['role-1']
+    chat.messageIds = ['msg-1']
+    chat.nextMessageSeq = 2
+    store.chatsById[chat.id] = chat
+    store.rolesById['role-1'] = makeRole('role-1', '工程师')
+    store.messagesById['msg-1'] = {
+      ...makeMessage('msg-1', 1, 'assistant', '历史观点'),
+      roleId: 'role-1',
+      roleName: '工程师',
+    }
+
+    deleteGroupRole(store, 'role-1', 2)
+
+    expect(chat.roleIds).toEqual([])
+    expect(store.rolesById['role-1']).toBeUndefined()
+    expect(chat.messageIds).toEqual(['msg-1'])
+    expect(store.messagesById['msg-1']).toMatchObject({
+      roleId: 'role-1',
+      roleName: '工程师',
+      content: '历史观点',
+    })
   })
 
   it('validates role names', () => {

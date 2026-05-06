@@ -225,6 +225,24 @@ describe('IframeHost', () => {
     expect(group?.querySelectorAll('.role-frame-label')).toHaveLength(2)
   })
 
+  it('removes role iframes that are no longer members when reactivating a chat', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const onEvent = vi.fn()
+    const host = createIframeHost({ visibleHost, onEvent })
+    const chat = makeChat('chat-1', ['role-1', 'role-2'])
+    host.activateChat(chat, [makeRole('chat-1', 'role-1'), makeRole('chat-1', 'role-2')])
+    expect(host.getRoleFrame('chat-1', 'role-2')).toBeInstanceOf(HTMLIFrameElement)
+
+    host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
+
+    expect(host.getRoleFrame('chat-1', 'role-1')).toBeInstanceOf(HTMLIFrameElement)
+    expect(host.getRoleFrame('chat-1', 'role-2')).toBeUndefined()
+    expect(host.getChatGroup('chat-1')?.querySelectorAll('iframe')).toHaveLength(1)
+    expect(visibleHost.querySelector('[data-role-key="chat-1:role-2"]')).toBeNull()
+    expect(onEvent).toHaveBeenCalledWith({ type: 'role-disposed', chatId: 'chat-1', roleId: 'role-2' })
+  })
+
   it('updates chat group and role frame labels when display names change', () => {
     const visibleHost = document.createElement('div')
     document.body.append(visibleHost)

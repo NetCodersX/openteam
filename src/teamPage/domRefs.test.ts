@@ -107,6 +107,7 @@ describe('team page dom refs', () => {
       <button id="toggle-people-drawer"></button>
       <aside class="role-panel"></aside>
       <button id="window-launcher"></button>
+      <button id="window-resize-handle"></button>
     `
 
     const { createTeamPageDomRefs, requireElement } = await import('./domRefs')
@@ -114,6 +115,7 @@ describe('team page dom refs', () => {
 
     expect(refs.appShellEl.id).toBe('app')
     expect(refs.toggleFullscreenEl.id).toBe('toggle-fullscreen')
+    expect(refs.windowResizeHandleEl.id).toBe('window-resize-handle')
     expect(refs.messageInputEl.tagName).toBe('TEXTAREA')
     expect(refs.rolePanelEl.className).toBe('role-panel')
     expect(() => requireElement('#missing')).toThrow('Missing element: #missing')

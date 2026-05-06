@@ -101,6 +101,7 @@ export interface TeamPageDomRefs {
   togglePeopleDrawerEl: HTMLButtonElement
   rolePanelEl: HTMLElement
   windowLauncherEl: HTMLButtonElement
+  windowResizeHandleEl: HTMLButtonElement
   iframeHostEl: HTMLElement
 }
 
@@ -214,6 +215,7 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     togglePeopleDrawerEl: requireElement<HTMLButtonElement>('#toggle-people-drawer'),
     rolePanelEl: requireElement<HTMLElement>('.role-panel'),
     windowLauncherEl: requireElement<HTMLButtonElement>('#window-launcher'),
+    windowResizeHandleEl: requireElement<HTMLButtonElement>('#window-resize-handle'),
     iframeHostEl: requireElement<HTMLElement>('#iframe-host'),
   }
 }

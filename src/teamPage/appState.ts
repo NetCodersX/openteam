@@ -24,6 +24,7 @@ export interface TeamPageState {
   peopleDrawerOpen: boolean
   chatMenuChatId?: string
   roleSiteMenuRoleId?: string
+  roleActionMenuRoleId?: string
   addPersonSiteMenuId?: string
   notesPanelOpen: boolean
   activeNoteScope: 'global' | 'chat'

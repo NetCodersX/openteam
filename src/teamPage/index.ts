@@ -39,7 +39,7 @@ const { peopleLibrarySummaryEl, peopleLibraryListEl, peopleLibraryPaginationEl, 
 const { builtinTemplateDetailModalEl, builtinTemplateDetailTitleEl, builtinTemplateDetailMetaEl, builtinTemplateDetailPromptEl, closeBuiltinTemplateDetailEl, newTemplateEl, closePersonTemplateEl, closeAddPersonEl } = teamDomRefs
 const { openTemporaryPersonEl, closeTemporaryPersonEl, addRoleFormEl, addLibraryPeopleFormEl, addTemporaryPersonFormEl, peopleLibraryFormEl } = teamDomRefs
 const { templateSiteGeminiEl, templateSiteChatGptEl, templateSiteClaudeEl, templateSiteDeepSeekEl, templateSiteQwenEl, templateSiteKimiEl, templateChatGptGptsFieldEl, templateChatGptGptsUrlEl, temporaryPersonNameEl, temporaryPersonDescriptionEl, temporaryPersonPromptEl } = teamDomRefs
-const { togglePeopleDrawerEl, rolePanelEl, windowLauncherEl } = teamDomRefs
+const { togglePeopleDrawerEl, rolePanelEl, windowLauncherEl, windowResizeHandleEl } = teamDomRefs
 const log = teamPageLog
 const showError = createErrorPresenter(errorEl)
 const showSuccess = createSuccessPresenter(errorEl)
@@ -73,6 +73,7 @@ const floatingWindowControls = createFloatingWindowControls({
   toggleWindowSizeEl,
   toggleFullscreenEl,
   windowLauncherEl,
+  windowResizeHandleEl,
 })
 const setWindowMinimized = floatingWindowControls.setWindowMinimized
 const registerFloatingWindowControls = floatingWindowControls.registerFloatingWindowControls

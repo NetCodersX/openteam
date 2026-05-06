@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   assertCompliantReleaseScript,
@@ -11,6 +12,16 @@ import {
 } from '../vite.config'
 
 describe('extension security configuration', () => {
+  it('pins the unpacked extension id with a stable manifest key', () => {
+    const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'public/manifest.json'), 'utf8')) as {
+      key?: string
+    }
+
+    expect(manifest.key).toBeDefined()
+    expect(manifest.key).toMatch(/^[A-Za-z0-9+/=]+$/)
+    expect(extensionIdFromManifestKey(manifest.key!)).toBe('cnccbifloajlkjglmiojkpimjciamlpe')
+  })
+
   it('scopes host permissions to supported AI chat sites', () => {
     const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'public/manifest.json'), 'utf8')) as {
       host_permissions?: string[]
@@ -123,3 +134,11 @@ describe('extension security configuration', () => {
     }
   })
 })
+
+function extensionIdFromManifestKey(key: string): string {
+  const hash = createHash('sha256').update(Buffer.from(key, 'base64')).digest()
+  return Array.from(hash.subarray(0, 16))
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('')
+    .replace(/[0-9a-f]/g, value => String.fromCharCode('a'.charCodeAt(0) + Number.parseInt(value, 16)))
+}

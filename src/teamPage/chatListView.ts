@@ -1,6 +1,7 @@
 import { createDefaultStore, loadStore, saveStore } from '../group/store'
 import type { GroupChat, GroupRole, OpenTeamStore, RoleTemplate } from '../group/types'
 import type { TeamPageState } from './appState'
+import { formatChatExportMarkdown, safeChatExportFilename } from './chatExport'
 import { formatChatListTime } from './chatExperience'
 import type { RuntimeResponse } from './runtimeClient'
 
@@ -156,6 +157,15 @@ export function createChatListView(deps: ChatListViewDependencies): ChatListView
       renderChatList()
       deps.runCommand('GROUP_CHAT_DUPLICATE', { chatId: chat.id }).catch(error => deps.showError(error.message))
     })
+    const exportRecord = document.createElement('button')
+    exportRecord.type = 'button'
+    exportRecord.className = 'btn btn-ghost'
+    exportRecord.textContent = '导出记录'
+    exportRecord.addEventListener('click', () => {
+      deps.state.chatMenuChatId = undefined
+      renderChatList()
+      exportChatRecord(chat)
+    })
     const clearMessages = document.createElement('button')
     clearMessages.type = 'button'
     clearMessages.className = 'btn btn-ghost'
@@ -185,8 +195,24 @@ export function createChatListView(deps: ChatListViewDependencies): ChatListView
       if (!window.confirm(`确定删除「${chat.name}」吗？删除后这个群聊的消息和角色都会移除。`)) return
       deleteChat(chat.id).catch(error => deps.showError(error.message))
     })
-    menu.append(rename, duplicate, clearMessages, closeFrames, remove)
+    menu.append(rename, duplicate, exportRecord, clearMessages, closeFrames, remove)
     return menu
+  }
+
+  function exportChatRecord(chat: GroupChat): void {
+    try {
+      const exportedAt = new Date()
+      const markdown = formatChatExportMarkdown(deps.getStore(), chat, exportedAt)
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = safeChatExportFilename(chat.name, exportedAt)
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (error) {
+      deps.showError(error instanceof Error ? error.message : '导出群聊记录失败')
+    }
   }
 
   async function clearChatMessages(chatId: string): Promise<void> {

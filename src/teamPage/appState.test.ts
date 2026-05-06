@@ -28,6 +28,7 @@ describe('team page app state', () => {
       'let peopleDrawerOpen',
       'let chatMenuChatId',
       'let roleSiteMenuRoleId',
+      'let roleActionMenuRoleId',
       'let addPersonSiteMenuId',
       'let pendingSwitchAnimationFrame',
       'let thinkingTimeoutTimers',

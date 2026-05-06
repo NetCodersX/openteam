@@ -203,6 +203,7 @@ export class IframeHost {
     this.activeChatSignature = activationSignature
 
     const chatRoleIds = new Set(chat.roleIds)
+    this.removeStaleRoleFrames(chat.id, chatRoleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
         const record = this.ensureRoleFrame(role)
@@ -223,6 +224,7 @@ export class IframeHost {
     this.activeChatSignature = undefined
     const group = this.getOrCreateChatGroup(chat)
     const chatRoleIds = new Set(chat.roleIds)
+    this.removeStaleRoleFrames(chat.id, chatRoleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
         const record = this.ensureRoleFrame(role)
@@ -353,6 +355,20 @@ export class IframeHost {
       srcKind: src === getSafeSupportedChatIframeSrcForRole(undefined, role) ? 'site-home' : 'conversation',
     })
     return record
+  }
+
+  private removeStaleRoleFrames(chatId: string, activeRoleIds: Set<string>): void {
+    for (const record of [...this.framesByRoleKey.values()]) {
+      if (record.chatId !== chatId || activeRoleIds.has(record.roleId)) continue
+      this.removeRoleFrame(record)
+    }
+  }
+
+  private removeRoleFrame(record: RoleFrameRecord): void {
+    this.stopAssignLoop(record)
+    record.shell.remove()
+    this.framesByRoleKey.delete(roleKey(record.chatId, record.roleId))
+    this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
   }
 
   private getOrCreateChatGroup(chat: IframeHostChat | string): HTMLElement {

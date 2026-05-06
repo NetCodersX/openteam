@@ -11,11 +11,25 @@ describe('team page role panel view boundary', () => {
     expect(viewSource).toContain('function roleCard(role: GroupRole): HTMLElement')
     expect(viewSource).toContain('function roleSiteControl(role: GroupRole): HTMLElement')
     expect(viewSource).toContain('function roleSiteMenu(role: GroupRole): HTMLElement')
+    expect(viewSource).toContain('function roleActionMenu(role: GroupRole): HTMLElement')
+    expect(viewSource).toContain('function kickRoleFromChat(role: GroupRole): Promise<void>')
     expect(viewSource).toContain('function switchRoleSite(role: GroupRole, chatSite: ChatSite): Promise<void>')
+    expect(viewSource).toContain('deps.state.roleActionMenuRoleId')
+    expect(viewSource).toContain("kick.textContent = '删除成员'")
+    expect(viewSource).toContain("deps.runCommand('GROUP_ROLE_DELETE'")
+    expect(roleSiteMenuSource(viewSource)).not.toContain('GROUP_ROLE_DELETE')
+    expect(roleSiteMenuSource(viewSource)).not.toContain('删除成员')
     expect(entrySource).not.toContain('function renderRolePanel(): void')
     expect(entrySource).not.toContain('function roleCard(role: GroupRole): HTMLElement')
     expect(entrySource).not.toContain('function roleSiteControl(role: GroupRole): HTMLElement')
     expect(entrySource).not.toContain('function roleSiteMenu(role: GroupRole): HTMLElement')
+    expect(entrySource).not.toContain('function roleActionMenu(role: GroupRole): HTMLElement')
+    expect(entrySource).not.toContain('function kickRoleFromChat(role: GroupRole): Promise<void>')
     expect(entrySource).not.toContain('function switchRoleSite(role: GroupRole, chatSite: ChatSite): Promise<void>')
   })
 })
+
+function roleSiteMenuSource(source: string): string {
+  const match = source.match(/function roleSiteMenu\(role: GroupRole\): HTMLElement \{(?<body>[\s\S]*?)\n  function roleActionMenu/)
+  return match?.groups?.body ?? ''
+}

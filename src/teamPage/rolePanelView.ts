@@ -53,6 +53,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     card.addEventListener('click', () => {
       deps.state.selectedRoleId = role.id
       deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = undefined
       renderRolePanel()
     })
 
@@ -84,14 +85,16 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     const more = document.createElement('button')
     more.type = 'button'
     more.className = 'role-more'
-    more.setAttribute('aria-label', `切换 ${role.name} 的站点`)
+    more.setAttribute('aria-label', `打开 ${role.name} 的成员菜单`)
     more.textContent = '···'
     more.addEventListener('click', event => {
       event.stopPropagation()
-      deps.state.roleSiteMenuRoleId = deps.state.roleSiteMenuRoleId === role.id ? undefined : role.id
+      deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = deps.state.roleActionMenuRoleId === role.id ? undefined : role.id
       renderRolePanel()
     })
     card.append(avatar, main, more)
+    if (deps.state.roleActionMenuRoleId === role.id) card.append(roleActionMenu(role))
 
     if (role.status === 'error') {
       const error = document.createElement('div')
@@ -112,6 +115,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     sitePill.textContent = siteLabel(role.chatSite)
     sitePill.addEventListener('click', event => {
       event.stopPropagation()
+      deps.state.roleActionMenuRoleId = undefined
       deps.state.roleSiteMenuRoleId = deps.state.roleSiteMenuRoleId === role.id ? undefined : role.id
       renderRolePanel()
     })
@@ -140,6 +144,30 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
       menu.append(option)
     }
     return menu
+  }
+
+  function roleActionMenu(role: GroupRole): HTMLElement {
+    const menu = document.createElement('div')
+    menu.className = 'role-action-menu'
+    menu.addEventListener('click', event => event.stopPropagation())
+    const kick = document.createElement('button')
+    kick.type = 'button'
+    kick.className = 'role-site-option role-site-danger'
+    kick.textContent = '删除成员'
+    kick.addEventListener('click', () => {
+      deps.state.roleActionMenuRoleId = undefined
+      kickRoleFromChat(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+    })
+    menu.append(kick)
+    return menu
+  }
+
+  async function kickRoleFromChat(role: GroupRole): Promise<void> {
+    if (!window.confirm(`确定将「${role.name}」移出当前群聊吗？历史聊天记录会保留。`)) {
+      renderRolePanel()
+      return
+    }
+    await deps.runCommand('GROUP_ROLE_DELETE', { roleId: role.id })
   }
 
   async function switchRoleSite(role: GroupRole, chatSite: ChatSite): Promise<void> {

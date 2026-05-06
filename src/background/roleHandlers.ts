@@ -148,7 +148,16 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
   }
 
   const handleRoleDelete = async (message: RuntimeMessage) => {
-    const result = await mutateStore(store => deleteGroupRole(store, requireString(message.roleId, '缺少人员 ID'), deps.now()))
+    const roleId = requireString(message.roleId, '缺少人员 ID')
+    const result = await mutateStore(store => {
+      const role = store.rolesById[roleId]
+      if (!role) throw new Error(`找不到人员：${roleId}`)
+      const chatId = role.chatId
+      deleteGroupRole(store, roleId, deps.now())
+      deps.runtimeFrames.removeRole(chatId, roleId)
+      return { chatId, roleId }
+    })
+    deps.log.info('role-delete:stored', { chatId: result.result.chatId, roleId: result.result.roleId })
     await deps.broadcastStoreUpdated(result.store)
     return { ok: true, store: result.store }
   }
