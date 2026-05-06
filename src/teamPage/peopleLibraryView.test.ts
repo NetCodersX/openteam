@@ -219,6 +219,31 @@ describe('team page people library view boundary', () => {
     })
   })
 
+  it('keeps selected people checked while changing their chat sites', () => {
+    const template = makeTemplate(1)
+    const chat = makeChat('chat-1')
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      roleTemplateOrder: [template.id],
+      roleTemplatesById: { [template.id]: template },
+    }
+    const { view, addLibraryPeopleListEl } = setupPeopleLibraryView({ store, templates: [template], currentChat: chat })
+
+    view.registerPeopleLibraryEvents()
+    view.renderAddPersonDialog()
+    const personCheckbox = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!
+    personCheckbox.checked = true
+    personCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
+    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="claude"]')!
+    claudeSite.checked = true
+    claudeSite.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!.checked).toBe(true)
+  })
+
   it('submits a ChatGPT GPTs prefix when creating a library person', async () => {
     const store = createDefaultStore()
     const {

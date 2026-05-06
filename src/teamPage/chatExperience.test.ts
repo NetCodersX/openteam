@@ -73,12 +73,14 @@ describe('chat experience helpers', () => {
     expect(shouldSendMessageWithEnter({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false })).toBe(true)
     expect(shouldSendMessageWithEnter({ key: 'Enter', shiftKey: false, metaKey: true, ctrlKey: false })).toBe(false)
     expect(shouldSendMessageWithEnter({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true })).toBe(false)
+    expect(shouldSendMessageWithEnter({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, isComposing: true } as KeyboardEvent)).toBe(false)
   })
 
   it('confirms mention options with plain Enter only', () => {
     expect(shouldConfirmMentionWithEnter({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false })).toBe(true)
     expect(shouldConfirmMentionWithEnter({ key: 'Enter', shiftKey: false, metaKey: true, ctrlKey: false })).toBe(false)
     expect(shouldConfirmMentionWithEnter({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true })).toBe(false)
+    expect(shouldConfirmMentionWithEnter({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, isComposing: true } as KeyboardEvent)).toBe(false)
   })
 
   it('shows one thinking bubble per thinking role until the 120-second timeout', () => {

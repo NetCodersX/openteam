@@ -158,6 +158,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     if (!deps.getCurrentChat()) return
     deps.addPersonModalEl.hidden = false
     deps.state.addPersonSiteMenuId = undefined
+    deps.state.addPersonSelectedKeys.clear()
     deps.state.addPersonTemplateType = 'builtin'
     deps.state.addPersonSearchQuery = ''
     deps.addPersonSearchEl.value = ''
@@ -190,6 +191,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     deps.state.peopleLibrarySearchQuery = ''
     deps.state.addPersonTemplateType = 'builtin'
     deps.state.addPersonSearchQuery = ''
+    deps.state.addPersonSelectedKeys.clear()
   }
 
   function registerPeopleLibraryEvents(): void {
@@ -235,6 +237,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     deps.closeAddPersonEl.addEventListener('click', () => {
       deps.addPersonModalEl.hidden = true
       deps.state.addPersonSiteMenuId = undefined
+      deps.state.addPersonSelectedKeys.clear()
     })
 
     deps.addPersonSearchEl.addEventListener('input', () => {
@@ -264,6 +267,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
         .then(() => {
           deps.addPersonModalEl.hidden = true
           deps.state.addPersonSiteMenuId = undefined
+          deps.state.addPersonSelectedKeys.clear()
           deps.state.temporaryPersonDrafts.splice(0)
         })
         .catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
@@ -428,6 +432,14 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       checkbox.type = 'checkbox'
       checkbox.value = item.key
       checkbox.disabled = item.chatSites.length === 0
+      checkbox.checked = deps.state.addPersonSelectedKeys.has(item.key)
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) {
+          deps.state.addPersonSelectedKeys.add(item.key)
+        } else {
+          deps.state.addPersonSelectedKeys.delete(item.key)
+        }
+      })
       const content = document.createElement('span')
       content.className = 'select-row-content'
       const name = document.createElement('strong')
@@ -639,8 +651,13 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
   }
 
   function selectedAddPersonItems(): Record<string, unknown>[] {
-    const checkedKeys = new Set(Array.from(deps.addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value))
-    return addPersonItems().filter(item => checkedKeys.has(item.key)).flatMap(item => item.chatSites.map(chatSite => {
+    const items = addPersonItems()
+    const itemKeys = new Set(items.map(item => item.key))
+    const checkedKeys = new Set(deps.state.addPersonSelectedKeys)
+    for (const input of deps.addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')) {
+      if (itemKeys.has(input.value)) checkedKeys.add(input.value)
+    }
+    return items.filter(item => checkedKeys.has(item.key)).flatMap(item => item.chatSites.map(chatSite => {
       if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, chatSite }
       return {
         source: 'temporary',
