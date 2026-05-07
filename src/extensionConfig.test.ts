@@ -22,7 +22,7 @@ describe('extension security configuration', () => {
     expect(extensionIdFromManifestKey(manifest.key!)).toBe('cnccbifloajlkjglmiojkpimjciamlpe')
   })
 
-  it('scopes host permissions to supported AI chat sites', () => {
+  it('scopes host permissions to supported AI chat sites and external API origins', () => {
     const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'public/manifest.json'), 'utf8')) as {
       host_permissions?: string[]
     }
@@ -35,6 +35,8 @@ describe('extension security configuration', () => {
       'https://chat.openai.com/*',
       'https://claude.ai/*',
       'https://chat.deepseek.com/*',
+      'https://*/*',
+      'http://*/*',
     ])
     expect(manifest.host_permissions).not.toContain('<all_urls>')
   })

@@ -1,5 +1,5 @@
-import { roleMentionLabel } from '../group/mentionParser'
-import type { ChatSite, GroupRole, OpenTeamStore, RoleStatus } from '../group/types'
+import { roleMentionLabel, roleMentionLabelOptionsFromSettings } from '../group/mentionParser'
+import type { ChatSite, ExternalModelConfig, GroupRole, OpenTeamStore, RoleModelSource, RoleStatus } from '../group/types'
 import type { TeamPageState } from './appState'
 
 const VISIBLE_CHAT_SITES = ['gemini', 'chatgpt', 'claude', 'deepseek'] as const
@@ -79,7 +79,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
 
     const meta = document.createElement('div')
     meta.className = 'chat-row tiny role-meta'
-    meta.append(roleSiteControl(role), textNode(`cursor ${role.contextCursor}`), textNode(role.geminiConversationUrl ? '已有会话' : '未绑定会话'))
+    meta.append(roleSiteControl(role), textNode(`cursor ${role.contextCursor}`), textNode(role.modelSource === 'external' ? 'API 模型' : role.geminiConversationUrl ? '已有会话' : '未绑定会话'))
     main.append(row, description, meta)
 
     const more = document.createElement('button')
@@ -110,9 +110,10 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     control.className = 'role-site-control'
     const sitePill = document.createElement('button')
     sitePill.type = 'button'
-    sitePill.className = `site-pill site-pill-${role.chatSite ?? 'gemini'}`
+    const model = roleModelOption(role, deps.getStore())
+    sitePill.className = `site-pill ${model.className}`
     sitePill.setAttribute('aria-expanded', String(deps.state.roleSiteMenuRoleId === role.id))
-    sitePill.textContent = siteLabel(role.chatSite)
+    sitePill.textContent = model.label
     sitePill.addEventListener('click', event => {
       event.stopPropagation()
       deps.state.roleActionMenuRoleId = undefined
@@ -128,18 +129,19 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     const menu = document.createElement('div')
     menu.className = 'role-site-menu'
     menu.addEventListener('click', event => event.stopPropagation())
-    for (const site of VISIBLE_CHAT_SITES) {
+    for (const model of selectableModels(deps.getStore())) {
       const option = document.createElement('button')
       option.type = 'button'
-      option.className = `role-site-option${role.chatSite === site ? ' active' : ''}`
-      option.textContent = role.chatSite === site ? `✓ ${siteLabel(site)}` : siteLabel(site)
+      const active = roleModelKey(role, deps.getStore()) === model.key
+      option.className = `role-site-option${active ? ' active' : ''}`
+      option.textContent = active ? `✓ ${model.label}` : model.label
       option.addEventListener('click', () => {
         deps.state.roleSiteMenuRoleId = undefined
-        if (role.chatSite === site) {
+        if (active) {
           renderRolePanel()
           return
         }
-        switchRoleSite(role, site).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+        switchRoleSite(role, model.key).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
       })
       menu.append(option)
     }
@@ -170,11 +172,13 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     await deps.runCommand('GROUP_ROLE_DELETE', { roleId: role.id })
   }
 
-  async function switchRoleSite(role: GroupRole, chatSite: ChatSite): Promise<void> {
-    if (role.chatSite === chatSite) return
-    await deps.runCommand('GROUP_ROLE_UPDATE', { roleId: role.id, patch: { chatSite } })
+  async function switchRoleSite(role: GroupRole, modelKey: string): Promise<void> {
+    if (roleModelKey(role, deps.getStore()) === modelKey) return
+    const patch = rolePatchForModelKey(modelKey)
+    await deps.runCommand('GROUP_ROLE_UPDATE', { roleId: role.id, patch })
     const updatedRole = deps.getStore().rolesById[role.id]
     if (!updatedRole) return
+    if (updatedRole.modelSource === 'external') return
     deps.iframeHost.recoverRole(updatedRole)
     await deps.runCommand('GROUP_ROLE_RECOVER', { chatId: updatedRole.chatId, roleId: updatedRole.id })
   }
@@ -183,7 +187,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
 
   function wireMentionShortcut(element: HTMLElement, role: GroupRole): void {
     element.classList.add('mention-shortcut')
-    element.title = `@${roleMentionLabel(role)}`
+    element.title = `@${roleMentionLabel(role, roleMentionLabelOptionsFromSettings(deps.getStore().settings))}`
     element.addEventListener('click', event => {
       event.stopPropagation()
       deps.insertMention(role)
@@ -203,6 +207,47 @@ function siteLabel(site: ChatSite | undefined): string {
   if (site === 'kimi') return 'Kimi'
   if (site === 'qwen') return '千问'
   return 'Gemini'
+}
+
+function selectableModels(store: OpenTeamStore): Array<{ key: string; label: string; className: string }> {
+  return [
+    ...VISIBLE_CHAT_SITES.map(site => ({ key: modelKeyForSite(site), label: siteLabel(site), className: `site-pill-${site}` })),
+    ...externalModels(store).map(model => ({ key: modelKeyForExternal(model.id), label: `API · ${model.name}`, className: 'site-pill-external' })),
+  ]
+}
+
+function roleModelOption(role: GroupRole, store: OpenTeamStore): { key: string; label: string; className: string } {
+  const key = roleModelKey(role, store)
+  return selectableModels(store).find(model => model.key === key) ?? { key, label: 'API · 未配置', className: 'site-pill-external' }
+}
+
+function roleModelKey(role: Pick<GroupRole, 'modelSource' | 'externalModelId' | 'chatSite'>, store: OpenTeamStore): string {
+  if (role.modelSource === 'external' && role.externalModelId) return modelKeyForExternal(role.externalModelId)
+  return modelKeyForSite(role.chatSite ?? store.settings.defaultChatSite)
+}
+
+function rolePatchForModelKey(key: string): { modelSource: RoleModelSource; chatSite?: ChatSite; externalModelId?: string } {
+  const externalModelId = key.startsWith('external:') ? key.slice('external:'.length) : ''
+  if (externalModelId) return { modelSource: 'external', externalModelId }
+  return { modelSource: 'site', chatSite: visibleChatSite(key.startsWith('site:') ? key.slice('site:'.length) : key) }
+}
+
+function externalModels(store: OpenTeamStore): ExternalModelConfig[] {
+  return store.settings.externalModelOrder
+    .map(modelId => store.settings.externalModelsById[modelId])
+    .filter((model): model is ExternalModelConfig => Boolean(model))
+}
+
+function modelKeyForSite(site: ChatSite): string {
+  return `site:${site}`
+}
+
+function modelKeyForExternal(modelId: string): string {
+  return `external:${modelId}`
+}
+
+function visibleChatSite(value: string | undefined): ChatSite {
+  return value === 'chatgpt' || value === 'claude' || value === 'deepseek' || value === 'kimi' || value === 'qwen' ? value : 'gemini'
 }
 
 function statusPill(status: string, label: string): HTMLElement {

@@ -8,6 +8,7 @@ import { createChatHeaderView } from './chatHeaderView'
 import { createChatListView } from './chatListView'
 import { createComposerView } from './composerView'
 import { createTeamPageDomRefs } from './domRefs'
+import { createExternalModelsView } from './externalModelsView'
 import { createFloatingWindowControls } from './floatingWindow'
 import { createIframeHost } from './iframeHost'
 import { createMessagesView } from './messagesView'
@@ -32,13 +33,13 @@ const { messageInputEl, referenceDraftEl, mentionPanelEl, errorEl, newChatNameEl
 const { templateNameEl, templateDescriptionEl, templatePromptEl, templateFormTitleEl, settingsButtonEl, settingsMenuEl } = teamDomRefs
 const { openAllNotesEl, closeAllNotesEl, allNotesModalEl, allNotesListEl, allNotesActiveTitleEl, allNotesActiveMetaEl, allNotesEditorEl } = teamDomRefs
 const { allNoteBoldEl, allNoteItalicEl, allNoteStrikeEl, allNoteBulletListEl, allNoteOrderedListEl, allNoteUndoEl, allNoteRedoEl } = teamDomRefs
-const { openPeopleLibraryEl, closePeopleLibraryEl, peopleLibraryModalEl, personTemplateModalEl, addPersonModalEl, temporaryPersonModalEl } = teamDomRefs
+const { openPeopleLibraryEl, openExternalModelsEl, closeExternalModelsEl, externalModelsModalEl, externalModelsListEl, externalModelFormEl, externalModelIdEl, externalModelNameEl, externalModelFormatEl, externalModelBaseUrlEl, externalModelApiKeyEl, externalModelModelNameEl, resetExternalModelFormEl, closePeopleLibraryEl, peopleLibraryModalEl, personTemplateModalEl, addPersonModalEl, temporaryPersonModalEl } = teamDomRefs
 const { notesPanelEl, notesDragHandleEl, toggleNotesPanelEl, closeNotesPanelEl, globalNoteTabEl, chatNoteTabEl, notesEditorEl } = teamDomRefs
 const { noteBoldEl, noteItalicEl, noteStrikeEl, noteBulletListEl, noteOrderedListEl, noteUndoEl, noteRedoEl } = teamDomRefs
 const { peopleLibrarySummaryEl, peopleLibraryListEl, peopleLibraryPaginationEl, peopleLibrarySearchEl, peopleLibraryBuiltinTabEl, peopleLibraryCustomTabEl, addLibraryPeopleListEl, addPersonSearchEl, addPersonBuiltinTabEl, addPersonCustomTabEl } = teamDomRefs
 const { builtinTemplateDetailModalEl, builtinTemplateDetailTitleEl, builtinTemplateDetailMetaEl, builtinTemplateDetailPromptEl, closeBuiltinTemplateDetailEl, newTemplateEl, closePersonTemplateEl, closeAddPersonEl } = teamDomRefs
 const { openTemporaryPersonEl, closeTemporaryPersonEl, addRoleFormEl, addLibraryPeopleFormEl, addTemporaryPersonFormEl, peopleLibraryFormEl } = teamDomRefs
-const { templateSiteGeminiEl, templateSiteChatGptEl, templateSiteClaudeEl, templateSiteDeepSeekEl, templateSiteQwenEl, templateSiteKimiEl, templateChatGptGptsFieldEl, templateChatGptGptsUrlEl, temporaryPersonNameEl, temporaryPersonDescriptionEl, temporaryPersonPromptEl } = teamDomRefs
+const { templateSiteGeminiEl, templateSiteChatGptEl, templateSiteClaudeEl, templateSiteDeepSeekEl, templateSiteQwenEl, templateSiteKimiEl, templateSiteExternalEl, templateExternalModelFieldEl, templateExternalModelSelectEl, templateChatGptGptsFieldEl, templateChatGptGptsUrlEl, temporaryPersonNameEl, temporaryPersonDescriptionEl, temporaryPersonPromptEl } = teamDomRefs
 const { togglePeopleDrawerEl, rolePanelEl, windowLauncherEl, windowResizeHandleEl } = teamDomRefs
 const log = teamPageLog
 const showError = createErrorPresenter(errorEl)
@@ -179,6 +180,7 @@ const composerView = createComposerView({
   messageInputEl,
   referenceDraftEl,
   mentionPanelEl,
+  getStore: () => store,
   getCurrentChat,
   getCurrentRoles,
   roleToneClass,
@@ -255,6 +257,9 @@ const peopleLibraryView = createPeopleLibraryView({
   templateSiteDeepSeekEl,
   templateSiteQwenEl,
   templateSiteKimiEl,
+  templateSiteExternalEl,
+  templateExternalModelFieldEl,
+  templateExternalModelSelectEl,
   templateChatGptGptsFieldEl,
   templateChatGptGptsUrlEl,
   temporaryPersonNameEl,
@@ -276,6 +281,28 @@ const peopleLibraryView = createPeopleLibraryView({
   showError,
   log,
 })
+const externalModelsView = createExternalModelsView({
+  getStore: () => store,
+  settingsButtonEl,
+  settingsMenuEl,
+  openExternalModelsEl,
+  closeExternalModelsEl,
+  externalModelsModalEl,
+  externalModelsListEl,
+  externalModelFormEl,
+  externalModelIdEl,
+  externalModelNameEl,
+  externalModelFormatEl,
+  externalModelBaseUrlEl,
+  externalModelApiKeyEl,
+  externalModelModelNameEl,
+  resetExternalModelFormEl,
+  runCommand,
+  showError,
+})
+const renderExternalModels = externalModelsView.renderExternalModels
+const closeExternalModels = externalModelsView.closeExternalModels
+const registerExternalModelsEvents = externalModelsView.registerExternalModelsEvents
 const renderTemplates = peopleLibraryView.renderTemplates
 const renderAddPersonDialog = peopleLibraryView.renderAddPersonDialog
 const openAddPersonDialog = peopleLibraryView.openAddPersonDialog
@@ -326,8 +353,10 @@ const teamUiController = createTeamUiController({
   renderRolePanel,
   renderAddPersonDialog,
   closePeopleModals,
+  closeExternalModels,
   registerComposerEvents,
   registerPeopleLibraryEvents,
+  registerExternalModelsEvents,
   runCommand,
   showError,
   log,
@@ -404,12 +433,13 @@ function syncIframeHost(): void {
   if (!chat) return
   iframeHost.setEnabled(true)
   const roles = getCurrentRoles()
+  const siteRoles = roles.filter(role => role.modelSource !== 'external')
   log.debug('iframe-sync:activate-chat', {
     chatId: chat.id,
-    roleIds: roles.map(role => role.id),
+    roleIds: siteRoles.map(role => role.id),
     roleStatuses: roles.map(role => ({ id: role.id, name: role.name, status: role.status, conversationUrl: role.geminiConversationUrl })),
   })
-  iframeHost.activateChat(chat, roles)
+  iframeHost.activateChat({ ...chat, roleIds: siteRoles.map(role => role.id) }, siteRoles)
 }
 
 function handlePrimaryModeChange(isPrimary: boolean): void {
@@ -428,6 +458,7 @@ function handlePrimaryModeChange(isPrimary: boolean): void {
 function render(): void {
   renderSelectedChat()
   renderTemplates()
+  if (!externalModelsModalEl.hidden) renderExternalModels()
   renderAddPersonDialog()
   if (!allNotesModalEl.hidden) renderAllNotes()
 }

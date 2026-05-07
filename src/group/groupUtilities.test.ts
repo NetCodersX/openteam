@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractGeminiConversationId, extractSupportedConversationId, getSafeGeminiUrl, getSafeSupportedChatUrl, isSafeGeminiUrl, isSafeSupportedChatUrl, normalizeChatGptGptsUrl } from './conversationUrl'
 import { buildUnsyncedContext, getContextCursorAfterAck, getUnsyncedMessagesForRole } from './contextSync'
-import { parseGroupMentions } from './mentionParser'
+import { parseGroupMentions, roleMentionLabel } from './mentionParser'
 import { buildInitPrompt, buildPrompt } from './promptBuilder'
 import { createGroupRole, createGroupRolesBatch, createRoleTemplate, deleteGroupRole, deleteRoleTemplate, getAllRoleTemplates, getRoleTemplateById, updateGroupRole, updateRoleTemplate, validateRoleName } from './roleTemplates'
 import { createDefaultStore } from './store'
@@ -318,6 +318,24 @@ describe('mention parser', () => {
       content: '看一下',
       targetRoleIds: ['role-claude'],
       mentionedRoleIds: ['role-claude'],
+    })
+  })
+
+  it('routes external model roles by their configured model-qualified mention label', () => {
+    const role: GroupRole = {
+      ...makeRole('role-api', '弗兰克尔'),
+      modelSource: 'external',
+      externalModelId: 'model-1',
+      chatSite: undefined,
+    }
+    const options = { externalModelNamesById: { 'model-1': 'OpenRouter Claude' } }
+
+    expect(roleMentionLabel(role, options)).toBe('弗兰克尔（OpenRouter Claude）')
+    expect(parseGroupMentions('@弗兰克尔（OpenRouter Claude） 你能做什么', [role], options)).toEqual({
+      ok: true,
+      content: '你能做什么',
+      targetRoleIds: ['role-api'],
+      mentionedRoleIds: ['role-api'],
     })
   })
 

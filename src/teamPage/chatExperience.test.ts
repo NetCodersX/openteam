@@ -100,6 +100,7 @@ describe('chat experience helpers', () => {
     expect(shouldAutoReconnectRole({ ...baseRole, status: 'loading', updatedAt: now }, now)).toBe(true)
     expect(shouldAutoReconnectRole({ ...baseRole, status: 'error', updatedAt: now }, now)).toBe(true)
     expect(shouldAutoReconnectRole({ ...baseRole, status: 'ready', updatedAt: now }, now)).toBe(false)
+    expect(shouldAutoReconnectRole({ ...baseRole, modelSource: 'external', status: 'error', updatedAt: now }, now)).toBe(false)
     expect(shouldAutoReconnectRole({ ...baseRole, status: 'thinking', updatedAt: now }, now + THINKING_TIMEOUT_MS - 1)).toBe(false)
     expect(shouldAutoReconnectRole({ ...baseRole, status: 'thinking', updatedAt: now }, now + THINKING_TIMEOUT_MS)).toBe(true)
   })

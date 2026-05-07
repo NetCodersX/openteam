@@ -2108,6 +2108,12 @@ select:focus {
   color: #93c5fd;
 }
 
+.site-pill-external {
+  border-color: rgba(236, 113, 255, 0.34);
+  background: rgba(236, 113, 255, 0.1);
+  color: #f0abfc;
+}
+
 .add-person-site-option {
   border-color: rgba(132, 153, 171, 0.22);
   background: rgba(132, 153, 171, 0.08);

@@ -47,7 +47,9 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
       name: requireString(message.name, '人员名称不能为空'),
       description: readOptionalString(message.description),
       systemPrompt: readOptionalString(message.systemPrompt),
+      defaultModelSource: readModelSource(message.defaultModelSource),
       defaultChatSite: readChatSite(message.defaultChatSite),
+      defaultExternalModelId: readOptionalString(message.defaultExternalModelId),
       chatGptGptsUrl: readOptionalString(message.chatGptGptsUrl),
     }, deps.newId('template'), deps.now()))
     deps.log.info('role-template:create', { templateId: result.id, nameLength: result.name.length, personaLength: result.systemPrompt.length })
@@ -61,7 +63,9 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
       name: requireString(patch.name, '人员名称不能为空'),
       description: readOptionalString(patch.description),
       systemPrompt: readOptionalString(patch.systemPrompt),
+      defaultModelSource: readModelSource(patch.defaultModelSource),
       defaultChatSite: readChatSite(patch.defaultChatSite),
+      defaultExternalModelId: readOptionalString(patch.defaultExternalModelId),
       chatGptGptsUrl: readOptionalString(patch.chatGptGptsUrl),
     }, deps.now()))
     deps.log.info('role-template:update', { templateId: result.id, patchKeys: ['name', 'description', 'systemPrompt'], personaLength: result.systemPrompt.length })
@@ -90,7 +94,9 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
     const { store, result } = await mutateStore(store => createGroupRole(store, {
       chatId,
       templateId,
+      modelSource: readModelSource(message.modelSource),
       chatSite: readChatSite(message.chatSite),
+      externalModelId: readOptionalString(message.externalModelId),
       name: readOptionalString(message.name),
       description: readOptionalString(message.description),
       systemPrompt: readOptionalString(message.systemPrompt),
@@ -137,7 +143,9 @@ export function createRoleHandlers(deps: RoleHandlersDependencies): BackgroundMe
         description: readOptionalString(patch.description),
         systemPrompt: readOptionalString(patch.systemPrompt),
         avatarColor: readOptionalString(patch.avatarColor),
+        modelSource: readModelSource(patch.modelSource),
         chatSite: readChatSite(patch.chatSite),
+        externalModelId: readOptionalString(patch.externalModelId),
       }, deps.now())
       const siteChanged = previousChatSite !== updatedRole.chatSite
       if (siteChanged) deps.runtimeFrames.removeRole(updatedRole.chatId, updatedRole.id)
@@ -260,7 +268,9 @@ function readGroupRoleBatchItem(value: unknown): Parameters<typeof createGroupRo
     return {
       source: 'library',
       roleTemplateId: requireString(value.roleTemplateId ?? value.templateId, '缺少人员库 ID'),
+      modelSource: readModelSource(value.modelSource),
       chatSite,
+      externalModelId: readOptionalString(value.externalModelId),
       avatarColor: readOptionalString(value.avatarColor),
     }
   }
@@ -271,7 +281,9 @@ function readGroupRoleBatchItem(value: unknown): Parameters<typeof createGroupRo
       name: requireString(value.name, '人员名称不能为空'),
       description: readOptionalString(value.description),
       systemPrompt: readOptionalString(value.systemPrompt) ?? '',
+      modelSource: readModelSource(value.modelSource),
       chatSite,
+      externalModelId: readOptionalString(value.externalModelId),
       avatarColor: readOptionalString(value.avatarColor),
     }
   }
@@ -293,6 +305,10 @@ function getRawBatchSource(items: unknown[]): 'library' | 'temporary' | 'mixed' 
 
 function readChatSite(value: unknown): ChatSite | undefined {
   return value === 'chatgpt' || value === 'claude' || value === 'gemini' || value === 'deepseek' || value === 'kimi' || value === 'qwen' ? value : undefined
+}
+
+function readModelSource(value: unknown): 'site' | 'external' | undefined {
+  return value === 'site' || value === 'external' ? value : undefined
 }
 
 function readOptionalString(value: unknown): string | undefined {

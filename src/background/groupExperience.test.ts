@@ -1098,7 +1098,7 @@ function makeStore(): OpenTeamStore {
     globalNote: undefined,
     chatNotesById: {},
     messageHighlightsById: {},
-    settings: { defaultMode: 'independent', maxContextChars: 6000, defaultChatSite: 'gemini' },
+    settings: { defaultMode: 'independent', maxContextChars: 6000, defaultChatSite: 'gemini', externalModelOrder: [], externalModelsById: {} },
     viewState: { chatReadSeqById: {}, chatHasNewMessageById: {} },
   }
 }

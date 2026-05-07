@@ -39,8 +39,11 @@ function buildGateDom(): { app: HTMLElement; form: HTMLFormElement; input: HTMLI
   }
 }
 
-async function waitForAsyncValidation(): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, 0))
+async function waitForStatus(status: HTMLElement, text: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (status.textContent?.includes(text)) return
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
 }
 
 describe('invite gate', () => {
@@ -69,7 +72,7 @@ describe('invite gate', () => {
     const activated = ensureInviteGate({ storage })
     input.value = 'OT-0000-0000-0000'
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    await waitForAsyncValidation()
+    await waitForStatus(status, '内测码无效')
 
     expect(document.body.classList.contains('access-locked')).toBe(true)
     expect(app.hidden).toBe(true)

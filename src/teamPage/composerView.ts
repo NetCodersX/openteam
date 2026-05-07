@@ -1,5 +1,5 @@
-import { parseGroupMentions, roleMentionLabel } from '../group/mentionParser'
-import type { GroupChat, GroupMessage, GroupRole, MessageReference } from '../group/types'
+import { parseGroupMentions, roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
+import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore } from '../group/types'
 import type { TeamPageState } from './appState'
 import { getVisibleThinkingRoles, isUnavailableRolesError, shouldAutoReconnectRole, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter } from './chatExperience'
 
@@ -12,6 +12,7 @@ export interface ComposerViewDependencies {
   messageInputEl: HTMLTextAreaElement
   referenceDraftEl: HTMLElement
   mentionPanelEl: HTMLElement
+  getStore(): OpenTeamStore
   getCurrentChat(): GroupChat | undefined
   getCurrentRoles(): GroupRole[]
   roleToneClass(seed: string | undefined): string
@@ -30,6 +31,14 @@ export interface ComposerView {
 }
 
 export function createComposerView(deps: ComposerViewDependencies): ComposerView {
+  function mentionLabelOptions() {
+    return mentionLabelOptionsFromStore(deps.getStore())
+  }
+
+  function roleDisplayName(role: GroupRole): string {
+    return roleMentionLabel(role, mentionLabelOptions())
+  }
+
   function renderComposerState(): void {
     renderReferenceDraft()
     renderMentionPanel()
@@ -37,7 +46,7 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     const chat = deps.getCurrentChat()
     const roles = deps.getCurrentRoles()
     const raw = deps.messageInputEl.value.trim()
-    const parsed = parseGroupMentions(raw || 'x', roles)
+    const parsed = parseGroupMentions(raw || 'x', roles, mentionLabelOptions())
     const targetRoleIds = raw && parsed.ok ? parsed.targetRoleIds : roles.map(role => role.id)
     const targets = roles.filter(role => targetRoleIds.includes(role.id))
     const unavailable = targets.filter(role => role.status !== 'ready')
@@ -118,8 +127,8 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
       name.className = 'mention-name'
       name.textContent = role.name
       const site = document.createElement('span')
-      site.className = `mention-site-badge site-pill-${role.chatSite ?? 'gemini'}`
-      site.textContent = siteLabel(role.chatSite)
+      site.className = `mention-site-badge ${role.modelSource === 'external' ? 'site-pill-external' : `site-pill-${role.chatSite ?? 'gemini'}`}`
+      site.textContent = roleModelLabel(role, mentionLabelOptions())
       option.addEventListener('click', () => insertMention(role))
       option.append(avatar, name, site)
       deps.mentionPanelEl.append(option)
@@ -232,7 +241,7 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   }
 
   function resolveMessageTargets(raw: string, roles: GroupRole[]): { ok: true; roles: GroupRole[] } | { ok: false; error: string } {
-    const parsed = parseGroupMentions(raw, roles)
+    const parsed = parseGroupMentions(raw, roles, mentionLabelOptions())
     if (!parsed.ok) return { ok: false, error: parsed.error }
     const targets = roles.filter(role => parsed.targetRoleIds.includes(role.id))
     if (targets.length === 0) return { ok: false, error: '当前群聊没有可投递人员' }
@@ -256,7 +265,7 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     const rawPrefix = atIndex >= 0 ? value.slice(0, atIndex) : value.slice(0, cursor)
     const prefix = rawPrefix && !/\s$/.test(rawPrefix) ? `${rawPrefix} ` : rawPrefix
     const suffix = value.slice(cursor)
-    const label = roleMentionLabel(role)
+    const label = roleMentionLabel(role, mentionLabelOptions())
     const inserted = `${prefix}@${label} ${suffix}`
     deps.messageInputEl.value = inserted
     const nextCursor = prefix.length + label.length + 2
@@ -269,17 +278,8 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   return { renderComposerState, registerComposerEvents, insertMention, setReference, submitComposerMessage }
 }
 
-function roleDisplayName(role: GroupRole): string {
-  return roleMentionLabel(role)
-}
-
-function siteLabel(site: GroupRole['chatSite']): string {
-  if (site === 'chatgpt') return 'ChatGPT'
-  if (site === 'claude') return 'Claude'
-  if (site === 'deepseek') return 'DeepSeek'
-  if (site === 'kimi') return 'Kimi'
-  if (site === 'qwen') return '千问'
-  return 'Gemini'
+function mentionLabelOptionsFromStore(store: OpenTeamStore) {
+  return roleMentionLabelOptionsFromSettings(store.settings)
 }
 
 function teamRoleKey(chatId: string, roleId: string): string {

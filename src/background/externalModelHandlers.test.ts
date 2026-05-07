@@ -1,0 +1,85 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createDefaultStore } from '../group/store'
+import type { OpenTeamStore } from '../group/types'
+
+describe('background external model handlers', () => {
+  it('creates, updates, and prevents deleting an external model in use', async () => {
+    vi.resetModules()
+    const currentStore = createDefaultStore()
+    vi.doMock('./storeAccess', async importOriginal => {
+      const actual = await importOriginal<typeof import('./storeAccess')>()
+      return {
+        ...actual,
+        mutateStore: vi.fn(async (mutator: (store: OpenTeamStore) => unknown) => {
+          const result = await mutator(currentStore)
+          return { store: currentStore, result }
+        }),
+      }
+    })
+
+    const { EXTERNAL_MODEL_ROUTE_TYPES, createExternalModelHandlers } = await import('./externalModelHandlers')
+    const routes = createExternalModelHandlers({
+      broadcastStoreUpdated: vi.fn(),
+      newId: vi.fn((prefix: string) => `${prefix}-1`),
+      now: vi.fn(() => 100),
+    })
+
+    expect(EXTERNAL_MODEL_ROUTE_TYPES).toEqual([
+      'EXTERNAL_MODEL_CREATE',
+      'EXTERNAL_MODEL_UPDATE',
+      'EXTERNAL_MODEL_DELETE',
+    ])
+    expect(routes.map(route => route.type)).toEqual(EXTERNAL_MODEL_ROUTE_TYPES)
+
+    const create = routes.find(route => route.type === 'EXTERNAL_MODEL_CREATE')!
+    await create.handler({
+      type: 'EXTERNAL_MODEL_CREATE',
+      name: '本地 Qwen',
+      format: 'openai',
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'sk-test',
+      modelName: 'qwen-plus',
+    }, {})
+
+    expect(currentStore.settings.externalModelOrder).toEqual(['external-model-1'])
+    expect(currentStore.settings.externalModelsById['external-model-1']).toMatchObject({
+      name: '本地 Qwen',
+      format: 'openai',
+      modelName: 'qwen-plus',
+    })
+
+    const update = routes.find(route => route.type === 'EXTERNAL_MODEL_UPDATE')!
+    await update.handler({
+      type: 'EXTERNAL_MODEL_UPDATE',
+      modelId: 'external-model-1',
+      name: 'Claude 代理',
+      format: 'anthropic',
+      baseUrl: 'https://api.anthropic.example',
+      apiKey: 'sk-next',
+      modelName: 'claude-sonnet',
+    }, {})
+
+    expect(currentStore.settings.externalModelsById['external-model-1']).toMatchObject({
+      name: 'Claude 代理',
+      format: 'anthropic',
+      baseUrl: 'https://api.anthropic.example',
+      apiKey: 'sk-next',
+      modelName: 'claude-sonnet',
+      updatedAt: 100,
+    })
+
+    currentStore.rolesById['role-1'] = {
+      id: 'role-1',
+      chatId: 'chat-1',
+      name: '工程师',
+      modelSource: 'external',
+      externalModelId: 'external-model-1',
+      status: 'ready',
+      contextCursor: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const remove = routes.find(route => route.type === 'EXTERNAL_MODEL_DELETE')!
+    await expect(remove.handler({ type: 'EXTERNAL_MODEL_DELETE', modelId: 'external-model-1' }, {})).rejects.toThrow('外部模型正在被人员使用')
+  })
+})

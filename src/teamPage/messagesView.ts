@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import { DEFAULT_MESSAGE_HIGHLIGHT_COLOR, MESSAGE_HIGHLIGHT_COLORS, messageHighlightColorRgb, type MessageHighlightColor } from '../group/highlightColors'
-import { roleMentionLabel } from '../group/mentionParser'
+import { roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
 import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, MessageReference, OpenTeamStore } from '../group/types'
 import type { TeamPageState } from './appState'
 import { buildChatRenderItems, getChatStartupNotice, getStoppedReplyRoles, getVisibleThinkingRoles, THINKING_TIMEOUT_MS } from './chatExperience'
@@ -89,7 +89,10 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       deps.messagesEl.append(renderMessageNode(item.message, item.showName, item.showAvatar))
     }
 
-    for (const role of getVisibleThinkingRoles(deps.getCurrentRoles())) {
+    const streamingRoleIds = new Set(messages
+      .filter(message => message.type === 'assistant' && message.status === 'pending' && message.roleId)
+      .map(message => message.roleId!))
+    for (const role of getVisibleThinkingRoles(deps.getCurrentRoles()).filter(role => !streamingRoleIds.has(role.id))) {
       deps.messagesEl.append(replyControlBubble(role))
     }
     for (const role of getStoppedReplyRoles(deps.getCurrentRoles())) {
@@ -146,7 +149,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       title.textContent = deps.messageTitle(message)
       name.append(title)
       const role = roleForMessage(message)
-      if (role) name.append(siteBadge(role.chatSite))
+      if (role) name.append(siteBadge(role))
       wireMentionShortcut(name, role)
       stack.append(name)
     }
@@ -155,11 +158,14 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     bubble.className = 'message-bubble'
     const body = document.createElement('div')
     body.className = 'message-body'
+    if (message.type === 'assistant' && message.status === 'pending') body.classList.add('thinking-dots')
     if (message.type === 'user') {
       const mentions = renderMessageMentions(message)
       if (mentions) appendMentionsToBody(body, mentions)
     }
-    if (shouldRenderMarkdownMessage(message)) {
+    if (message.type === 'assistant' && message.status === 'pending' && !message.content.trim()) {
+      body.textContent = '正在回复中 '
+    } else if (shouldRenderMarkdownMessage(message)) {
       renderMarkdownMessageBody(body, message.content)
     } else {
       renderPlainMessageBody(body, message.content)
@@ -171,7 +177,10 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     if (message.type === 'assistant') {
       const tools = document.createElement('div')
       tools.className = 'message-tools'
-      if (message.roleId) {
+      const role = roleForMessage(message)
+      if (message.roleId && message.status === 'pending' && role) {
+        tools.append(createMessageIconButton('停止回复', 'stop', () => deps.stopRoleReply(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))))
+      } else if (message.roleId) {
         tools.append(createMessageIconButton('跳转到原始窗口', 'jump', () => deps.focusRoleFrame(message.chatId, message.roleId)))
         tools.append(createMessageIconButton('重新同步完整回复', 'retry', () => handleResyncMessage(message)))
       }
@@ -339,7 +348,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     for (const role of roles) {
       const mention = document.createElement('span')
       mention.className = 'message-mention'
-      mention.textContent = `@${roleMentionLabel(role)}`
+      mention.textContent = `@${roleMentionLabel(role, mentionLabelOptions())}`
       mentions.append(mention)
     }
     return mentions
@@ -388,7 +397,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       const title = document.createElement('span')
       title.className = 'message-name-text'
       title.textContent = role.name
-      name.append(title, siteBadge(role.chatSite))
+      name.append(title, siteBadge(role))
       wireMentionShortcut(name, role)
       stack.append(name)
     }
@@ -454,7 +463,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
   function wireMentionShortcut(element: HTMLElement, role: GroupRole | undefined): void {
     if (!role) return
     element.classList.add('mention-shortcut')
-    element.title = `@${roleMentionLabel(role)}`
+    element.title = `@${roleMentionLabel(role, mentionLabelOptions())}`
     element.addEventListener('click', event => {
       event.stopPropagation()
       deps.insertMention(role)
@@ -661,23 +670,18 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     markMenu = undefined
   }
 
-  function siteBadge(site: GroupRole['chatSite']): HTMLElement {
+  function siteBadge(role: GroupRole): HTMLElement {
     const badge = document.createElement('span')
-    badge.className = `role-site-badge site-pill-${site ?? 'gemini'}`
-    badge.textContent = siteLabel(site)
+    badge.className = `role-site-badge ${role.modelSource === 'external' ? 'site-pill-external' : `site-pill-${role.chatSite ?? 'gemini'}`}`
+    badge.textContent = roleModelLabel(role, mentionLabelOptions())
     return badge
   }
 
-  return { renderMessages }
-}
+  function mentionLabelOptions() {
+    return roleMentionLabelOptionsFromSettings(deps.getStore().settings)
+  }
 
-function siteLabel(site: GroupRole['chatSite']): string {
-  if (site === 'chatgpt') return 'ChatGPT'
-  if (site === 'claude') return 'Claude'
-  if (site === 'deepseek') return 'DeepSeek'
-  if (site === 'kimi') return 'Kimi'
-  if (site === 'qwen') return '千问'
-  return 'Gemini'
+  return { renderMessages }
 }
 
 function closestMessageBody(node: Node): HTMLElement | undefined {

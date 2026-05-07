@@ -111,7 +111,7 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
   }
 
   async function reconnectRolesForSend(chat: GroupChat, roles: GroupRole[]): Promise<void> {
-    const uniqueRoles = [...new Map(roles.map(role => [role.id, role])).values()]
+    const uniqueRoles = [...new Map(roles.filter(role => role.modelSource !== 'external').map(role => [role.id, role])).values()]
     if (uniqueRoles.length === 0) return
 
     for (const role of uniqueRoles) deps.state.reconnectingRoleKeys.add(teamRoleKey(chat.id, role.id))
@@ -138,6 +138,7 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
     if (deps.iframeHost.focusRoleFrame(chatId, roleId)) return
     const role = store.rolesById[roleId]
     if (!role) return
+    if (role.modelSource === 'external') return
     deps.iframeHost.recoverRole(role)
   }
 

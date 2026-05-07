@@ -167,6 +167,104 @@ describe('team page messages view boundary', () => {
     expect(messagesEl.querySelector('.markdown-body strong')?.textContent).toBe('重点')
   })
 
+  it('shows configured external model names in assistant badges and user mentions', () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: ['role-1'],
+      messageIds: ['msg-user', 'msg-assistant'],
+      nextMessageSeq: 3,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const role: GroupRole = {
+      id: 'role-1',
+      chatId: chat.id,
+      name: '弗兰克尔',
+      modelSource: 'external',
+      externalModelId: 'model-1',
+      status: 'ready',
+      contextCursor: 0,
+      createdAt: now,
+      updatedAt: now,
+    }
+    const userMessage: GroupMessage = {
+      id: 'msg-user',
+      chatId: chat.id,
+      seq: 1,
+      type: 'user',
+      content: '你能做什么',
+      targetRoleIds: [role.id],
+      mentionedRoleIds: [role.id],
+      createdAt: now,
+      status: 'received',
+    }
+    const assistantMessage: GroupMessage = {
+      id: 'msg-assistant',
+      chatId: chat.id,
+      seq: 2,
+      type: 'assistant',
+      content: '你好',
+      roleId: role.id,
+      roleName: role.name,
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      rolesById: { [role.id]: role },
+      messagesById: { [userMessage.id]: userMessage, [assistantMessage.id]: assistantMessage },
+    }
+    store.settings.externalModelOrder = ['model-1']
+    store.settings.externalModelsById = {
+      'model-1': {
+        id: 'model-1',
+        name: 'OpenRouter Claude',
+        format: 'openai',
+        baseUrl: 'https://api.example.test/v1',
+        apiKey: 'sk-test',
+        modelName: 'anthropic/claude-sonnet',
+        createdAt: now,
+        updatedAt: now,
+      },
+    }
+    const messagesEl = document.createElement('section')
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [role],
+      getCurrentMessages: () => [userMessage, assistantMessage],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '弗',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    expect(messagesEl.querySelector('.message-mention')?.textContent).toBe('@弗兰克尔（OpenRouter Claude）')
+    expect(messagesEl.querySelector('.role-site-badge')?.textContent).toBe('OpenRouter Claude')
+  })
+
   it('requests a full reply resync for the current assistant message without retrying the prompt', async () => {
     const now = Date.now()
     const chat: GroupChat = {

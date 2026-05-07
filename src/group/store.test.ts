@@ -59,10 +59,14 @@ describe('group store', () => {
       globalNote: undefined,
       chatNotesById: {},
       messageHighlightsById: {},
+      externalRoleMemoriesById: {},
+      externalChatMemoriesById: {},
       settings: {
         defaultMode: 'independent',
         maxContextChars: 6000,
         defaultChatSite: 'gemini',
+        externalModelOrder: [],
+        externalModelsById: {},
       },
       viewState: {
         chatReadSeqById: {},
@@ -110,6 +114,54 @@ describe('group store', () => {
         defaultMode: 'collaborative',
         maxContextChars: 6000,
         defaultChatSite: 'gemini',
+        externalModelOrder: [],
+        externalModelsById: {},
+      },
+    })
+  })
+
+  it('normalizes external model settings and drops incomplete configs', async () => {
+    stored[STORE_KEY] = {
+      settings: {
+        externalModelOrder: ['model-1', 'missing', 'model-bad'],
+        externalModelsById: {
+          'model-1': {
+            id: 'model-1',
+            name: '本地 Qwen',
+            format: 'openai',
+            baseUrl: ' https://api.example.test/v1 ',
+            apiKey: 'sk-test',
+            modelName: 'qwen-plus',
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          'model-bad': {
+            id: 'model-bad',
+            name: '',
+            format: 'openai',
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: 'sk-test',
+            modelName: 'qwen-plus',
+          },
+        },
+      },
+    }
+
+    await expect(loadStore()).resolves.toMatchObject({
+      settings: {
+        externalModelOrder: ['model-1'],
+        externalModelsById: {
+          'model-1': {
+            id: 'model-1',
+            name: '本地 Qwen',
+            format: 'openai',
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: 'sk-test',
+            modelName: 'qwen-plus',
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        },
       },
     })
   })

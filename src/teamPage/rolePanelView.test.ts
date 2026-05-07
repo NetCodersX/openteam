@@ -13,7 +13,7 @@ describe('team page role panel view boundary', () => {
     expect(viewSource).toContain('function roleSiteMenu(role: GroupRole): HTMLElement')
     expect(viewSource).toContain('function roleActionMenu(role: GroupRole): HTMLElement')
     expect(viewSource).toContain('function kickRoleFromChat(role: GroupRole): Promise<void>')
-    expect(viewSource).toContain('function switchRoleSite(role: GroupRole, chatSite: ChatSite): Promise<void>')
+    expect(viewSource).toContain('function switchRoleSite(role: GroupRole, modelKey: string): Promise<void>')
     expect(viewSource).toContain('deps.state.roleActionMenuRoleId')
     expect(viewSource).toContain("kick.textContent = '删除成员'")
     expect(viewSource).toContain("deps.runCommand('GROUP_ROLE_DELETE'")

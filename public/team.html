@@ -41,6 +41,7 @@
           <button id="settings-button" class="rail-btn" type="button" aria-label="设置" aria-expanded="false" aria-controls="settings-menu">⚙</button>
           <div id="settings-menu" class="settings-menu" hidden>
             <button id="open-people-library" class="btn btn-ghost" type="button">人员库</button>
+            <button id="open-external-models" class="btn btn-ghost" type="button">外部模型</button>
           </div>
         </div>
       </nav>
@@ -249,6 +250,49 @@
       </section>
     </div>
 
+    <div id="external-models-modal" class="modal-backdrop" hidden>
+      <section class="modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="external-models-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="external-models-title">外部模型</h2>
+            <p class="tiny">配置 OpenAI 或 Anthropic 兼容 API，人员可直接选择这些模型。</p>
+          </div>
+          <button id="close-external-models" class="icon-btn" type="button" aria-label="关闭外部模型">×</button>
+        </div>
+        <div id="external-models-list" class="template-list"></div>
+        <form id="external-model-form" class="modal-form">
+          <input id="external-model-id" type="hidden" />
+          <div class="field">
+            <label for="external-model-name">显示名称</label>
+            <input id="external-model-name" type="text" autocomplete="off" placeholder="例如：本地 Qwen" />
+          </div>
+          <div class="field">
+            <label for="external-model-format">接口格式</label>
+            <select id="external-model-format">
+              <option value="openai">OpenAI 格式</option>
+              <option value="anthropic">Anthropic 格式</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="external-model-base-url">模型地址</label>
+            <input id="external-model-base-url" type="url" autocomplete="off" placeholder="https://api.example.com/v1" />
+          </div>
+          <div class="field">
+            <label for="external-model-api-key">模型 Key</label>
+            <input id="external-model-api-key" type="password" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="external-model-model-name">模型名称</label>
+            <input id="external-model-model-name" type="text" autocomplete="off" placeholder="gpt-4.1 / claude-sonnet" />
+          </div>
+          <div class="template-actions">
+            <button id="reset-external-model-form" class="btn" type="button">新建</button>
+            <button class="btn btn-primary" type="submit">保存外部模型</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div id="person-template-modal" class="modal-backdrop" hidden>
       <section class="modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="template-form-title">
         <div class="modal-header">
@@ -290,6 +334,10 @@
                 <input id="template-site-deepseek" type="radio" name="template-chat-site" value="deepseek" />
                 <span>DeepSeek</span>
               </label>
+              <label class="site-segment" for="template-site-external">
+                <input id="template-site-external" type="radio" name="template-chat-site" value="external" />
+                <span>外部模型</span>
+              </label>
               <label class="site-segment" for="template-site-qwen" hidden>
                 <input id="template-site-qwen" type="radio" name="template-chat-site" value="qwen" />
                 <span>千问</span>
@@ -304,6 +352,10 @@
             <label for="template-chatgpt-gpts-url">GPTs 链接前缀</label>
             <input id="template-chatgpt-gpts-url" type="url" autocomplete="off" placeholder="https://chatgpt.com/g/..." />
             <p class="tiny">选填。保存后，该人员使用 ChatGPT 时会优先打开这个 GPTs。</p>
+          </div>
+          <div id="template-external-model-field" class="field" hidden>
+            <label for="template-external-model-select">外部模型</label>
+            <select id="template-external-model-select"></select>
           </div>
           <div class="template-actions">
             <button class="btn btn-primary" type="submit">保存人员</button>

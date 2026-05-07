@@ -1,4 +1,4 @@
-import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, OpenTeamSettings, OpenTeamStore, OpenTeamViewState, RichNoteDocument, RoleTemplate } from './types'
+import type { ExternalModelConfig, GroupChat, GroupMessage, GroupRole, MessageHighlight, OpenTeamSettings, OpenTeamStore, OpenTeamViewState, RichNoteDocument, RoleTemplate } from './types'
 import { normalizeMessageHighlightColor } from './highlightColors'
 
 export const STORE_KEY = 'openteam.groupStore'
@@ -17,6 +17,8 @@ interface OpenTeamMetaStore {
   globalNote?: RichNoteDocument
   chatNotesById?: Record<string, RichNoteDocument>
   messageHighlightsById?: Record<string, MessageHighlight[]>
+  externalRoleMemoriesById?: NonNullable<OpenTeamStore['externalRoleMemoriesById']>
+  externalChatMemoriesById?: NonNullable<OpenTeamStore['externalChatMemoriesById']>
   settings: OpenTeamSettings
   viewState?: OpenTeamViewState
 }
@@ -42,6 +44,8 @@ const DEFAULT_SETTINGS: OpenTeamSettings = {
   defaultMode: 'independent',
   maxContextChars: 6000,
   defaultChatSite: 'gemini',
+  externalModelOrder: [],
+  externalModelsById: {},
 }
 
 let storeQueue: Promise<void> = Promise.resolve()
@@ -58,6 +62,8 @@ export function createDefaultStore(): OpenTeamStore {
     globalNote: undefined,
     chatNotesById: {},
     messageHighlightsById: {},
+    externalRoleMemoriesById: {},
+    externalChatMemoriesById: {},
     settings: { ...DEFAULT_SETTINGS },
     viewState: {
       chatReadSeqById: {},
@@ -122,6 +128,8 @@ function normalizeStore(raw: unknown): OpenTeamStore {
     globalNote: normalizeNoteDocument(raw.globalNote),
     chatNotesById: readNoteRecord(raw.chatNotesById),
     messageHighlightsById: readHighlightsRecord(raw.messageHighlightsById),
+    externalRoleMemoriesById: readExternalRoleMemoryRecord(raw.externalRoleMemoriesById),
+    externalChatMemoriesById: readExternalChatMemoryRecord(raw.externalChatMemoriesById),
     settings: normalizeSettings(raw.settings),
     viewState: normalizeViewState(raw.viewState),
   }
@@ -152,6 +160,8 @@ async function loadV2Store(rawMeta: unknown): Promise<OpenTeamStore> {
   store.globalNote = meta.globalNote
   store.chatNotesById = { ...(meta.chatNotesById ?? {}) }
   store.messageHighlightsById = { ...(meta.messageHighlightsById ?? {}) }
+  store.externalRoleMemoriesById = { ...(meta.externalRoleMemoriesById ?? {}) }
+  store.externalChatMemoriesById = { ...(meta.externalChatMemoriesById ?? {}) }
   store.settings = normalizeSettings(meta.settings)
   store.viewState = normalizeViewState(meta.viewState)
 
@@ -188,6 +198,8 @@ function buildStorageItems(store: OpenTeamStore): Record<string, unknown> {
     globalNote: normalizeNoteDocument(store.globalNote),
     chatNotesById: readNoteRecord(store.chatNotesById),
     messageHighlightsById: readHighlightsRecord(store.messageHighlightsById),
+    externalRoleMemoriesById: readExternalRoleMemoryRecord(store.externalRoleMemoriesById),
+    externalChatMemoriesById: readExternalChatMemoryRecord(store.externalChatMemoriesById),
     settings: normalizeSettings(store.settings),
     viewState: normalizeViewState(store.viewState),
   }
@@ -255,6 +267,8 @@ function normalizeMetaStore(raw: unknown): OpenTeamMetaStore {
     roleTemplatesById: {},
     chatNotesById: {},
     messageHighlightsById: {},
+    externalRoleMemoriesById: {},
+    externalChatMemoriesById: {},
     settings: defaults.settings,
     viewState: defaults.viewState,
   }
@@ -268,6 +282,8 @@ function normalizeMetaStore(raw: unknown): OpenTeamMetaStore {
     globalNote: normalizeNoteDocument(raw.globalNote),
     chatNotesById: readNoteRecord(raw.chatNotesById),
     messageHighlightsById: readHighlightsRecord(raw.messageHighlightsById),
+    externalRoleMemoriesById: readExternalRoleMemoryRecord(raw.externalRoleMemoriesById),
+    externalChatMemoriesById: readExternalChatMemoryRecord(raw.externalChatMemoriesById),
     settings: normalizeSettings(raw.settings),
     viewState: normalizeViewState(raw.viewState),
   }
@@ -383,6 +399,7 @@ function normalizeSettings(raw: unknown): OpenTeamSettings {
     return { ...DEFAULT_SETTINGS }
   }
 
+  const externalModelsById = normalizeExternalModelRecord(raw.externalModelsById)
   return {
     defaultMode: raw.defaultMode === 'collaborative' ? 'collaborative' : DEFAULT_SETTINGS.defaultMode,
     maxContextChars: typeof raw.maxContextChars === 'number' ? raw.maxContextChars : DEFAULT_SETTINGS.maxContextChars,
@@ -398,7 +415,44 @@ function normalizeSettings(raw: unknown): OpenTeamSettings {
               : raw.defaultChatSite === 'qwen'
                 ? 'qwen'
                 : DEFAULT_SETTINGS.defaultChatSite,
+    externalModelOrder: normalizeExternalModelOrder(raw.externalModelOrder, externalModelsById),
+    externalModelsById,
   }
+}
+
+function normalizeExternalModelRecord(raw: unknown): Record<string, ExternalModelConfig> {
+  const record = readRecord(raw)
+  const normalized: Record<string, ExternalModelConfig> = {}
+  for (const [key, value] of Object.entries(record)) {
+    if (!isRecord(value)) continue
+    const id = readTrimmedString(value.id) ?? key
+    const name = readTrimmedString(value.name)
+    const baseUrl = readTrimmedString(value.baseUrl)
+    const apiKey = readTrimmedString(value.apiKey)
+    const modelName = readTrimmedString(value.modelName)
+    const format = value.format === 'anthropic' ? 'anthropic' : value.format === 'openai' ? 'openai' : undefined
+    if (!id || !name || !baseUrl || !apiKey || !modelName || !format) continue
+    normalized[id] = {
+      id,
+      name,
+      format,
+      baseUrl,
+      apiKey,
+      modelName,
+      createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0,
+      updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
+    }
+  }
+  return normalized
+}
+
+function normalizeExternalModelOrder(raw: unknown, modelsById: Record<string, ExternalModelConfig>): string[] {
+  const ids = new Set(Object.keys(modelsById))
+  const ordered = readStringArray(raw, []).filter(id => ids.has(id))
+  for (const id of ids) {
+    if (!ordered.includes(id)) ordered.push(id)
+  }
+  return ordered
 }
 
 function normalizeViewState(raw: unknown): NonNullable<OpenTeamStore['viewState']> {
@@ -470,9 +524,47 @@ function readHighlightsRecord(raw: unknown): Record<string, MessageHighlight[]> 
   return result
 }
 
+function readExternalRoleMemoryRecord(raw: unknown): NonNullable<OpenTeamStore['externalRoleMemoriesById']> {
+  if (!isRecord(raw)) return {}
+  const result: NonNullable<OpenTeamStore['externalRoleMemoriesById']> = {}
+  for (const [roleId, value] of Object.entries(raw)) {
+    if (!isRecord(value)) continue
+    const memoryRoleId = readTrimmedString(value.roleId) ?? roleId
+    if (!memoryRoleId || typeof value.summarizedThroughSeq !== 'number' || typeof value.updatedAt !== 'number') continue
+    result[memoryRoleId] = {
+      roleId: memoryRoleId,
+      summary: readTrimmedString(value.summary),
+      summarizedThroughSeq: value.summarizedThroughSeq,
+      updatedAt: value.updatedAt,
+    }
+  }
+  return result
+}
+
+function readExternalChatMemoryRecord(raw: unknown): NonNullable<OpenTeamStore['externalChatMemoriesById']> {
+  if (!isRecord(raw)) return {}
+  const result: NonNullable<OpenTeamStore['externalChatMemoriesById']> = {}
+  for (const [chatId, value] of Object.entries(raw)) {
+    if (!isRecord(value)) continue
+    const memoryChatId = readTrimmedString(value.chatId) ?? chatId
+    if (!memoryChatId || typeof value.summarizedThroughSeq !== 'number' || typeof value.updatedAt !== 'number') continue
+    result[memoryChatId] = {
+      chatId: memoryChatId,
+      summary: readTrimmedString(value.summary),
+      summarizedThroughSeq: value.summarizedThroughSeq,
+      updatedAt: value.updatedAt,
+    }
+  }
+  return result
+}
+
 function normalizeNoteDocument(raw: unknown): RichNoteDocument | undefined {
   if (!isRecord(raw) || typeof raw.type !== 'string') return undefined
   return raw as RichNoteDocument
+}
+
+function readTrimmedString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.trim() || undefined : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

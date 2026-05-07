@@ -222,7 +222,8 @@ export function createChatListView(deps: ChatListViewDependencies): ChatListView
     const store = deps.getStore()
     const chat = store.chatsById[chatId]
     if (chat && deps.state.selectedChatId === chatId) {
-      deps.iframeHost.restoreChat(chat, chat.roleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role)))
+      const roles = chat.roleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role) && role.modelSource !== 'external')
+      deps.iframeHost.restoreChat({ ...chat, roleIds: roles.map(role => role.id) }, roles)
     }
   }
 

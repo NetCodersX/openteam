@@ -26,8 +26,10 @@ export interface TeamUiControllerDependencies {
   renderRolePanel(): void
   renderAddPersonDialog(): void
   closePeopleModals(): void
+  closeExternalModels(): void
   registerComposerEvents(): void
   registerPeopleLibraryEvents(): void
+  registerExternalModelsEvents(): void
   runCommand(type: string, payload?: Record<string, unknown>): Promise<void>
   showError(message: string): void
   log: {
@@ -59,6 +61,7 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
     })
 
     deps.registerPeopleLibraryEvents()
+    deps.registerExternalModelsEvents()
 
     deps.togglePeopleDrawerEl.addEventListener('click', () => {
       deps.state.peopleDrawerOpen = !deps.state.peopleDrawerOpen
@@ -103,6 +106,7 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
       deps.settingsMenuEl.hidden = true
       deps.settingsButtonEl.setAttribute('aria-expanded', 'false')
       deps.closePeopleModals()
+      deps.closeExternalModels()
       deps.state.chatMenuChatId = undefined
       deps.state.roleSiteMenuRoleId = undefined
       deps.state.roleActionMenuRoleId = undefined
@@ -131,9 +135,9 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
     requireElement<HTMLButtonElement>('#restore-chat').addEventListener('click', () => {
       const chat = deps.getCurrentChat()
       if (!chat) return
-      const roles = deps.getCurrentRoles()
+      const roles = deps.getCurrentRoles().filter(role => role.modelSource !== 'external')
       deps.log.info('ui:restore-chat', { chatId: chat.id, roleIds: roles.map(role => role.id) })
-      deps.iframeHost.restoreChat(chat, roles)
+      deps.iframeHost.restoreChat({ ...chat, roleIds: roles.map(role => role.id) }, roles)
       Promise.all(roles.map(role => deps.runCommand('GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id }))).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
     })
 

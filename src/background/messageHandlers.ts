@@ -1,11 +1,13 @@
 import { buildUnsyncedContext } from '../group/contextSync'
 import { extractSupportedConversationId, normalizeSupportedChatConversationUrl } from '../group/conversationUrl'
 import { normalizeMessageHighlightColor } from '../group/highlightColors'
-import { parseGroupMentions } from '../group/mentionParser'
+import { buildExternalModelPrompt, type ExternalMemoryPatch } from '../group/externalModelContext'
+import { parseGroupMentions, roleMentionLabelOptionsFromSettings } from '../group/mentionParser'
 import { buildPrompt } from '../group/promptBuilder'
 import { mapRuntimeRoleStatus } from '../group/runtimeProtocol'
 import type { BackgroundToRoleMessage } from '../group/runtimeProtocol'
-import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RuntimeFrameBinding } from '../group/types'
+import type { ExternalModelConfig, GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RuntimeFrameBinding } from '../group/types'
+import { createExternalModelClient, type ExternalModelClient } from './externalModelClient'
 import type { BackgroundMessageRoute } from './messageRouter'
 import type { PromptDelivery, PromptSender } from './promptDelivery'
 import { messageTabId, rememberHost, senderFrameId, senderTabId, type RuntimeMessage } from './runtimeClient'
@@ -13,6 +15,21 @@ import type { RuntimeFrameRegistry } from './runtimeFrames'
 import { getChatMessages, getChatRoles, mutateStore, requireChat, requireRole } from './storeAccess'
 
 const STALE_THINKING_MS = 120_000
+
+interface ExternalPromptDelivery {
+  roleId: string
+  chatId: string
+  messageId: string
+  replyAttemptId: string
+  model: ExternalModelConfig
+  prompt: string
+}
+
+interface ExternalModelRunRegistry {
+  register(chatId: string, roleId: string, replyAttemptId: string, controller: AbortController): void
+  abort(chatId: string, roleId: string, replyAttemptId?: string): void
+  unregister(chatId: string, roleId: string, replyAttemptId: string): void
+}
 
 export const MESSAGE_ROUTE_TYPES = [
   'GROUP_ROLE_RETRY_REPLY',
@@ -44,10 +61,14 @@ export interface MessageHandlersDependencies {
   sendRoleMessage(tabId: number, frameId: number, message: BackgroundToRoleMessage): Promise<unknown>
   sendError(reason: string): Promise<void> | void
   sendPrompt: PromptSender
+  externalModelClient?: ExternalModelClient
+  externalModelRuns?: ExternalModelRunRegistry
 }
 
 export function createMessageHandlers(deps: MessageHandlersDependencies): BackgroundMessageRoute[] {
   const deepSeekPromptBatcher = createDeepSeekPromptBatcher(deps)
+  const externalModelClient = deps.externalModelClient ?? createExternalModelClient()
+  const externalModelRuns = deps.externalModelRuns ?? createExternalModelRunRegistry()
 
   const handleMessageSend = async (message: RuntimeMessage) => {
     const chatId = requireString(message.chatId, '缺少群聊 ID')
@@ -58,13 +79,16 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     const { store, result } = await mutateStore(store => {
       const chat = requireChat(store, chatId)
       const roles = getChatRoles(store, chat)
-      const parsed = parseGroupMentions(raw, roles)
+      const parsed = parseGroupMentions(raw, roles, roleMentionLabelOptionsFromSettings(store.settings))
       if (!parsed.ok) throw new Error(parsed.error)
       if (parsed.targetRoleIds.length === 0) throw new Error('当前群聊没有可投递人员')
       deps.log.debug('message-send:parsed-targets', { chatId: chat.id, targetRoleIds: parsed.targetRoleIds })
 
       const targetRoles = parsed.targetRoleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
-      const unavailable = targetRoles.filter(role => !isRoleDeliverable(role, deps.runtimeFrames.getByRole(chat.id, role.id), timestamp))
+      const unavailable = targetRoles.filter(role => {
+        if (isExternalModelRole(role)) return !getExternalModelForRole(store, role)
+        return !isRoleDeliverable(role, deps.runtimeFrames.getByRole(chat.id, role.id), timestamp)
+      })
 
       if (unavailable.length > 0) {
         deps.log.warn('message-send:unavailable-targets', {
@@ -75,7 +99,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
             status: role.status,
             updatedAt: role.updatedAt,
             staleThinking: isStaleThinkingRole(role, timestamp),
-            binding: deps.runtimeFrames.getByRole(chat.id, role.id),
+            binding: isExternalModelRole(role) ? undefined : deps.runtimeFrames.getByRole(chat.id, role.id),
           })),
         })
         throw new Error(`以下人员不可用，请等待或恢复：${unavailable.map(role => role.name).join('、')}`)
@@ -106,15 +130,38 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       chat.updatedAt = timestamp
 
       const messages = getChatMessages(store, chat)
-      const deliveries: PromptDelivery[] = parsed.targetRoleIds.map(roleId => {
+      const deliveries: PromptDelivery[] = []
+      const externalDeliveries: ExternalPromptDelivery[] = []
+      for (const roleId of parsed.targetRoleIds) {
         const role = requireRole(store, chat.id, roleId)
-        const binding = deps.runtimeFrames.getByRole(chat.id, role.id)!
-        const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
         const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
         const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
-        const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
         const replyAttemptId = deps.newId('attempt')
-        if (!includesPersona) {
+        if (isExternalModelRole(role)) {
+          const model = requireExternalModelForRole(store, role)
+          const prompt = buildExternalModelPrompt(store, chat, role, userMessage, roles)
+          if (prompt.memoryPatch) applyExternalMemoryPatch(store, prompt.memoryPatch, timestamp)
+          externalDeliveries.push({
+            roleId,
+            chatId: chat.id,
+            messageId: userMessage.id,
+            replyAttemptId,
+            model,
+            prompt: prompt.content,
+          })
+        } else {
+          const binding = deps.runtimeFrames.getByRole(chat.id, role.id)!
+          const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
+          const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
+          deliveries.push({
+            roleId,
+            chatSite: role.chatSite ?? store.settings.defaultChatSite,
+            tabId: binding.tabId,
+            frameId: binding.frameId,
+            message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
+          })
+        }
+        if (!includesPersona && !isExternalModelRole(role)) {
           deps.log.debug('prompt:persona-skipped', {
             chatId: chat.id,
             roleId: role.id,
@@ -130,29 +177,36 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         role.lastPromptMessageId = userMessage.id
         role.replyAttemptId = replyAttemptId
         role.updatedAt = timestamp
+      }
 
-        return {
-          roleId,
-          chatSite: role.chatSite ?? store.settings.defaultChatSite,
-          tabId: binding.tabId,
-          frameId: binding.frameId,
-          message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
-        }
-      })
-
-      return { message: userMessage, deliveries }
+      return { message: userMessage, deliveries, externalDeliveries }
     })
 
     deps.log.info('message-send:deliveries-ready', {
       chatId,
       messageId: result.message.id,
-      deliveries: result.deliveries.map(delivery => ({ roleId: delivery.roleId, chatSite: delivery.chatSite, tabId: delivery.tabId, frameId: delivery.frameId, contentLength: delivery.message.content.length })),
+      deliveries: [
+        ...result.deliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'site', chatSite: delivery.chatSite, tabId: delivery.tabId, frameId: delivery.frameId, contentLength: delivery.message.content.length })),
+        ...result.externalDeliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'external', modelId: delivery.model.id, contentLength: delivery.prompt.length })),
+      ],
     })
     await deps.broadcastStoreUpdated(store)
 
     await sendPromptDeliveries(deps, deepSeekPromptBatcher, chatId, result.message.id, result.deliveries)
+    let responseStore = store
+    for (const delivery of result.externalDeliveries) {
+      responseStore = await sendExternalModelDelivery(deps, externalModelClient, externalModelRuns, delivery) ?? responseStore
+    }
 
-    return { ok: true, message: result.message, deliveries: result.deliveries.map(delivery => ({ roleId: delivery.roleId })), store }
+    return {
+      ok: true,
+      message: result.message,
+      deliveries: [
+        ...result.deliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'site' })),
+        ...result.externalDeliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'external' })),
+      ],
+      store: responseStore,
+    }
   }
 
   const handleRoleRetryReply = async (message: RuntimeMessage) => {
@@ -220,8 +274,6 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
   const handleRoleStopReply = async (message: RuntimeMessage) => {
     const chatId = requireString(message.chatId, '缺少群聊 ID')
     const roleId = requireString(message.roleId, '缺少人员 ID')
-    const binding = deps.runtimeFrames.getByRole(chatId, roleId)
-    if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，无法停止回复')
 
     const { result: active } = await mutateStore(store => {
       const chat = requireChat(store, chatId)
@@ -230,17 +282,24 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       return {
         messageId: role.lastPromptMessageId,
         replyAttemptId: role.replyAttemptId,
+        isExternal: isExternalModelRole(role),
       }
     })
 
-    const response = await deps.sendRoleMessage(binding.tabId, binding.frameId, {
-      type: 'TEAM_STOP_GENERATION',
-      chatId,
-      roleId,
-      messageId: active.messageId,
-      replyAttemptId: active.replyAttemptId,
-    })
-    if (isRecord(response) && response.ok === false) throw new Error(readOptionalString(response.error) ?? '停止回复失败')
+    const binding = deps.runtimeFrames.getByRole(chatId, roleId)
+    if (active.isExternal) {
+      externalModelRuns.abort(chatId, roleId, active.replyAttemptId)
+    } else {
+      if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，无法停止回复')
+      const response = await deps.sendRoleMessage(binding.tabId, binding.frameId, {
+        type: 'TEAM_STOP_GENERATION',
+        chatId,
+        roleId,
+        messageId: active.messageId,
+        replyAttemptId: active.replyAttemptId,
+      })
+      if (isRecord(response) && response.ok === false) throw new Error(readOptionalString(response.error) ?? '停止回复失败')
+    }
 
     const timestamp = deps.now()
     const { store } = await mutateStore(store => {
@@ -253,7 +312,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       chat.status = deps.getChatStatusFromRoles(store, chat)
       chat.updatedAt = timestamp
     })
-    deps.log.info('role-stop-reply:stopped', { chatId, roleId, messageId: active.messageId, tabId: binding.tabId, frameId: binding.frameId })
+    deps.log.info('role-stop-reply:stopped', { chatId, roleId, messageId: active.messageId, modelSource: active.isExternal ? 'external' : 'site', tabId: binding?.tabId, frameId: binding?.frameId })
     await deps.broadcastStoreUpdated(store)
     return { ok: true, store, messageId: active.messageId }
   }
@@ -759,8 +818,264 @@ async function sendPromptDelivery(deps: MessageHandlersDependencies, chatId: str
   }
 }
 
+async function sendExternalModelDelivery(deps: MessageHandlersDependencies, client: ExternalModelClient, runs: ExternalModelRunRegistry, delivery: ExternalPromptDelivery): Promise<OpenTeamStore | undefined> {
+  const controller = new AbortController()
+  runs.register(delivery.chatId, delivery.roleId, delivery.replyAttemptId, controller)
+  let replyMessageId: string | undefined
+  let content = ''
+  try {
+    deps.log.info('external-model:send:start', {
+      chatId: delivery.chatId,
+      roleId: delivery.roleId,
+      messageId: delivery.messageId,
+      modelId: delivery.model.id,
+      format: delivery.model.format,
+      promptLength: delivery.prompt.length,
+    })
+
+    const initialized = await createExternalAssistantPlaceholder(deps, delivery)
+    if (initialized.ignored) {
+      deps.log.warn('external-model:reply:ignored-stale', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason: initialized.reason })
+      return initialized.store
+    }
+    replyMessageId = initialized.replyMessageId
+    await deps.broadcastStoreUpdated(initialized.store)
+
+    const stream = typeof client.stream === 'function'
+      ? client.stream({ model: delivery.model, prompt: delivery.prompt, abortSignal: controller.signal })
+      : streamCompleteFallback(client, { model: delivery.model, prompt: delivery.prompt, abortSignal: controller.signal })
+    for await (const chunk of stream) {
+      if (!chunk) continue
+      content += chunk
+      const update = await updateExternalAssistantContent(deps, delivery, replyMessageId, content)
+      if (update.ignored) {
+        deps.log.warn('external-model:stream:ignored-stale', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason: update.reason })
+        return update.store
+      }
+      await deps.broadcastStoreUpdated(update.store)
+    }
+
+    if (!content.trim()) throw new Error('外部模型返回格式无效')
+    const finalized = await finishExternalAssistantReply(deps, delivery, replyMessageId, content)
+    if (finalized.ignored) {
+      deps.log.warn('external-model:reply:ignored-stale', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason: finalized.reason })
+      return finalized.store
+    }
+    deps.log.info('external-model:reply:stored', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, replyMessageId })
+    await deps.broadcastStoreUpdated(finalized.store)
+    return finalized.store
+  } catch (error) {
+    if (isAbortError(error) || controller.signal.aborted) {
+      deps.log.info('external-model:send:aborted', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, replyMessageId, contentLength: content.length })
+      if (replyMessageId) {
+        const stopped = await markExternalAssistantStopped(deps, delivery, replyMessageId, content)
+        await deps.broadcastStoreUpdated(stopped.store)
+        return stopped.store
+      }
+      return undefined
+    }
+    const reason = error instanceof Error ? error.message : String(error)
+    deps.log.warn('external-model:send:failed', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason })
+    await markDeliveryError(deps, delivery.chatId, delivery.roleId, delivery.messageId, reason)
+    return undefined
+  } finally {
+    runs.unregister(delivery.chatId, delivery.roleId, delivery.replyAttemptId)
+  }
+}
+
+async function createExternalAssistantPlaceholder(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+): Promise<{ ignored: true; reason: string; store: OpenTeamStore } | { ignored: false; replyMessageId: string; store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, delivery.chatId)
+    const role = requireRole(store, chat.id, delivery.roleId)
+    const staleReason = staleReplyReason(store, chat, role, delivery.messageId, delivery.replyAttemptId)
+    if (staleReason) return { ignored: true as const, reason: staleReason }
+
+    const reply: GroupMessage = {
+      id: deps.newId('msg'),
+      chatId: chat.id,
+      seq: chat.nextMessageSeq,
+      type: 'assistant',
+      content: '',
+      contentFormat: 'markdown',
+      roleId: role.id,
+      roleName: role.name,
+      createdAt: timestamp,
+      status: 'pending',
+    }
+    store.messagesById[reply.id] = reply
+    chat.messageIds.push(reply.id)
+    chat.nextMessageSeq += 1
+
+    const userMessage = store.messagesById[delivery.messageId]
+    if (userMessage?.deliveryStatus?.[role.id] === 'pending') {
+      userMessage.deliveryStatus[role.id] = 'sent'
+      if (Object.values(userMessage.deliveryStatus).every(status => status === 'sent' || status === 'received')) userMessage.status = 'sent'
+    }
+    role.updatedAt = timestamp
+    chat.updatedAt = timestamp
+    return { ignored: false as const, replyMessageId: reply.id }
+  })
+  return result.ignored ? { ...result, store } : { ...result, store }
+}
+
+async function updateExternalAssistantContent(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+  replyMessageId: string,
+  content: string,
+): Promise<{ ignored: true; reason: string; store: OpenTeamStore } | { ignored: false; store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, delivery.chatId)
+    const role = requireRole(store, chat.id, delivery.roleId)
+    const staleReason = staleReplyReason(store, chat, role, delivery.messageId, delivery.replyAttemptId)
+    if (staleReason) return { ignored: true as const, reason: staleReason }
+    const reply = store.messagesById[replyMessageId]
+    if (!isAssistantMessageForRole(reply, chat, role)) return { ignored: true as const, reason: 'reply-message-not-found' }
+    reply.content = content
+    reply.status = 'pending'
+    role.updatedAt = timestamp
+    chat.updatedAt = timestamp
+    return { ignored: false as const }
+  })
+  return result.ignored ? { ...result, store } : { ...result, store }
+}
+
+async function finishExternalAssistantReply(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+  replyMessageId: string,
+  content: string,
+): Promise<{ ignored: true; reason: string; store: OpenTeamStore } | { ignored: false; store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+      const chat = requireChat(store, delivery.chatId)
+      const role = requireRole(store, chat.id, delivery.roleId)
+      const staleReason = staleReplyReason(store, chat, role, delivery.messageId, delivery.replyAttemptId)
+      if (staleReason) return { ignored: true as const, reason: staleReason }
+      const reply = store.messagesById[replyMessageId]
+      if (!isAssistantMessageForRole(reply, chat, role)) return { ignored: true as const, reason: 'reply-message-not-found' }
+      reply.content = content
+      reply.status = 'received'
+      markChatHasNewMessage(store, chat)
+
+      const userMessage = store.messagesById[delivery.messageId]
+      if (userMessage?.deliveryStatus?.[role.id]) {
+        userMessage.deliveryStatus[role.id] = 'received'
+        if (Object.values(userMessage.deliveryStatus).every(status => status === 'received')) userMessage.status = 'received'
+      }
+
+      role.status = 'ready'
+      role.lastReplyAt = timestamp
+      role.updatedAt = timestamp
+      if (role.lastPromptMessageId === delivery.messageId) delete role.lastPromptMessageId
+      if (role.replyAttemptId === delivery.replyAttemptId) delete role.replyAttemptId
+      chat.status = deps.getChatStatusFromRoles(store, chat)
+      chat.updatedAt = timestamp
+      return { ignored: false as const }
+    })
+  return result.ignored ? { ...result, store } : { ...result, store }
+}
+
+async function markExternalAssistantStopped(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+  replyMessageId: string,
+  content: string,
+): Promise<{ store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store } = await mutateStore(store => {
+    const chat = requireChat(store, delivery.chatId)
+    const role = requireRole(store, chat.id, delivery.roleId)
+    const reply = store.messagesById[replyMessageId]
+    if (isAssistantMessageForRole(reply, chat, role)) {
+      reply.content = content
+      reply.status = content.trim() ? 'received' : 'error'
+    }
+    if (role.lastPromptMessageId === delivery.messageId) role.status = 'stopped'
+    role.updatedAt = timestamp
+    chat.status = deps.getChatStatusFromRoles(store, chat)
+    chat.updatedAt = timestamp
+  })
+  return { store }
+}
+
+async function* streamCompleteFallback(client: ExternalModelClient, input: { model: ExternalModelConfig; prompt: string; abortSignal?: AbortSignal }): AsyncIterable<string> {
+  const result = await client.complete(input)
+  yield result.content
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
 function deepSeekBatchKey(chatId: string, messageId: string): string {
   return `${chatId}:${messageId}`
+}
+
+function createExternalModelRunRegistry(): ExternalModelRunRegistry {
+  const runs = new Map<string, AbortController>()
+  return {
+    register(chatId, roleId, replyAttemptId, controller) {
+      runs.set(externalModelRunKey(chatId, roleId, replyAttemptId), controller)
+    },
+    abort(chatId, roleId, replyAttemptId) {
+      if (replyAttemptId) {
+        runs.get(externalModelRunKey(chatId, roleId, replyAttemptId))?.abort()
+        return
+      }
+      for (const [key, controller] of runs) {
+        if (key.startsWith(`${chatId}:${roleId}:`)) controller.abort()
+      }
+    },
+    unregister(chatId, roleId, replyAttemptId) {
+      runs.delete(externalModelRunKey(chatId, roleId, replyAttemptId))
+    },
+  }
+}
+
+function externalModelRunKey(chatId: string, roleId: string, replyAttemptId: string): string {
+  return `${chatId}:${roleId}:${replyAttemptId}`
+}
+
+function isExternalModelRole(role: GroupRole): boolean {
+  return role.modelSource === 'external'
+}
+
+function getExternalModelForRole(store: OpenTeamStore, role: GroupRole): ExternalModelConfig | undefined {
+  if (!isExternalModelRole(role) || !role.externalModelId) return undefined
+  return store.settings.externalModelsById[role.externalModelId]
+}
+
+function requireExternalModelForRole(store: OpenTeamStore, role: GroupRole): ExternalModelConfig {
+  const model = getExternalModelForRole(store, role)
+  if (!model) throw new Error(`找不到外部模型：${role.externalModelId ?? role.name}`)
+  return model
+}
+
+function applyExternalMemoryPatch(store: OpenTeamStore, patch: ExternalMemoryPatch, timestamp: number): void {
+  if (patch.scope === 'chat') {
+    store.externalChatMemoriesById ??= {}
+    store.externalChatMemoriesById[patch.id] = {
+      chatId: patch.id,
+      summary: patch.summary,
+      summarizedThroughSeq: patch.summarizedThroughSeq,
+      updatedAt: timestamp,
+    }
+    return
+  }
+
+  store.externalRoleMemoriesById ??= {}
+  store.externalRoleMemoriesById[patch.id] = {
+    roleId: patch.id,
+    summary: patch.summary,
+    summarizedThroughSeq: patch.summarizedThroughSeq,
+    updatedAt: timestamp,
+  }
 }
 
 function isStaleThinkingRole(role: GroupRole, timestamp: number): boolean {

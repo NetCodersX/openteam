@@ -1,4 +1,4 @@
-import type { GroupRole } from './types'
+import type { GroupRole, OpenTeamSettings } from './types'
 
 export type ParsedGroupMention =
   | {
@@ -12,7 +12,12 @@ export type ParsedGroupMention =
       error: string
     }
 
-export function parseGroupMentions(raw: string, roles: GroupRole[]): ParsedGroupMention {
+export interface RoleMentionLabelOptions {
+  defaultChatSite?: GroupRole['chatSite']
+  externalModelNamesById?: Record<string, string>
+}
+
+export function parseGroupMentions(raw: string, roles: GroupRole[], options: RoleMentionLabelOptions = {}): ParsedGroupMention {
   const trimmed = raw.trim()
   if (!trimmed) return { ok: false, error: '消息内容不能为空' }
 
@@ -22,7 +27,7 @@ export function parseGroupMentions(raw: string, roles: GroupRole[]): ParsedGroup
   }
 
   const mentionTargets = roles.flatMap(role => [
-    { role, label: roleMentionLabel(role) },
+    { role, label: roleMentionLabel(role, options) },
     { role, label: role.name },
   ]).sort((left, right) => right.label.length - left.label.length)
   const targetRoleIds = new Set<string>()
@@ -65,8 +70,23 @@ export function parseGroupMentions(raw: string, roles: GroupRole[]): ParsedGroup
   }
 }
 
-export function roleMentionLabel(role: GroupRole): string {
-  return `${role.name}（${siteLabel(role.chatSite)}）`
+export function roleMentionLabel(role: GroupRole, options: RoleMentionLabelOptions = {}): string {
+  return `${role.name}（${roleModelLabel(role, options)}）`
+}
+
+export function roleModelLabel(role: GroupRole, options: RoleMentionLabelOptions = {}): string {
+  if (role.modelSource === 'external') {
+    const externalName = role.externalModelId ? options.externalModelNamesById?.[role.externalModelId]?.trim() : undefined
+    return externalName || 'API'
+  }
+  return siteLabel(role.chatSite ?? options.defaultChatSite)
+}
+
+export function roleMentionLabelOptionsFromSettings(settings: Pick<OpenTeamSettings, 'defaultChatSite' | 'externalModelsById'>): RoleMentionLabelOptions {
+  return {
+    defaultChatSite: settings.defaultChatSite,
+    externalModelNamesById: Object.fromEntries(Object.entries(settings.externalModelsById).map(([modelId, model]) => [modelId, model.name])),
+  }
 }
 
 function siteLabel(site: GroupRole['chatSite']): string {

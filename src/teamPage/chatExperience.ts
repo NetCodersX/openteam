@@ -51,7 +51,8 @@ export function getStoppedReplyRoles(roles: GroupRole[]): GroupRole[] {
   return roles.filter(role => role.status === 'stopped' && Boolean(role.lastPromptMessageId))
 }
 
-export function shouldAutoReconnectRole(role: Pick<GroupRole, 'status' | 'updatedAt'>, now = Date.now()): boolean {
+export function shouldAutoReconnectRole(role: Pick<GroupRole, 'modelSource' | 'status' | 'updatedAt'>, now = Date.now()): boolean {
+  if (role.modelSource === 'external') return false
   if (role.status === 'ready') return false
   if (role.status === 'stopped') return false
   if (role.status !== 'thinking') return true

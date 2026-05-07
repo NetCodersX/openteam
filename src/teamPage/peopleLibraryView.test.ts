@@ -48,6 +48,9 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
   const peopleLibraryPaginationEl = document.createElement('div')
   const templateListEl = document.createElement('div')
   const templateSiteChatGptEl = document.createElement('input')
+  const templateSiteExternalEl = document.createElement('input')
+  const templateExternalModelFieldEl = Object.assign(document.createElement('div'), { hidden: true })
+  const templateExternalModelSelectEl = document.createElement('select')
   const templateChatGptGptsFieldEl = Object.assign(document.createElement('div'), { hidden: true })
   const templateChatGptGptsUrlEl = document.createElement('input')
   const templateNameEl = document.createElement('input')
@@ -98,6 +101,9 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
     templateSiteDeepSeekEl: document.createElement('input'),
     templateSiteQwenEl: document.createElement('input'),
     templateSiteKimiEl: document.createElement('input'),
+    templateSiteExternalEl,
+    templateExternalModelFieldEl,
+    templateExternalModelSelectEl,
     templateChatGptGptsFieldEl,
     templateChatGptGptsUrlEl,
     temporaryPersonNameEl: document.createElement('input'),
@@ -203,7 +209,7 @@ describe('team page people library view boundary', () => {
 
     view.registerPeopleLibraryEvents()
     view.renderAddPersonDialog()
-    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="claude"]')!
+    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="site:claude"]')!
     claudeSite.checked = true
     claudeSite.dispatchEvent(new Event('change', { bubbles: true }))
     addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!.checked = true
@@ -213,8 +219,8 @@ describe('team page people library view boundary', () => {
     expect(runCommand).toHaveBeenCalledWith('GROUP_ROLES_CREATE_BATCH', {
       chatId: chat.id,
       items: [
-        { source: 'library', roleTemplateId: template.id, chatSite: 'gemini' },
-        { source: 'library', roleTemplateId: template.id, chatSite: 'claude' },
+        { source: 'library', roleTemplateId: template.id, modelSource: 'site', chatSite: 'gemini' },
+        { source: 'library', roleTemplateId: template.id, modelSource: 'site', chatSite: 'claude' },
       ],
     })
   })
@@ -237,7 +243,7 @@ describe('team page people library view boundary', () => {
     const personCheckbox = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!
     personCheckbox.checked = true
     personCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
-    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="claude"]')!
+    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="site:claude"]')!
     claudeSite.checked = true
     claudeSite.dispatchEvent(new Event('change', { bubbles: true }))
 
@@ -273,7 +279,9 @@ describe('team page people library view boundary', () => {
       name: '飞飞教练',
       description: '',
       systemPrompt: '以教练方式回应',
+      defaultModelSource: 'site',
       defaultChatSite: 'chatgpt',
+      defaultExternalModelId: undefined,
       chatGptGptsUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/69f7fabe-9878-83a8-a867-88ebb36967d4',
     })
   })
@@ -319,7 +327,9 @@ describe('team page people library view boundary', () => {
       name: '观察员',
       description: '',
       systemPrompt: '',
+      defaultModelSource: 'site',
       defaultChatSite: 'gemini',
+      defaultExternalModelId: undefined,
       chatGptGptsUrl: undefined,
     })
   })
