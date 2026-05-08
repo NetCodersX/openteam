@@ -83,12 +83,8 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
         deps.state.chatMenuChatId = undefined
         deps.renderChatList()
       }
-      if (deps.state.roleSiteMenuRoleId && !target?.closest('.role-site-menu, .site-pill, .role-more')) {
+      if (deps.state.roleSiteMenuRoleId && !target?.closest('.role-site-menu, .site-pill')) {
         deps.state.roleSiteMenuRoleId = undefined
-        deps.renderRolePanel()
-      }
-      if (deps.state.roleActionMenuRoleId && !target?.closest('.role-action-menu, .role-more')) {
-        deps.state.roleActionMenuRoleId = undefined
         deps.renderRolePanel()
       }
       if (deps.state.addPersonSiteMenuId && !target?.closest('.role-site-menu, .site-pill')) {

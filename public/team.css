@@ -2153,7 +2153,7 @@ select:focus {
   gap: 4px;
 }
 
-.role-more,
+.role-delete,
 .role-refresh,
 .role-jump {
   display: grid;
@@ -2166,6 +2166,12 @@ select:focus {
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
+}
+
+.role-delete svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
 }
 
 .role-jump {
@@ -2185,14 +2191,14 @@ select:focus {
 
 .role-refresh:not(:disabled):hover,
 .role-jump:hover,
-.role-more:hover {
+.role-delete:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
 
-.role-more:hover {
-  background: rgba(132, 153, 171, 0.1);
-  color: var(--text);
+.role-delete:hover {
+  background: rgba(255, 95, 87, 0.12);
+  color: #ff8a82;
 }
 
 .role-meta {
@@ -2349,21 +2355,6 @@ select:focus {
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), var(--glow);
 }
 
-.role-action-menu {
-  position: absolute;
-  right: 12px;
-  top: 48px;
-  z-index: 9;
-  display: grid;
-  gap: 4px;
-  min-width: 112px;
-  border: 1px solid rgba(132, 153, 171, 0.2);
-  border-radius: 8px;
-  padding: 6px;
-  background: rgba(8, 16, 24, 0.96);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), var(--glow);
-}
-
 .role-site-option {
   display: flex;
   align-items: center;
@@ -2383,15 +2374,6 @@ select:focus {
 .role-site-option.active {
   background: rgba(47, 216, 204, 0.1);
   color: var(--text);
-}
-
-.role-site-danger {
-  color: #ff9c9c;
-}
-
-.role-site-danger:hover {
-  background: rgba(255, 92, 92, 0.12);
-  color: #ffd2d2;
 }
 
 .role-description,

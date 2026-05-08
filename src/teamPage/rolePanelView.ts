@@ -89,20 +89,9 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     actions.className = 'role-card-actions'
     const refresh = roleRefreshButton(role)
     const jump = roleJumpButton(role)
-    const more = document.createElement('button')
-    more.type = 'button'
-    more.className = 'role-more'
-    more.setAttribute('aria-label', `打开 ${role.name} 的成员菜单`)
-    more.textContent = '···'
-    more.addEventListener('click', event => {
-      event.stopPropagation()
-      deps.state.roleSiteMenuRoleId = undefined
-      deps.state.roleActionMenuRoleId = deps.state.roleActionMenuRoleId === role.id ? undefined : role.id
-      renderRolePanel()
-    })
-    actions.append(refresh, jump, more)
+    const remove = roleDeleteButton(role)
+    actions.append(refresh, jump, remove)
     card.append(avatar, main, actions)
-    if (deps.state.roleActionMenuRoleId === role.id) card.append(roleActionMenu(role))
 
     if (role.status === 'error') {
       const error = document.createElement('div')
@@ -163,6 +152,23 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     return button
   }
 
+  function roleDeleteButton(role: GroupRole): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'role-delete'
+    button.dataset.roleDelete = role.id
+    button.setAttribute('aria-label', `删除 ${role.name}`)
+    button.title = '删除成员'
+    button.append(trashIcon())
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = undefined
+      kickRoleFromChat(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+    })
+    return button
+  }
+
   function roleSiteControl(role: GroupRole): HTMLElement {
     const control = document.createElement('div')
     control.className = 'role-site-control'
@@ -206,22 +212,6 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     return menu
   }
 
-  function roleActionMenu(role: GroupRole): HTMLElement {
-    const menu = document.createElement('div')
-    menu.className = 'role-action-menu'
-    menu.addEventListener('click', event => event.stopPropagation())
-    const kick = document.createElement('button')
-    kick.type = 'button'
-    kick.className = 'role-site-option role-site-danger'
-    kick.textContent = '删除成员'
-    kick.addEventListener('click', () => {
-      deps.state.roleActionMenuRoleId = undefined
-      kickRoleFromChat(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
-    })
-    menu.append(kick)
-    return menu
-  }
-
   async function kickRoleFromChat(role: GroupRole): Promise<void> {
     if (!window.confirm(`确定将「${role.name}」移出当前群聊吗？历史聊天记录会保留。`)) {
       renderRolePanel()
@@ -256,6 +246,17 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
       deps.insertMention(role)
     })
   }
+}
+
+function trashIcon(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('focusable', 'false')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', 'M9 4h6l1 2h4v2H4V6h4l1-2Zm-2 6h10l-.7 9.1A2 2 0 0 1 14.3 21H9.7a2 2 0 0 1-2-1.9L7 10Zm3 2v6h1.6v-6H10Zm2.4 0v6H14v-6h-1.6Z')
+  svg.append(path)
+  return svg
 }
 
 function siteLabel(site: ChatSite | undefined): string {

@@ -17,7 +17,7 @@ describe('team page role panel view boundary', () => {
     expect(viewSource).toContain('function roleCard(role: GroupRole): HTMLElement')
     expect(viewSource).toContain('function roleSiteControl(role: GroupRole): HTMLElement')
     expect(viewSource).toContain('function roleSiteMenu(role: GroupRole): HTMLElement')
-    expect(viewSource).toContain('function roleActionMenu(role: GroupRole): HTMLElement')
+    expect(viewSource).toContain('function roleDeleteButton(role: GroupRole): HTMLButtonElement')
     expect(viewSource).toContain('function kickRoleFromChat(role: GroupRole): Promise<void>')
     expect(viewSource).toContain('function switchRoleSite(role: GroupRole, modelKey: string): Promise<void>')
     expect(viewSource).toContain('function roleRefreshButton(role: GroupRole): HTMLButtonElement')
@@ -27,7 +27,8 @@ describe('team page role panel view boundary', () => {
     expect(viewSource).toContain("deps.runCommand('GROUP_ROLE_RECOVER'")
     expect(viewSource).toContain("deps.focusRoleFrame(role.chatId, role.id)")
     expect(viewSource).toContain('deps.state.roleActionMenuRoleId')
-    expect(viewSource).toContain("kick.textContent = '删除成员'")
+    expect(viewSource).toContain('function trashIcon(): SVGSVGElement')
+    expect(viewSource).toContain('button.dataset.roleDelete = role.id')
     expect(viewSource).toContain("ready: '在线'")
     expect(viewSource).not.toContain("ready: '就绪'")
     expect(viewSource).toContain('function roleContextProgress(role: GroupRole): HTMLElement')
@@ -45,7 +46,7 @@ describe('team page role panel view boundary', () => {
     expect(entrySource).not.toContain('function roleCard(role: GroupRole): HTMLElement')
     expect(entrySource).not.toContain('function roleSiteControl(role: GroupRole): HTMLElement')
     expect(entrySource).not.toContain('function roleSiteMenu(role: GroupRole): HTMLElement')
-    expect(entrySource).not.toContain('function roleActionMenu(role: GroupRole): HTMLElement')
+    expect(entrySource).not.toContain('function roleDeleteButton(role: GroupRole): HTMLButtonElement')
     expect(entrySource).not.toContain('function roleRefreshButton(role: GroupRole): HTMLButtonElement')
     expect(entrySource).not.toContain('function roleJumpButton(role: GroupRole): HTMLButtonElement')
     expect(entrySource).not.toContain('function kickRoleFromChat(role: GroupRole): Promise<void>')
@@ -94,6 +95,52 @@ describe('team page role panel view boundary', () => {
     expect(iframeHost.recoverRole).toHaveBeenCalledWith(store.rolesById['role-1'])
     expect(runCommand).toHaveBeenCalledWith('GROUP_ROLE_RECOVER', { chatId: 'chat-1', roleId: 'role-1' })
   })
+
+  it('renders member deletion as a direct icon action and confirms before removing', async () => {
+    const store = makeStoreWithRole()
+    const rolePanelEl = document.createElement('aside')
+    const roleSummaryEl = document.createElement('p')
+    const roleListEl = document.createElement('div')
+    const iframeHost = { recoverRole: vi.fn() }
+    const runCommand = vi.fn(async () => undefined)
+    rolePanelEl.append(roleSummaryEl, roleListEl)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const view = createRolePanelView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      rolePanelEl,
+      roleSummaryEl,
+      roleListEl,
+      iframeHost,
+      getCurrentChat: () => store.chatsById['chat-1'],
+      getCurrentRoles: () => [store.rolesById['role-1']],
+      emptyCard: (title, body) => {
+        const card = document.createElement('div')
+        card.textContent = `${title}${body}`
+        return card
+      },
+      roleToneClass: () => 'role-tone-0',
+      roleAvatarLabel: name => name?.slice(0, 1) ?? '',
+      insertMention: vi.fn(),
+      refreshCurrentChat: vi.fn(async () => undefined),
+      focusRoleFrame: vi.fn(),
+      runCommand,
+      showError: vi.fn(),
+    })
+
+    view.renderRolePanel()
+    expect(roleListEl.querySelector('.role-more')).toBeNull()
+    const remove = roleListEl.querySelector<HTMLButtonElement>('[data-role-delete="role-1"]')
+    expect(remove?.querySelector('svg')).not.toBeNull()
+    expect(remove?.getAttribute('aria-label')).toBe('删除 产品经理')
+    remove?.click()
+    await Promise.resolve()
+
+    expect(confirm).toHaveBeenCalledWith('确定将「产品经理」移出当前群聊吗？历史聊天记录会保留。')
+    expect(runCommand).toHaveBeenCalledWith('GROUP_ROLE_DELETE', { roleId: 'role-1' })
+    confirm.mockRestore()
+  })
 })
 
 function makeStoreWithRole(): OpenTeamStore {
@@ -127,6 +174,6 @@ function makeStoreWithRole(): OpenTeamStore {
 }
 
 function roleSiteMenuSource(source: string): string {
-  const match = source.match(/function roleSiteMenu\(role: GroupRole\): HTMLElement \{(?<body>[\s\S]*?)\n  function roleActionMenu/)
+  const match = source.match(/function roleSiteMenu\(role: GroupRole\): HTMLElement \{(?<body>[\s\S]*?)\n  async function kickRoleFromChat/)
   return match?.groups?.body ?? ''
 }
