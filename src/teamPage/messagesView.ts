@@ -154,7 +154,11 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       title.textContent = deps.messageTitle(message)
       name.append(title)
       const role = roleForMessage(message)
-      if (role) name.append(siteBadge(role))
+      if (role) {
+        name.append(siteBadge(role))
+        const jumpButton = siteJumpButton(message.chatId, role)
+        if (jumpButton) name.append(jumpButton)
+      }
       wireMentionShortcut(name, role)
       stack.append(name)
     }
@@ -185,6 +189,8 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       const role = roleForMessage(message)
       if (message.roleId && message.status === 'pending' && role) {
         tools.append(createMessageIconButton('停止回复', 'stop', () => deps.stopRoleReply(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error))), { activateOnPointerDown: true }))
+      } else if (message.roleId && message.status === 'error' && role) {
+        tools.append(createMessageIconButton('重新回复', 'retry', () => deps.retryRoleReply(role, message.id).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))))
       } else if (message.roleId && role?.modelSource === 'external') {
         tools.append(createMessageIconButton('重新回复', 'retry', () => deps.retryRoleReply(role, message.id).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))))
       } else if (message.roleId) {
@@ -267,11 +273,12 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
         onClick(button)
       })
     }
-    button.addEventListener('click', () => {
+    button.addEventListener('click', event => {
       if (activatedOnPointerDown) {
         activatedOnPointerDown = false
         return
       }
+      event.stopPropagation()
       onClick(button)
     })
     return button
@@ -461,6 +468,8 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       title.className = 'message-name-text'
       title.textContent = role.name
       name.append(title, siteBadge(role))
+      const jumpButton = siteJumpButton(role.chatId, role)
+      if (jumpButton) name.append(jumpButton)
       wireMentionShortcut(name, role)
       stack.append(name)
     }
@@ -738,6 +747,13 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     badge.className = `role-site-badge ${role.modelSource === 'external' ? 'site-pill-external' : `site-pill-${role.chatSite ?? 'gemini'}`}`
     badge.textContent = roleModelLabel(role, mentionLabelOptions())
     return badge
+  }
+
+  function siteJumpButton(chatId: string, role: GroupRole): HTMLButtonElement | undefined {
+    if (role.modelSource === 'external') return undefined
+    const button = createMessageIconButton('跳转到原始窗口', 'jump', () => deps.focusRoleFrame(chatId, role.id))
+    button.classList.add('message-site-jump-btn')
+    return button
   }
 
   function mentionLabelOptions() {

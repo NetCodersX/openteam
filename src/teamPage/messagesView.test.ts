@@ -167,6 +167,87 @@ describe('team page messages view boundary', () => {
     expect(messagesEl.querySelector('.markdown-body strong')?.textContent).toBe('重点')
   })
 
+  it('renders a direct iframe jump icon beside assistant site badges', () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: ['role-1'],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const role: GroupRole = {
+      id: 'role-1',
+      chatId: chat.id,
+      name: '工程师',
+      chatSite: 'deepseek',
+      status: 'ready',
+      contextCursor: 0,
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-1',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '可以这样做',
+      roleId: role.id,
+      roleName: role.name,
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      rolesById: { [role.id]: role },
+      messagesById: { [message.id]: message },
+    }
+    const messagesEl = document.createElement('section')
+    const focusRoleFrame = vi.fn()
+    const insertMention = vi.fn()
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [role],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame,
+      insertMention,
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    const jump = messagesEl.querySelector<HTMLButtonElement>('.message-name .message-site-jump-btn')
+    expect(messagesEl.querySelector('.role-site-badge')?.textContent).toBe('DeepSeek')
+    expect(jump?.getAttribute('aria-label')).toBe('跳转到原始窗口')
+
+    jump?.click()
+
+    expect(focusRoleFrame).toHaveBeenCalledWith(chat.id, role.id)
+    expect(insertMention).not.toHaveBeenCalled()
+  })
+
   it('shows configured external model names in assistant badges and user mentions', () => {
     const now = Date.now()
     const chat: GroupChat = {
@@ -413,6 +494,84 @@ describe('team page messages view boundary', () => {
     expect(messagesEl.querySelector('[aria-label="重新同步完整回复"]')).toBeNull()
     const retryButton = messagesEl.querySelector<HTMLButtonElement>('[aria-label="重新回复"]')
     expect(retryButton).not.toBeNull()
+    retryButton?.click()
+    expect(retryRoleReply).toHaveBeenCalledWith(role, message.id)
+  })
+
+  it('renders retry controls for failed site assistant replies', () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: ['role-1'],
+      messageIds: ['msg-assistant'],
+      nextMessageSeq: 2,
+      status: 'error',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const role: GroupRole = {
+      id: 'role-1',
+      chatId: chat.id,
+      name: '工程师',
+      status: 'error',
+      chatSite: 'gemini',
+      contextCursor: 0,
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-assistant',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '回复超时了。\n\n可以点击下方的重新回复按钮再试一次。',
+      contentFormat: 'markdown',
+      roleId: role.id,
+      roleName: role.name,
+      createdAt: now,
+      status: 'error',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      rolesById: { [role.id]: role },
+      messagesById: { [message.id]: message },
+    }
+    const messagesEl = document.createElement('section')
+    const retryRoleReply = vi.fn(async () => undefined)
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [role],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply,
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    const retryButton = messagesEl.querySelector<HTMLButtonElement>('.message-tools [aria-label="重新回复"]')
+    expect(retryButton).not.toBeNull()
+    expect(messagesEl.querySelector('.message-tools [aria-label="重新同步完整回复"]')).toBeNull()
     retryButton?.click()
     expect(retryRoleReply).toHaveBeenCalledWith(role, message.id)
   })

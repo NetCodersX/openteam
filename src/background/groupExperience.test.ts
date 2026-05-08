@@ -899,6 +899,66 @@ describe('background group chat experience handlers', () => {
     expect(result.store.messagesById['msg-1'].status).toBe('error')
     expect(result.store.messagesById['msg-1'].deliveryStatus?.['role-1']).toBe('error')
     expect(result.store.chatsById['chat-1'].status).toBe('error')
+    expect(result.store.chatsById['chat-1'].messageIds).toHaveLength(2)
+    const timeoutReplyId = result.store.chatsById['chat-1'].messageIds[1]
+    expect(result.store.messagesById[timeoutReplyId]).toMatchObject({
+      chatId: 'chat-1',
+      seq: 2,
+      type: 'assistant',
+      roleId: 'role-1',
+      roleName: '工程师',
+      status: 'error',
+      contentFormat: 'markdown',
+    })
+    expect(result.store.messagesById[timeoutReplyId].content).toContain('回复超时')
+    expect(result.store.messagesById[timeoutReplyId].content).toContain('重新回复')
+  })
+
+  it('retries a visible timed-out site reply from its assistant message', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = { ...makeChat('chat-1', ['role-1']), messageIds: ['msg-1', 'msg-timeout'], nextMessageSeq: 3, status: 'error' }
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师', { status: 'error' })
+    store.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'user',
+      content: '请分析',
+      targetRoleIds: ['role-1'],
+      createdAt: 1,
+      status: 'error',
+      deliveryStatus: { 'role-1': 'error' },
+    }
+    store.messagesById['msg-timeout'] = {
+      id: 'msg-timeout',
+      chatId: 'chat-1',
+      seq: 2,
+      type: 'assistant',
+      content: '回复超时了。\n\n可以点击下方的重新回复按钮再试一次。',
+      contentFormat: 'markdown',
+      roleId: 'role-1',
+      roleName: '工程师',
+      createdAt: 2,
+      status: 'error',
+    }
+    const harness = await setupBackground(store)
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/abc' })
+
+    const result = await harness.invoke({ type: 'GROUP_ROLE_RETRY_REPLY', chatId: 'chat-1', roleId: 'role-1', messageId: 'msg-timeout' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(result.ok).toBe(true)
+    expect(result.store.messagesById['msg-timeout']).toBeUndefined()
+    expect(result.store.chatsById['chat-1'].messageIds).toEqual(['msg-1'])
+    expect(result.store.rolesById['role-1'].status).toBe('thinking')
+    expect(result.store.rolesById['role-1'].lastPromptMessageId).toBe('msg-1')
+    expect(result.store.messagesById['msg-1'].status).toBe('pending')
+    expect(result.store.messagesById['msg-1'].deliveryStatus?.['role-1']).toBe('pending')
+    const promptCalls = harness.tabsSendMessage.mock.calls.filter(call => call[1]?.type === 'TEAM_SEND_PROMPT')
+    expect(promptCalls).toHaveLength(1)
+    expect(promptCalls[0][1].messageId).toBe('msg-1')
+    expect(promptCalls[0][1].content).toContain('请分析')
   })
 
   it('clears chat messages and unbinds role conversations without deleting roles', async () => {

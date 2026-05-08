@@ -1205,6 +1205,18 @@ select:focus {
   text-overflow: ellipsis;
 }
 
+.message-site-jump-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  opacity: 0.72;
+}
+
+.message-site-jump-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
 .mention-shortcut {
   cursor: pointer;
 }

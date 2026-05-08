@@ -700,11 +700,12 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       return { ok: true, retried: true, store: retry.store }
     }
 
+    const timestamp = deps.now()
     const { store } = await mutateStore(store => {
       const chat = requireChat(store, identity.chatId)
       const role = requireRole(store, chat.id, identity.roleId)
       role.status = 'error'
-      role.updatedAt = deps.now()
+      role.updatedAt = timestamp
       if (!promptMessageId || role.lastPromptMessageId === promptMessageId) delete role.lastPromptMessageId
       if (!replyAttemptId || role.replyAttemptId === replyAttemptId) delete role.replyAttemptId
 
@@ -713,6 +714,9 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         if (userMessage?.deliveryStatus?.[role.id]) {
           userMessage.deliveryStatus[role.id] = 'error'
           updateUserMessageDeliveryStatus(userMessage)
+        }
+        if (isUserMessageForRole(userMessage, chat, role)) {
+          upsertFailedAssistantAfterPrompt(store, chat, role, promptMessageId, reason, timestamp, deps.newId)
         }
       }
       chat.status = deps.getChatStatusFromRoles(store, chat)
@@ -1372,6 +1376,62 @@ function findPendingAssistantAfterPrompt(store: OpenTeamStore, chat: GroupChat, 
   return undefined
 }
 
+function findFailedOrPendingAssistantAfterPrompt(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string): AssistantGroupMessage | undefined {
+  const promptIndex = chat.messageIds.indexOf(promptMessageId)
+  if (promptIndex < 0) return undefined
+
+  for (let index = chat.messageIds.length - 1; index > promptIndex; index -= 1) {
+    const message = store.messagesById[chat.messageIds[index]]
+    if (isAssistantMessageForRole(message, chat, role) && (message.status === 'pending' || message.status === 'error')) {
+      const previousPrompt = findPromptBeforeAssistant(store, chat, role, message.id)
+      if (previousPrompt?.id === promptMessageId) return message
+    }
+  }
+  return undefined
+}
+
+function upsertFailedAssistantAfterPrompt(
+  store: OpenTeamStore,
+  chat: GroupChat,
+  role: GroupRole,
+  promptMessageId: string,
+  reason: string,
+  timestamp: number,
+  newId: MessageHandlersDependencies['newId'],
+): AssistantGroupMessage {
+  const content = roleFailureReplyContent(reason)
+  const existingReply = findFailedOrPendingAssistantAfterPrompt(store, chat, role, promptMessageId)
+  if (existingReply) {
+    existingReply.content = content
+    existingReply.contentFormat = 'markdown'
+    existingReply.status = 'error'
+    return existingReply
+  }
+
+  const reply: AssistantGroupMessage = {
+    id: newId('msg'),
+    chatId: chat.id,
+    seq: chat.nextMessageSeq,
+    type: 'assistant',
+    content,
+    contentFormat: 'markdown',
+    roleId: role.id,
+    roleName: role.name,
+    createdAt: timestamp,
+    status: 'error',
+  }
+  store.messagesById[reply.id] = reply
+  chat.messageIds.push(reply.id)
+  chat.nextMessageSeq += 1
+  markChatHasNewMessage(store, chat)
+  return reply
+}
+
+function roleFailureReplyContent(reason: string): string {
+  if (/超时|timeout/i.test(reason)) return '回复超时了。\n\n可以点击下方的重新回复按钮再试一次。'
+  return `回复失败：${reason}\n\n可以点击下方的重新回复按钮再试一次。`
+}
+
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
 }
@@ -1550,7 +1610,7 @@ function resolveRetryTarget(
   const requestedMessage = store.messagesById[requestedMessageId]
   if (isUserMessageForRole(requestedMessage, chat, role)) return { userMessage: requestedMessage }
 
-  if (isExternalModelRole(role) && isAssistantMessageForRole(requestedMessage, chat, role)) {
+  if (isAssistantMessageForRole(requestedMessage, chat, role) && (isExternalModelRole(role) || requestedMessage.status === 'error')) {
     const userMessage = findPromptBeforeAssistant(store, chat, role, requestedMessage.id)
     return userMessage ? { userMessage, discardMessageId: requestedMessage.id } : undefined
   }
