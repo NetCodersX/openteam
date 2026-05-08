@@ -1,4 +1,4 @@
-import type { GroupChat, GroupRole, OpenTeamStore, OrchestrationFlow, OrchestrationRun, OrchestrationStageRun } from '../group/types'
+import type { ChatSite, ExternalModelConfig, GroupChat, GroupRole, OpenTeamStore, OrchestrationFlow, OrchestrationRun, OrchestrationStage, OrchestrationStageRun } from '../group/types'
 
 export interface OrchestrationStatusViewDependencies {
   getStore(): OpenTeamStore
@@ -67,15 +67,16 @@ export function createOrchestrationStatusView(deps: OrchestrationStatusViewDepen
     const step = current ? current.stageIndex + 1 : Math.min(run.stageRuns.length, stageCount)
     if (run.status === 'running') return `编排运行中 · 第 ${run.currentRound} 轮 · 第 ${Math.max(1, step)} 步 / 共 ${stageCount} 步`
     if (run.status === 'pending') return `编排等待中 · 第 ${run.currentRound} 轮 · 第 ${Math.max(1, step)} 步 / 共 ${stageCount} 步`
-    return `${STATUS_LABELS[run.status]} · 第 ${run.currentRound} 轮 · ${run.stageRuns.length} / ${stageCount} 步`
+    return `${STATUS_LABELS[run.status]} · 第 ${run.currentRound} 轮 · 第 ${Math.max(1, step)} 步 / 共 ${stageCount} 步`
   }
 
   function currentRoleText(current: OrchestrationStageRun | undefined): string | undefined {
     if (!current) return undefined
-    const rolesById = new Map(deps.getCurrentRoles().map(role => [role.id, role.name]))
+    const store = deps.getStore()
+    const rolesById = new Map(deps.getCurrentRoles().map(role => [role.id, role]))
     const running = Object.values(current.roleRuns)
       .filter(roleRun => roleRun.status === 'running')
-      .map(roleRun => rolesById.get(roleRun.roleId) ?? roleRun.roleId)
+      .map(roleRun => roleStatusLabel(rolesById.get(roleRun.roleId), roleRun.roleId, store))
     if (running.length > 0) return running.join('、')
     if (current.status === 'running') return current.kind === 'review' ? '复核中' : '节点执行中'
     if (current.status === 'error') return current.kind === 'review' ? '复核失败' : '节点失败'
@@ -86,7 +87,9 @@ export function createOrchestrationStatusView(deps: OrchestrationStatusViewDepen
     if (run.status !== 'running' && run.status !== 'pending') return undefined
     const current = currentStageRun(run)
     const nextIndex = current ? current.stageIndex + 1 : run.stageRuns.length
-    const waiting = flow.stages.slice(nextIndex).map(stage => stage.name)
+    const store = deps.getStore()
+    const rolesById = new Map(deps.getCurrentRoles().map(role => [role.id, role]))
+    const waiting = flow.stages.slice(nextIndex).map(stage => stageStatusLabel(stage, rolesById, store))
     return waiting.length > 0 ? waiting.join('、') : undefined
   }
 
@@ -153,4 +156,33 @@ function currentStageName(flow: OrchestrationFlow, current: OrchestrationStageRu
 
 function currentStageRun(run: OrchestrationRun): OrchestrationStageRun | undefined {
   return [...run.stageRuns].reverse().find(stageRun => stageRun.status === 'running' || stageRun.status === 'error') ?? run.stageRuns[run.stageRuns.length - 1]
+}
+
+function stageStatusLabel(stage: OrchestrationStage, rolesById: Map<string, GroupRole>, store: OpenTeamStore): string {
+  const roleIds = stage.kind === 'review' ? stage.review?.reviewerRoleIds ?? stage.roleIds : stage.roleIds
+  const roleLabels = roleIds.map(roleId => roleStatusLabel(rolesById.get(roleId), roleId, store))
+  return roleLabels.length > 0 ? roleLabels.join('、') : stage.name
+}
+
+function roleStatusLabel(role: GroupRole | undefined, fallbackId: string, store: OpenTeamStore): string {
+  if (!role) return fallbackId
+  return `${role.name}（${roleModelLabel(role, store)}）`
+}
+
+function roleModelLabel(role: Pick<GroupRole, 'modelSource' | 'externalModelId' | 'chatSite'>, store: OpenTeamStore): string {
+  if (role.modelSource === 'external' && role.externalModelId) return externalModelLabel(store.settings.externalModelsById[role.externalModelId])
+  return siteLabel(role.chatSite ?? store.settings.defaultChatSite)
+}
+
+function externalModelLabel(model: ExternalModelConfig | undefined): string {
+  return model?.name ?? 'API'
+}
+
+function siteLabel(site: ChatSite): string {
+  if (site === 'chatgpt') return 'ChatGPT'
+  if (site === 'claude') return 'Claude'
+  if (site === 'deepseek') return 'DeepSeek'
+  if (site === 'kimi') return 'Kimi'
+  if (site === 'qwen') return '千问'
+  return 'Gemini'
 }

@@ -1227,12 +1227,16 @@ select:focus {
 
 .orchestration-status {
   display: grid;
+  position: sticky;
+  top: 0;
+  z-index: 8;
   gap: 9px;
   border: 1px solid rgba(87, 216, 221, 0.24);
   border-radius: 12px;
   padding: 12px 14px;
-  background: rgba(8, 19, 29, 0.78);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  background: rgba(7, 17, 27, 0.94);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(16px);
 }
 
 .orchestration-status-header,
@@ -1291,10 +1295,14 @@ select:focus {
 
 .orchestration-message-label {
   padding: 7px 12px 0;
-  color: #8ff5ed;
+  color: #9fd6df;
   font-size: 11px;
   font-weight: 780;
   line-height: 1.35;
+}
+
+.message-row.user .orchestration-message-label {
+  color: rgba(4, 46, 35, 0.72);
 }
 
 .message-system-pill .orchestration-message-label {

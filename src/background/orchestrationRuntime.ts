@@ -16,7 +16,7 @@ import {
 import type { ExternalModelClient } from './externalModelClient'
 import type { PromptDelivery, PromptSender } from './promptDelivery'
 import { DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS, sendPromptDeliveryWithRetry } from './promptDeliveryRetry'
-import { prepareRolePromptDelivery, type ExternalPromptDelivery } from './rolePromptDelivery'
+import { isExternalModelRole, prepareRolePromptDelivery, type ExternalPromptDelivery } from './rolePromptDelivery'
 import type { RuntimeFrameRegistry } from './runtimeFrames'
 import { getChatMessages, getChatRoles, mutateStore, requireChat, requireRole } from './storeAccess'
 
@@ -40,9 +40,19 @@ interface StartStageResult {
   store: OpenTeamStore
   deliveries: PromptDelivery[]
   externalDeliveries: ExternalPromptDelivery[]
+  retry?: StartStagePreparationRetry
 }
 
 type NextStageDecision = { next: true; runId: string; stageIndices: number[] } | { next: false }
+
+interface StartStagePreparationRetry {
+  chatId: string
+  roleId: string
+  roleName: string
+  delayMs: number
+  retryCount: number
+  reason: string
+}
 
 export async function startOrchestrationRun(deps: OrchestrationRuntimeDependencies, input: { chatId: string; flowId: string; task: string; maxRounds?: number }): Promise<{ store: OpenTeamStore; run: OrchestrationRun }> {
   const timestamp = deps.now()
@@ -293,8 +303,9 @@ async function startStages(deps: OrchestrationRuntimeDependencies, runId: string
   }
 }
 
-async function startStage(deps: OrchestrationRuntimeDependencies, runId: string, stageIndex: number): Promise<StartStageResult> {
+async function startStage(deps: OrchestrationRuntimeDependencies, runId: string, stageIndex: number, preparationAttempt = 0): Promise<StartStageResult> {
   const timestamp = deps.now()
+  const preparationRetryDelayMs = preparationRetryDelay(deps, preparationAttempt)
   const prepared = await mutateStore(store => {
     const run = store.orchestrationRunsById[runId]
     if (!run || (run.status !== 'pending' && run.status !== 'running')) return { deliveries: [], externalDeliveries: [] }
@@ -309,8 +320,22 @@ async function startStage(deps: OrchestrationRuntimeDependencies, runId: string,
 
     const taskMessage = getRunTaskMessage(store, chat, run)
     if (!taskMessage) throw new Error('找不到编排任务消息')
+    const targetRoleIds = targetRoleIdsForStage(stage)
+    const frameBlocker = preparationRetryDelayMs === undefined ? undefined : findLocalRoleFrameBlocker(store, chat, targetRoleIds, deps)
+    if (frameBlocker && preparationRetryDelayMs !== undefined) {
+      return {
+        deliveries: [],
+        externalDeliveries: [],
+        retry: {
+          ...frameBlocker,
+          chatId: chat.id,
+          delayMs: preparationRetryDelayMs,
+          retryCount: preparationAttempt + 1,
+        },
+      }
+    }
+
     const promptMessage = createStagePromptMessage(deps, chat, run, stage, stageIndex, taskMessage.content, timestamp)
-    const targetRoleIds = stage.kind === 'review' ? [firstReviewerRoleId(stage)] : stage.roleIds
     promptMessage.targetRoleIds = targetRoleIds
     promptMessage.mentionedRoleIds = targetRoleIds
     promptMessage.mentionsAll = false
@@ -378,6 +403,21 @@ async function startStage(deps: OrchestrationRuntimeDependencies, runId: string,
     }
     return { deliveries, externalDeliveries }
   })
+
+  if (prepared.result.retry) {
+    deps.log.warn('orchestration-stage:preparation-retry-scheduled', {
+      chatId: prepared.result.retry.chatId,
+      roleId: prepared.result.retry.roleId,
+      roleName: prepared.result.retry.roleName,
+      runId,
+      stageIndex,
+      retryCount: prepared.result.retry.retryCount,
+      delayMs: prepared.result.retry.delayMs,
+      reason: prepared.result.retry.reason,
+    })
+    await waitForStagePreparationRetry(deps, prepared.result.retry.delayMs)
+    return startStage(deps, runId, stageIndex, preparationAttempt + 1)
+  }
 
   await deps.broadcastStoreUpdated(prepared.store)
   await Promise.all(prepared.result.deliveries.map(delivery => sendPromptDeliveryWithRetry({
@@ -535,6 +575,41 @@ function validateExecutableFlow(store: OpenTeamStore, chat: GroupChat, flow: Orc
     const roleIds = stage.kind === 'review' ? stage.review?.reviewerRoleIds ?? [] : stage.roleIds
     for (const roleId of roleIds) requireRole(store, chat.id, roleId)
   }
+}
+
+function targetRoleIdsForStage(stage: OrchestrationStage): string[] {
+  return stage.kind === 'review' ? [firstReviewerRoleId(stage)] : stage.roleIds
+}
+
+function findLocalRoleFrameBlocker(
+  store: OpenTeamStore,
+  chat: GroupChat,
+  roleIds: string[],
+  deps: Pick<OrchestrationRuntimeDependencies, 'runtimeFrames'>,
+): Pick<StartStagePreparationRetry, 'roleId' | 'roleName' | 'reason'> | undefined {
+  for (const roleId of roleIds) {
+    const role = requireRole(store, chat.id, roleId)
+    if (isExternalModelRole(role)) continue
+    const binding = deps.runtimeFrames.getByRole(chat.id, role.id)
+    if (!binding?.ready) {
+      return { roleId: role.id, roleName: role.name, reason: '人员 iframe 尚未就绪，请先恢复人员' }
+    }
+  }
+  return undefined
+}
+
+function preparationRetryDelay(deps: Pick<OrchestrationRuntimeDependencies, 'deliveryRetryDelaysMs'>, attempt: number): number | undefined {
+  const delays = deps.deliveryRetryDelaysMs ?? DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS
+  return attempt < delays.length ? delays[attempt] : undefined
+}
+
+async function waitForStagePreparationRetry(deps: Pick<OrchestrationRuntimeDependencies, 'waitForRetry'>, delayMs: number): Promise<void> {
+  if (delayMs <= 0) return
+  if (deps.waitForRetry) {
+    await deps.waitForRetry(delayMs)
+    return
+  }
+  await new Promise<void>(resolve => setTimeout(resolve, delayMs))
 }
 
 function normalizeMaxRounds(value: number | undefined): number {

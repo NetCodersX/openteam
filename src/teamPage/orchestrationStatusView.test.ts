@@ -23,8 +23,8 @@ function baseFixture(status: OrchestrationRun['status'] = 'running') {
     updatedAt: now,
   }
   const roles: GroupRole[] = [
-    { id: 'role-1', chatId: chat.id, name: '产品', status: 'thinking', contextCursor: 0, createdAt: now, updatedAt: now },
-    { id: 'role-2', chatId: chat.id, name: '工程', status: 'ready', contextCursor: 0, createdAt: now, updatedAt: now },
+    { id: 'role-1', chatId: chat.id, name: '产品', chatSite: 'chatgpt', status: 'thinking', contextCursor: 0, createdAt: now, updatedAt: now },
+    { id: 'role-2', chatId: chat.id, name: '产品', chatSite: 'deepseek', status: 'ready', contextCursor: 0, createdAt: now, updatedAt: now },
   ]
   const flow: OrchestrationFlow = {
     id: 'flow-1',
@@ -90,8 +90,8 @@ describe('orchestration status view', () => {
     const node = view.renderOrchestrationStatus()
 
     expect(node?.textContent).toContain('编排运行中 · 第 1 轮 · 第 1 步 / 共 3 步')
-    expect(node?.textContent).toContain('产品')
-    expect(node?.textContent).toContain('实现、复核')
+    expect(node?.textContent).toContain('产品（ChatGPT）')
+    expect(node?.textContent).toContain('产品（DeepSeek）、产品（ChatGPT）')
     expect(node?.textContent).not.toContain('阶段')
   })
 
@@ -121,6 +121,37 @@ describe('orchestration status view', () => {
     expect(completedNode?.textContent).toContain('编排已完成')
     expect(stoppedNode?.classList.contains('orchestration-status-stopped')).toBe(true)
     expect(stoppedNode?.textContent).toContain('编排已停止')
+  })
+
+  it('renders terminal run progress from the current node instead of cumulative stage runs', () => {
+    const fixture = baseFixture('error')
+    fixture.run.currentRound = 2
+    fixture.run.stageRuns = [
+      { stageId: 'stage-1', stageIndex: 0, kind: 'roles', round: 1, status: 'completed', roleRuns: {} },
+      { stageId: 'stage-2', stageIndex: 1, kind: 'roles', round: 1, status: 'completed', roleRuns: {} },
+      { stageId: 'stage-3', stageIndex: 2, kind: 'review', round: 1, status: 'completed', roleRuns: {} },
+      { stageId: 'stage-1', stageIndex: 0, kind: 'roles', round: 2, status: 'completed', roleRuns: {} },
+      { stageId: 'stage-2', stageIndex: 1, kind: 'roles', round: 2, status: 'completed', roleRuns: {} },
+      {
+        stageId: 'stage-3',
+        stageIndex: 2,
+        kind: 'review',
+        round: 2,
+        status: 'error',
+        roleRuns: { 'role-1': { roleId: 'role-1', status: 'error', error: '投递失败' } },
+      },
+    ]
+    const node = createOrchestrationStatusView({
+      getStore: () => fixture.store,
+      getCurrentChat: () => fixture.chat,
+      getCurrentRoles: () => fixture.roles,
+      reconnectRolesForSend: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      showError: vi.fn(),
+    }).renderOrchestrationStatus()
+
+    expect(node?.textContent).toContain('编排出错 · 第 2 轮 · 第 3 步 / 共 3 步')
+    expect(node?.textContent).not.toContain('6 / 3 步')
   })
 
   it('dispatches stop, retry node, skip node, and retry review actions when applicable', async () => {

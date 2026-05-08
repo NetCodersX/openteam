@@ -191,6 +191,8 @@ describe('team.html chat creation UI', () => {
     expect(html).not.toContain('.x6-edge path:nth-child(2)')
     expect(html).toMatch(/\.orchestration-settings\s*{[^}]*overflow:\s*auto;/s)
     expect(html).toMatch(/\.orchestration-json-preview pre\s*{[^}]*max-height:\s*130px;/s)
+    expect(html).toMatch(/\.orchestration-status\s*{[^}]*position:\s*sticky;[^}]*top:\s*0;/s)
+    expect(html).toMatch(/\.message-row\.user \.orchestration-message-label\s*{[^}]*color:/s)
   })
 
   it('promotes people library and external models from settings into the left rail', () => {

@@ -42,6 +42,44 @@ async function setupBackground(initialStore: OpenTeamStore) {
   }
 }
 
+async function setupRuntime(
+  initialStore: OpenTeamStore,
+  overrides: Partial<import('./orchestrationRuntime').OrchestrationRuntimeDependencies> = {},
+) {
+  vi.resetModules()
+  const { STORE_KEY, loadStore } = await import('../group/store')
+  const stored: Record<string, unknown> = { [STORE_KEY]: structuredClone(initialStore) }
+  vi.stubGlobal('chrome', {
+    storage: {
+      local: {
+        get: vi.fn(async (key?: string | string[] | null) => {
+          if (key === null || typeof key === 'undefined') return structuredClone(stored)
+          if (Array.isArray(key)) return Object.fromEntries(key.map(item => [item, structuredClone(stored[item])]))
+          return { [key]: structuredClone(stored[key]) }
+        }),
+        set: vi.fn(async (items: Record<string, unknown>) => Object.assign(stored, structuredClone(items))),
+        remove: vi.fn(async (keys: string | string[]) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]
+        }),
+      },
+    },
+  })
+  const { startOrchestrationRun } = await import('./orchestrationRuntime')
+  const sendPrompt = vi.fn(async (): Promise<void> => undefined)
+  let idSeq = 0
+  const deps: import('./orchestrationRuntime').OrchestrationRuntimeDependencies = {
+    broadcastStoreUpdated: vi.fn(),
+    getChatStatusFromRoles: () => 'ready',
+    log: { info: vi.fn(), warn: vi.fn() },
+    newId: (prefix: string) => `${prefix}-${++idSeq}`,
+    now: () => 1,
+    runtimeFrames: { getByRole: vi.fn(() => undefined) },
+    sendPrompt,
+    ...overrides,
+  }
+  return { deps, getStore: loadStore, sendPrompt, startOrchestrationRun }
+}
+
 describe('orchestration runtime', () => {
   it('runs role stages in order and completes when all parallel roles reply', async () => {
     const store = makeStore(['role-1', 'role-2'])
@@ -111,6 +149,34 @@ describe('orchestration runtime', () => {
     expect(prompt).toContain('用户最新消息：\n当前任务：\n产品经理出需求，工程师判断需求是否合理')
     const stored = await harness.getStore()
     expect(stored.orchestrationRunsById[started.run.id].status).toBe('running')
+  })
+
+  it('retries stage delivery preparation when a local role iframe is temporarily unavailable', async () => {
+    const store = makeStore(['role-1'])
+    store.orchestrationFlowsById['flow-1'] = makeFlow('chat-1', [
+      { id: 'stage-1', kind: 'roles', name: 'Build', roleIds: ['role-1'] },
+    ])
+    let frameReady = false
+    const runtimeFrames = {
+      getByRole: vi.fn(() => frameReady
+        ? { chatId: 'chat-1', roleId: 'role-1', tabId: 101, frameId: 1, ready: true, lastSeenAt: 1 }
+        : undefined),
+    }
+    const waitForRetry = vi.fn(async () => {
+      frameReady = true
+    })
+    const harness = await setupRuntime(store, { runtimeFrames, waitForRetry, deliveryRetryDelaysMs: [1] })
+
+    const started = await harness.startOrchestrationRun(harness.deps, { chatId: 'chat-1', flowId: 'flow-1', task: 'Ship the plan' })
+
+    expect(waitForRetry).toHaveBeenCalledWith(1)
+    expect(harness.sendPrompt).toHaveBeenCalledTimes(1)
+    const finalStore = await harness.getStore()
+    const run = finalStore.orchestrationRunsById[started.run.id]
+    expect(run.status).toBe('running')
+    expect(run.stageRuns).toHaveLength(1)
+    expect(run.stageRuns[0]).toMatchObject({ stageId: 'stage-1', status: 'running' })
+    expect(finalStore.chatsById['chat-1'].messageIds).toHaveLength(2)
   })
 
   it('starts fan-out stages in parallel after their shared source completes', async () => {
