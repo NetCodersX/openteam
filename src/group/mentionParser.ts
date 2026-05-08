@@ -1,4 +1,4 @@
-import type { GroupRole } from './types'
+import type { GroupRole, OpenTeamSettings } from './types'
 
 export type ParsedGroupMention =
   | {
@@ -6,23 +6,33 @@ export type ParsedGroupMention =
       content: string
       targetRoleIds: string[]
       mentionedRoleIds: string[]
+      mentionsAll?: true
     }
   | {
       ok: false
       error: string
     }
 
-export function parseGroupMentions(raw: string, roles: GroupRole[]): ParsedGroupMention {
+export interface RoleMentionLabelOptions {
+  defaultChatSite?: GroupRole['chatSite']
+  externalModelNamesById?: Record<string, string>
+}
+
+export interface ParseGroupMentionsOptions extends RoleMentionLabelOptions {
+  defaultTarget?: 'all' | 'none'
+}
+
+export function parseGroupMentions(raw: string, roles: GroupRole[], options: ParseGroupMentionsOptions = {}): ParsedGroupMention {
   const trimmed = raw.trim()
   if (!trimmed) return { ok: false, error: '消息内容不能为空' }
 
   const allRoleIds = roles.map(role => role.id)
   if (!trimmed.includes('@')) {
-    return { ok: true, content: trimmed, targetRoleIds: allRoleIds, mentionedRoleIds: [] }
+    return { ok: true, content: trimmed, targetRoleIds: defaultTargetRoleIds(allRoleIds, options), mentionedRoleIds: [] }
   }
 
   const mentionTargets = roles.flatMap(role => [
-    { role, label: roleMentionLabel(role) },
+    { role, label: roleMentionLabel(role, options) },
     { role, label: role.name },
   ]).sort((left, right) => right.label.length - left.label.length)
   const targetRoleIds = new Set<string>()
@@ -37,9 +47,10 @@ export function parseGroupMentions(raw: string, roles: GroupRole[]): ParsedGroup
       continue
     }
 
-    if (mentionMatches(trimmed, index, 'all')) {
+    const allMentionLabel = ['all', '所有人'].find(label => mentionMatches(trimmed, index, label))
+    if (allMentionLabel) {
       targetsAll = true
-      index += 4
+      index += allMentionLabel.length + 1
       continue
     }
 
@@ -60,13 +71,29 @@ export function parseGroupMentions(raw: string, roles: GroupRole[]): ParsedGroup
   return {
     ok: true,
     content: parsedContent,
-    targetRoleIds: targetsAll ? allRoleIds : targetRoleIds.size > 0 ? [...targetRoleIds] : allRoleIds,
+    targetRoleIds: targetsAll ? allRoleIds : targetRoleIds.size > 0 ? [...targetRoleIds] : defaultTargetRoleIds(allRoleIds, options),
     mentionedRoleIds: [...targetRoleIds],
+    ...(targetsAll ? { mentionsAll: true as const } : {}),
   }
 }
 
-export function roleMentionLabel(role: GroupRole): string {
-  return `${role.name}（${siteLabel(role.chatSite)}）`
+export function roleMentionLabel(role: GroupRole, options: RoleMentionLabelOptions = {}): string {
+  return `${role.name}（${roleModelLabel(role, options)}）`
+}
+
+export function roleModelLabel(role: GroupRole, options: RoleMentionLabelOptions = {}): string {
+  if (role.modelSource === 'external') {
+    const externalName = role.externalModelId ? options.externalModelNamesById?.[role.externalModelId]?.trim() : undefined
+    return externalName || 'API'
+  }
+  return siteLabel(role.chatSite ?? options.defaultChatSite)
+}
+
+export function roleMentionLabelOptionsFromSettings(settings: Pick<OpenTeamSettings, 'defaultChatSite' | 'externalModelsById'>): RoleMentionLabelOptions {
+  return {
+    defaultChatSite: settings.defaultChatSite,
+    externalModelNamesById: Object.fromEntries(Object.entries(settings.externalModelsById).map(([modelId, model]) => [modelId, model.name])),
+  }
 }
 
 function siteLabel(site: GroupRole['chatSite']): string {
@@ -82,6 +109,10 @@ function mentionMatches(raw: string, atIndex: number, target: string): boolean {
   if (!raw.startsWith(`@${target}`, atIndex)) return false
   const next = raw[atIndex + target.length + 1]
   return next === undefined || /\s|[，。！？,.!?;；:：]/.test(next)
+}
+
+function defaultTargetRoleIds(allRoleIds: string[], options: ParseGroupMentionsOptions): string[] {
+  return options.defaultTarget === 'none' ? [] : allRoleIds
 }
 
 function compactContent(raw: string): string {

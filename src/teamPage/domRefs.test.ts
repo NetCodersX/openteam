@@ -36,6 +36,18 @@ describe('team page dom refs', () => {
       <button id="settings-button"></button>
       <div id="settings-menu"></div>
       <button id="open-all-notes"></button>
+      <button id="open-external-models"></button>
+      <button id="close-external-models"></button>
+      <div id="external-models-modal"></div>
+      <div id="external-models-list"></div>
+      <form id="external-model-form"></form>
+      <input id="external-model-id" />
+      <input id="external-model-name" />
+      <select id="external-model-format"></select>
+      <input id="external-model-base-url" />
+      <input id="external-model-api-key" />
+      <input id="external-model-model-name" />
+      <button id="reset-external-model-form"></button>
       <button id="close-all-notes"></button>
       <div id="all-notes-modal"></div>
       <div id="all-notes-list"></div>
@@ -57,6 +69,7 @@ describe('team page dom refs', () => {
       <div id="temporary-person-modal"></div>
       <aside id="notes-panel"></aside>
       <div id="notes-drag-handle"></div>
+      <button id="notes-resize-handle"></button>
       <button id="toggle-notes-panel"></button>
       <button id="close-notes-panel"></button>
       <button id="global-note-tab"></button>
@@ -99,6 +112,9 @@ describe('team page dom refs', () => {
       <input id="template-site-deepseek" />
       <input id="template-site-qwen" />
       <input id="template-site-kimi" />
+      <input id="template-site-external" />
+      <div id="template-external-model-field"></div>
+      <select id="template-external-model-select"></select>
       <div id="template-chatgpt-gpts-field"></div>
       <input id="template-chatgpt-gpts-url" />
       <input id="temporary-person-name" />
@@ -107,6 +123,7 @@ describe('team page dom refs', () => {
       <button id="toggle-people-drawer"></button>
       <aside class="role-panel"></aside>
       <button id="window-launcher"></button>
+      <button id="window-resize-handle"></button>
     `
 
     const { createTeamPageDomRefs, requireElement } = await import('./domRefs')
@@ -114,6 +131,7 @@ describe('team page dom refs', () => {
 
     expect(refs.appShellEl.id).toBe('app')
     expect(refs.toggleFullscreenEl.id).toBe('toggle-fullscreen')
+    expect(refs.windowResizeHandleEl.id).toBe('window-resize-handle')
     expect(refs.messageInputEl.tagName).toBe('TEXTAREA')
     expect(refs.rolePanelEl.className).toBe('role-panel')
     expect(() => requireElement('#missing')).toThrow('Missing element: #missing')

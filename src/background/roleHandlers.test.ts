@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_CUSTOM_ROLE_TEMPLATES } from '../group/defaultCustomRoleTemplates'
 import { createDefaultStore } from '../group/store'
 import type { OpenTeamStore } from '../group/types'
+
+const defaultCustomTemplateIds = DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id)
 
 describe('background role handlers', () => {
   it('exposes template and role routes and creates a role template through injected dependencies', async () => {
@@ -63,9 +66,167 @@ describe('background role handlers', () => {
         defaultChatSite: 'chatgpt',
       },
     })
-    expect(draftStore?.roleTemplateOrder).toEqual(['template-1'])
+    expect(draftStore?.roleTemplateOrder).toEqual([...defaultCustomTemplateIds, 'template-1'])
     expect(broadcastStoreUpdated).toHaveBeenCalledWith(expect.objectContaining({
       roleTemplatesById: expect.objectContaining({ 'template-1': expect.any(Object) }),
     }))
+  })
+
+  it('closes the removed person frame without deleting historical messages', async () => {
+    vi.resetModules()
+    const startingStore = createDefaultStore()
+    startingStore.chatsById['chat-1'] = {
+      id: 'chat-1',
+      name: '方案讨论',
+      mode: 'independent',
+      roleIds: ['role-1'],
+      messageIds: ['msg-1'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    startingStore.rolesById['role-1'] = {
+      id: 'role-1',
+      chatId: 'chat-1',
+      name: '工程师',
+      status: 'ready',
+      contextCursor: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    startingStore.messagesById['msg-1'] = {
+      id: 'msg-1',
+      chatId: 'chat-1',
+      seq: 1,
+      type: 'assistant',
+      content: '历史观点',
+      roleId: 'role-1',
+      roleName: '工程师',
+      createdAt: 1,
+      status: 'received',
+    }
+    vi.doMock('./storeAccess', async importOriginal => {
+      const actual = await importOriginal<typeof import('./storeAccess')>()
+      return {
+        ...actual,
+        mutateStore: vi.fn(async (mutator: (store: OpenTeamStore) => unknown) => {
+          const store = structuredClone(startingStore)
+          const result = await mutator(store)
+          return { store, result }
+        }),
+      }
+    })
+
+    const removeRole = vi.fn()
+    const broadcastStoreUpdated = vi.fn()
+    const { createRoleHandlers } = await import('./roleHandlers')
+    const routes = createRoleHandlers({
+      broadcastStoreUpdated,
+      log: { info: vi.fn(), warn: vi.fn() },
+      newId: vi.fn((prefix: string) => `${prefix}-1`),
+      now: vi.fn(() => 100),
+      runtimeFrames: {
+        getByRole: vi.fn(),
+        removeRole,
+      },
+      sendPrompt: vi.fn(),
+    })
+
+    const deleteRoute = routes.find(route => route.type === 'GROUP_ROLE_DELETE')
+    const response = await deleteRoute?.handler({ type: 'GROUP_ROLE_DELETE', roleId: 'role-1' }, {}) as { store?: OpenTeamStore } | undefined
+
+    expect(removeRole).toHaveBeenCalledWith('chat-1', 'role-1')
+    expect(response?.store?.chatsById['chat-1'].roleIds).toEqual([])
+    expect(response?.store?.messagesById['msg-1']).toMatchObject({
+      roleId: 'role-1',
+      roleName: '工程师',
+      content: '历史观点',
+    })
+    expect(broadcastStoreUpdated).toHaveBeenCalledWith(expect.objectContaining({
+      messagesById: expect.objectContaining({ 'msg-1': expect.any(Object) }),
+    }))
+  })
+
+  it('creates a role template and group role that target an external model', async () => {
+    vi.resetModules()
+    const startingStore = createDefaultStore()
+    startingStore.settings.externalModelOrder = ['model-1']
+    startingStore.settings.externalModelsById = {
+      'model-1': {
+        id: 'model-1',
+        name: '本地 Qwen',
+        format: 'openai',
+        baseUrl: 'https://api.example.test/v1',
+        apiKey: 'sk-test',
+        modelName: 'qwen-plus',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }
+    startingStore.chatsById['chat-1'] = {
+      id: 'chat-1',
+      name: '方案讨论',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: [],
+      nextMessageSeq: 1,
+      status: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+
+    vi.doMock('./storeAccess', async importOriginal => {
+      const actual = await importOriginal<typeof import('./storeAccess')>()
+      return {
+        ...actual,
+        mutateStore: vi.fn(async (mutator: (store: OpenTeamStore) => unknown) => {
+          const result = await mutator(startingStore)
+          return { store: startingStore, result }
+        }),
+      }
+    })
+
+    const { createRoleHandlers } = await import('./roleHandlers')
+    const routes = createRoleHandlers({
+      broadcastStoreUpdated: vi.fn(),
+      log: { info: vi.fn(), warn: vi.fn() },
+      newId: vi.fn((prefix: string) => `${prefix}-1`),
+      now: vi.fn(() => 100),
+      runtimeFrames: {
+        getByRole: vi.fn(),
+        removeRole: vi.fn(),
+      },
+      sendPrompt: vi.fn(),
+    })
+
+    const createTemplateRoute = routes.find(route => route.type === 'ROLE_TEMPLATE_CREATE')!
+    await createTemplateRoute.handler({
+      type: 'ROLE_TEMPLATE_CREATE',
+      name: '工程师',
+      systemPrompt: '从工程角度分析',
+      defaultModelSource: 'external',
+      defaultExternalModelId: 'model-1',
+    }, {})
+
+    expect(startingStore.roleTemplatesById['template-1']).toMatchObject({
+      defaultModelSource: 'external',
+      defaultExternalModelId: 'model-1',
+    })
+
+    const createRoleRoute = routes.find(route => route.type === 'GROUP_ROLE_CREATE')!
+    const response = await createRoleRoute.handler({
+      type: 'GROUP_ROLE_CREATE',
+      chatId: 'chat-1',
+      roleTemplateId: 'template-1',
+    }, {})
+
+    expect(response).toMatchObject({
+      ok: true,
+      role: {
+        modelSource: 'external',
+        externalModelId: 'model-1',
+      },
+    })
   })
 })

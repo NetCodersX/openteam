@@ -3,7 +3,7 @@ import type { GroupChat, GroupMessage, GroupRole } from '../group/types'
 export const THINKING_TIMEOUT_MS = 120_000
 const MESSAGE_TIME_GAP_MS = 5 * 60_000
 
-export type KeyboardShortcutEvent = Pick<KeyboardEvent, 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>
+export type KeyboardShortcutEvent = Pick<KeyboardEvent, 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'> & Partial<Pick<KeyboardEvent, 'isComposing'>>
 
 interface GraphemeSegment {
   segment: string
@@ -32,11 +32,11 @@ export function getAvatarInitial(name: string | undefined, fallback = 'AI'): str
 }
 
 export function shouldConfirmMentionWithEnter(event: KeyboardShortcutEvent): boolean {
-  return event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey
+  return event.key === 'Enter' && !event.isComposing && !event.shiftKey && !event.metaKey && !event.ctrlKey
 }
 
 export function shouldSendMessageWithEnter(event: KeyboardShortcutEvent): boolean {
-  return event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey
+  return event.key === 'Enter' && !event.isComposing && !event.shiftKey && !event.metaKey && !event.ctrlKey
 }
 
 export function isThinkingBubbleVisible(role: Pick<GroupRole, 'status' | 'updatedAt'>, now = Date.now()): boolean {
@@ -51,7 +51,8 @@ export function getStoppedReplyRoles(roles: GroupRole[]): GroupRole[] {
   return roles.filter(role => role.status === 'stopped' && Boolean(role.lastPromptMessageId))
 }
 
-export function shouldAutoReconnectRole(role: Pick<GroupRole, 'status' | 'updatedAt'>, now = Date.now()): boolean {
+export function shouldAutoReconnectRole(role: Pick<GroupRole, 'modelSource' | 'status' | 'updatedAt'>, now = Date.now()): boolean {
+  if (role.modelSource === 'external') return false
   if (role.status === 'ready') return false
   if (role.status === 'stopped') return false
   if (role.status !== 'thinking') return true

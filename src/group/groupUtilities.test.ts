@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { extractGeminiConversationId, extractSupportedConversationId, getSafeGeminiUrl, getSafeSupportedChatUrl, isSafeGeminiUrl, isSafeSupportedChatUrl, normalizeChatGptGptsUrl } from './conversationUrl'
 import { buildUnsyncedContext, getContextCursorAfterAck, getUnsyncedMessagesForRole } from './contextSync'
-import { parseGroupMentions } from './mentionParser'
+import { parseGroupMentions, roleMentionLabel } from './mentionParser'
 import { buildInitPrompt, buildPrompt } from './promptBuilder'
-import { createGroupRole, createGroupRolesBatch, createRoleTemplate, deleteRoleTemplate, getAllRoleTemplates, getRoleTemplateById, updateGroupRole, updateRoleTemplate, validateRoleName } from './roleTemplates'
+import { createGroupRole, createGroupRolesBatch, createRoleTemplate, deleteGroupRole, deleteRoleTemplate, getAllRoleTemplates, getRoleTemplateById, updateGroupRole, updateRoleTemplate, validateRoleName } from './roleTemplates'
 import { createDefaultStore } from './store'
+import { DEFAULT_CUSTOM_ROLE_TEMPLATES } from './defaultCustomRoleTemplates'
 import type { GroupChat, GroupMessage, GroupRole } from './types'
+
+const defaultCustomTemplateIds = DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id)
 
 describe('role template utilities', () => {
   it('combines built-in and custom role templates for selection', () => {
@@ -47,7 +50,7 @@ describe('role template utilities', () => {
     expect(store.chatsById['chat-1'].roleIds).toEqual(['role-1'])
 
     expect(() => deleteRoleTemplate(store, 'template-1')).toThrow('该人员库人员已被群聊使用，不能删除')
-    expect(store.roleTemplateOrder).toEqual(['template-1'])
+    expect(store.roleTemplateOrder).toEqual([...defaultCustomTemplateIds, 'template-1'])
     expect(store.rolesById['role-1']).toBe(role)
   })
 
@@ -57,7 +60,7 @@ describe('role template utilities', () => {
 
     deleteRoleTemplate(store, 'template-1')
 
-    expect(store.roleTemplateOrder).toEqual([])
+    expect(store.roleTemplateOrder).toEqual(defaultCustomTemplateIds)
     expect(store.roleTemplatesById['template-1']).toBeUndefined()
   })
 
@@ -130,8 +133,8 @@ describe('role template utilities', () => {
     expect(roles[0]).toMatchObject({ templateId: 'template-1', name: '工程师', systemPrompt: '从工程角度分析', chatSite: 'claude' })
     expect(roles[1]).toMatchObject({ name: '法务', systemPrompt: '从法务角度分析', chatSite: 'gemini' })
     expect(roles[1].templateId).toBeUndefined()
-    expect(store.roleTemplateOrder).toEqual(['template-1'])
-    expect(Object.keys(store.roleTemplatesById)).toEqual(['template-1'])
+    expect(store.roleTemplateOrder).toEqual([...defaultCustomTemplateIds, 'template-1'])
+    expect(Object.keys(store.roleTemplatesById)).toEqual([...defaultCustomTemplateIds, 'template-1'])
   })
 
   it('creates group roles from built-in templates without storing them as custom templates', () => {
@@ -149,8 +152,8 @@ describe('role template utilities', () => {
       chatSite: 'claude',
       systemPrompt: expect.stringContaining('弗兰克尔式意义顾问'),
     })
-    expect(store.roleTemplateOrder).toEqual([])
-    expect(store.roleTemplatesById).toEqual({})
+    expect(store.roleTemplateOrder).toEqual(defaultCustomTemplateIds)
+    expect(store.roleTemplatesById).toEqual(Object.fromEntries(DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => [template.id, template])))
   })
 
   it('prevents direct built-in template edits and deletes', () => {
@@ -158,6 +161,19 @@ describe('role template utilities', () => {
 
     expect(() => updateRoleTemplate(store, 'builtin-frankl', { name: '意义顾问', systemPrompt: '改写' }, 1)).toThrow('系统内置人员不能编辑')
     expect(() => deleteRoleTemplate(store, 'builtin-frankl')).toThrow('系统内置人员不能删除')
+  })
+
+  it('allows default custom templates to be edited like ordinary custom people', () => {
+    const store = createDefaultStore()
+
+    const updated = updateRoleTemplate(store, defaultCustomTemplateIds[0], { name: '产品参谋', systemPrompt: '从产品角度给建议' }, 1)
+
+    expect(updated).toMatchObject({
+      id: defaultCustomTemplateIds[0],
+      type: 'custom',
+      name: '产品参谋',
+      systemPrompt: '从产品角度给建议',
+    })
   })
 
   it('allows the same library person on different chat sites in one chat', () => {
@@ -234,9 +250,36 @@ describe('role template utilities', () => {
     expect(role.status).toBe('pending')
   })
 
+  it('removes a group person while keeping historical messages', () => {
+    const store = createDefaultStore()
+    const chat = makeChat('chat-1')
+    chat.roleIds = ['role-1']
+    chat.messageIds = ['msg-1']
+    chat.nextMessageSeq = 2
+    store.chatsById[chat.id] = chat
+    store.rolesById['role-1'] = makeRole('role-1', '工程师')
+    store.messagesById['msg-1'] = {
+      ...makeMessage('msg-1', 1, 'assistant', '历史观点'),
+      roleId: 'role-1',
+      roleName: '工程师',
+    }
+
+    deleteGroupRole(store, 'role-1', 2)
+
+    expect(chat.roleIds).toEqual([])
+    expect(store.rolesById['role-1']).toBeUndefined()
+    expect(chat.messageIds).toEqual(['msg-1'])
+    expect(store.messagesById['msg-1']).toMatchObject({
+      roleId: 'role-1',
+      roleName: '工程师',
+      content: '历史观点',
+    })
+  })
+
   it('validates role names', () => {
     expect(validateRoleName('')).toBe('人员名称不能为空')
-    expect(validateRoleName('超过十个字符的人员名称')).toBe('人员名称不能超过 10 个字')
+    expect(validateRoleName('研'.repeat(50))).toBeUndefined()
+    expect(validateRoleName('研'.repeat(51))).toBe('人员名称不能超过 50 个字')
     expect(validateRoleName('A B')).toBe('人员名称不能包含空白字符')
     expect(validateRoleName('@A')).toBe('人员名称不能包含 @')
     expect(validateRoleName('all')).toBe('人员名称不能是 all')
@@ -248,12 +291,19 @@ describe('role template utilities', () => {
 describe('mention parser', () => {
   const roles = [makeRole('role-product', '产品'), makeRole('role-pm', '产品经理'), makeRole('role-eng', '工程师')]
 
-  it('routes no-mention messages to all roles', () => {
-    expect(parseGroupMentions('分析这个方案', roles)).toEqual({
+  it('can keep no-mention messages as chat records without notifying roles', () => {
+    expect(parseGroupMentions('分析这个方案', roles, { defaultTarget: 'none' })).toEqual({
       ok: true,
       content: '分析这个方案',
-      targetRoleIds: ['role-product', 'role-pm', 'role-eng'],
+      targetRoleIds: [],
       mentionedRoleIds: [],
+    })
+  })
+
+  it('keeps the legacy all-role default when no target option is supplied', () => {
+    expect(parseGroupMentions('分析这个方案', roles)).toMatchObject({
+      ok: true,
+      targetRoleIds: ['role-product', 'role-pm', 'role-eng'],
     })
   })
 
@@ -266,18 +316,26 @@ describe('mention parser', () => {
     })
   })
 
-  it('routes multiple mentions and @all', () => {
+  it('routes multiple mentions, @all, and @所有人', () => {
     expect(parseGroupMentions('@工程师 @产品经理 评估风险', roles)).toEqual({
       ok: true,
       content: '评估风险',
       targetRoleIds: ['role-eng', 'role-pm'],
       mentionedRoleIds: ['role-eng', 'role-pm'],
     })
-    expect(parseGroupMentions('@all @工程师 评估风险', roles)).toEqual({
+    expect(parseGroupMentions('@all @工程师 评估风险', roles)).toMatchObject({
       ok: true,
       content: '评估风险',
       targetRoleIds: ['role-product', 'role-pm', 'role-eng'],
       mentionedRoleIds: ['role-eng'],
+      mentionsAll: true,
+    })
+    expect(parseGroupMentions('@所有人 评估风险', roles, { defaultTarget: 'none' })).toMatchObject({
+      ok: true,
+      content: '评估风险',
+      targetRoleIds: ['role-product', 'role-pm', 'role-eng'],
+      mentionedRoleIds: [],
+      mentionsAll: true,
     })
   })
 
@@ -292,6 +350,24 @@ describe('mention parser', () => {
       content: '看一下',
       targetRoleIds: ['role-claude'],
       mentionedRoleIds: ['role-claude'],
+    })
+  })
+
+  it('routes external model roles by their configured model-qualified mention label', () => {
+    const role: GroupRole = {
+      ...makeRole('role-api', '弗兰克尔'),
+      modelSource: 'external',
+      externalModelId: 'model-1',
+      chatSite: undefined,
+    }
+    const options = { externalModelNamesById: { 'model-1': 'OpenRouter Claude' } }
+
+    expect(roleMentionLabel(role, options)).toBe('弗兰克尔（OpenRouter Claude）')
+    expect(parseGroupMentions('@弗兰克尔（OpenRouter Claude） 你能做什么', [role], options)).toEqual({
+      ok: true,
+      content: '你能做什么',
+      targetRoleIds: ['role-api'],
+      mentionedRoleIds: ['role-api'],
     })
   })
 

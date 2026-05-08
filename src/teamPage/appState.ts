@@ -1,7 +1,7 @@
 import type { ChatSite, MessageReference, OpenTeamStore, RoleTemplate } from '../group/types'
 import { createDefaultStore } from '../group/store'
 
-export type CachedMessageNode = { signature: string; node: HTMLElement }
+export type CachedMessageNode = { signature: string; node: HTMLElement; streamingSignature?: string }
 export type TemporaryPersonDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt'> & { id: string; chatSite: ChatSite }
 
 export interface RoleReadyWaiter {
@@ -24,6 +24,7 @@ export interface TeamPageState {
   peopleDrawerOpen: boolean
   chatMenuChatId?: string
   roleSiteMenuRoleId?: string
+  roleActionMenuRoleId?: string
   addPersonSiteMenuId?: string
   notesPanelOpen: boolean
   activeNoteScope: 'global' | 'chat'
@@ -41,7 +42,8 @@ export interface TeamPageState {
   reconnectingRoleKeys: Set<string>
   roleReadyWaiters: Set<RoleReadyWaiter>
   temporaryPersonDrafts: TemporaryPersonDraft[]
-  addPersonSiteByKey: Map<string, Set<ChatSite>>
+  addPersonSiteByKey: Map<string, Set<string>>
+  addPersonSelectedKeys: Set<string>
 }
 
 export function createTeamPageState(): TeamPageState {
@@ -56,13 +58,23 @@ export function createTeamPageState(): TeamPageState {
     reconnectingRoleKeys: new Set<string>(),
     roleReadyWaiters: new Set<RoleReadyWaiter>(),
     temporaryPersonDrafts: [],
-    addPersonSiteByKey: new Map<string, Set<ChatSite>>(),
+    addPersonSiteByKey: new Map<string, Set<string>>(),
+    addPersonSelectedKeys: new Set<string>(),
     peopleLibraryPage: 0,
-    peopleLibraryTemplateType: 'builtin',
+    peopleLibraryTemplateType: 'custom',
     peopleLibrarySearchQuery: '',
-    addPersonTemplateType: 'builtin',
+    addPersonTemplateType: 'custom',
     addPersonSearchQuery: '',
     notesPanelOpen: false,
     activeNoteScope: 'chat',
   }
+}
+
+export function pickSelectedChatId(state: TeamPageState): string | undefined {
+  const store = state.store
+  if (store.currentChatId && store.chatsById[store.currentChatId]) return store.currentChatId
+  if (state.selectedChatId && store.chatsById[state.selectedChatId]) return state.selectedChatId
+  return [...store.chatOrder]
+    .sort((left, right) => (store.chatsById[right]?.updatedAt ?? 0) - (store.chatsById[left]?.updatedAt ?? 0))
+    .find(chatId => Boolean(store.chatsById[chatId]))
 }

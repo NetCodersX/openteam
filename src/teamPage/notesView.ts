@@ -20,6 +20,7 @@ export interface NotesViewDependencies {
   state: TeamPageState
   notesPanelEl: HTMLElement
   notesDragHandleEl: HTMLElement
+  notesResizeHandleEl: HTMLElement
   toggleNotesPanelEl: HTMLButtonElement
   closeNotesPanelEl: HTMLButtonElement
   globalNoteTabEl: HTMLButtonElement
@@ -42,6 +43,8 @@ export interface NotesView {
 
 const EMPTY_NOTE: RichNoteDocument = { type: 'doc', content: [{ type: 'paragraph' }] }
 const FLOATING_PANEL_MARGIN = 12
+const MIN_NOTES_PANEL_WIDTH = 320
+const MIN_NOTES_PANEL_HEIGHT = 360
 
 export function createNotesView(deps: NotesViewDependencies): NotesView {
   const createEditor = deps.createEditor ?? createTiptapNoteEditor
@@ -51,6 +54,7 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
   let loadedChatId: string | undefined
   let saveTimer: number | undefined
   let dragStart: { pointerId: number; startX: number; startY: number; startLeft: number; startTop: number } | undefined
+  let resizeStart: { pointerId: number; startX: number; startY: number; startWidth: number; startHeight: number; startLeft: number; startTop: number } | undefined
 
   function renderNotes(): void {
     const chat = deps.getCurrentChat()
@@ -100,9 +104,13 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
       button.addEventListener('click', () => editor?.runCommand(command))
     }
     deps.notesDragHandleEl.addEventListener('pointerdown', startDragging)
+    deps.notesResizeHandleEl.addEventListener('pointerdown', startResizing)
     window.addEventListener('pointermove', moveDraggingPanel)
+    window.addEventListener('pointermove', resizeFloatingPanel)
     window.addEventListener('pointerup', stopDragging)
+    window.addEventListener('pointerup', stopResizing)
     window.addEventListener('pointercancel', stopDragging)
+    window.addEventListener('pointercancel', stopResizing)
     window.addEventListener('resize', clampFloatingPanelPosition)
   }
 
@@ -126,9 +134,13 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
   function destroy(): void {
     if (saveTimer !== undefined) window.clearTimeout(saveTimer)
     deps.notesDragHandleEl.removeEventListener('pointerdown', startDragging)
+    deps.notesResizeHandleEl.removeEventListener('pointerdown', startResizing)
     window.removeEventListener('pointermove', moveDraggingPanel)
+    window.removeEventListener('pointermove', resizeFloatingPanel)
     window.removeEventListener('pointerup', stopDragging)
+    window.removeEventListener('pointerup', stopResizing)
     window.removeEventListener('pointercancel', stopDragging)
+    window.removeEventListener('pointercancel', stopResizing)
     window.removeEventListener('resize', clampFloatingPanelPosition)
     editor?.destroy()
   }
@@ -170,10 +182,48 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
     if (deps.notesDragHandleEl.hasPointerCapture?.(event.pointerId)) deps.notesDragHandleEl.releasePointerCapture(event.pointerId)
   }
 
+  function startResizing(event: PointerEvent): void {
+    if (event.button !== 0) return
+
+    const rect = deps.notesPanelEl.getBoundingClientRect()
+    deps.notesPanelEl.style.left = `${rect.left}px`
+    deps.notesPanelEl.style.top = `${rect.top}px`
+    deps.notesPanelEl.style.right = 'auto'
+    deps.notesPanelEl.style.bottom = 'auto'
+    deps.notesPanelEl.classList.add('resizing')
+    resizeStart = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: rect.width,
+      startHeight: rect.height,
+      startLeft: rect.left,
+      startTop: rect.top,
+    }
+    deps.notesResizeHandleEl.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  function resizeFloatingPanel(event: PointerEvent): void {
+    if (!resizeStart || resizeStart.pointerId !== event.pointerId) return
+    const nextWidth = resizeStart.startWidth + event.clientX - resizeStart.startX
+    const nextHeight = resizeStart.startHeight + event.clientY - resizeStart.startY
+    resizeFloatingPanelTo(nextWidth, nextHeight, resizeStart.startLeft, resizeStart.startTop)
+  }
+
+  function stopResizing(event: PointerEvent): void {
+    if (!resizeStart || resizeStart.pointerId !== event.pointerId) return
+    resizeStart = undefined
+    deps.notesPanelEl.classList.remove('resizing')
+    if (deps.notesResizeHandleEl.hasPointerCapture?.(event.pointerId)) deps.notesResizeHandleEl.releasePointerCapture(event.pointerId)
+  }
+
   function clampFloatingPanelPosition(): void {
     if (!deps.notesPanelEl.classList.contains('open')) return
     if (!deps.notesPanelEl.style.left || !deps.notesPanelEl.style.top) return
     const rect = deps.notesPanelEl.getBoundingClientRect()
+    resizeFloatingPanelTo(rect.width, rect.height, rect.left, rect.top)
     moveFloatingPanelTo(rect.left, rect.top)
   }
 
@@ -185,6 +235,15 @@ export function createNotesView(deps: NotesViewDependencies): NotesView {
     const maxTop = Math.max(FLOATING_PANEL_MARGIN, window.innerHeight - panelHeight - FLOATING_PANEL_MARGIN)
     deps.notesPanelEl.style.left = `${Math.min(Math.max(FLOATING_PANEL_MARGIN, left), maxLeft)}px`
     deps.notesPanelEl.style.top = `${Math.min(Math.max(FLOATING_PANEL_MARGIN, top), maxTop)}px`
+    deps.notesPanelEl.style.right = 'auto'
+    deps.notesPanelEl.style.bottom = 'auto'
+  }
+
+  function resizeFloatingPanelTo(width: number, height: number, left: number, top: number): void {
+    const maxWidth = Math.max(MIN_NOTES_PANEL_WIDTH, window.innerWidth - left - FLOATING_PANEL_MARGIN)
+    const maxHeight = Math.max(MIN_NOTES_PANEL_HEIGHT, window.innerHeight - top - FLOATING_PANEL_MARGIN)
+    deps.notesPanelEl.style.width = `${Math.min(Math.max(MIN_NOTES_PANEL_WIDTH, width), maxWidth)}px`
+    deps.notesPanelEl.style.height = `${Math.min(Math.max(MIN_NOTES_PANEL_HEIGHT, height), maxHeight)}px`
     deps.notesPanelEl.style.right = 'auto'
     deps.notesPanelEl.style.bottom = 'auto'
   }

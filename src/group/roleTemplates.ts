@@ -1,19 +1,25 @@
 import { normalizeChatGptGptsUrl } from './conversationUrl'
 import { BUILTIN_ROLE_TEMPLATES, getBuiltinRoleTemplate, isBuiltinRoleTemplateId } from './builtinRoleTemplates'
-import type { ChatSite, GroupChat, GroupRole, OpenTeamStore, RoleTemplate } from './types'
+import type { ChatSite, GroupChat, GroupRole, OpenTeamStore, RoleModelSource, RoleTemplate } from './types'
+
+export const ROLE_NAME_MAX_CHARACTERS = 50
 
 export interface RoleTemplateInput {
   name: string
   description?: string
   systemPrompt?: string
+  defaultModelSource?: RoleModelSource
   defaultChatSite?: ChatSite
+  defaultExternalModelId?: string
   chatGptGptsUrl?: string
 }
 
 export interface GroupRoleInput {
   chatId: string
   templateId?: string
+  modelSource?: RoleModelSource
   chatSite?: ChatSite
+  externalModelId?: string
   name?: string
   description?: string
   systemPrompt?: string
@@ -25,7 +31,9 @@ export type GroupRoleBatchInput =
   | {
       source: 'library'
       roleTemplateId: string
+      modelSource?: RoleModelSource
       chatSite?: ChatSite
+      externalModelId?: string
       avatarColor?: string
     }
   | {
@@ -33,7 +41,9 @@ export type GroupRoleBatchInput =
       name: string
       description?: string
       systemPrompt: string
+      modelSource?: RoleModelSource
       chatSite?: ChatSite
+      externalModelId?: string
       avatarColor?: string
     }
 
@@ -57,7 +67,7 @@ interface IntlWithSegmenter {
 export function validateRoleName(name: string, existingNames: string[] = []): string | undefined {
   const trimmed = name.trim()
   if (!trimmed) return '人员名称不能为空'
-  if (countUserPerceivedCharacters(trimmed) > 10) return '人员名称不能超过 10 个字'
+  if (countUserPerceivedCharacters(trimmed) > ROLE_NAME_MAX_CHARACTERS) return `人员名称不能超过 ${ROLE_NAME_MAX_CHARACTERS} 个字`
   if (/\s/.test(trimmed)) return '人员名称不能包含空白字符'
   if (trimmed.includes('@')) return '人员名称不能包含 @'
   if (trimmed.toLowerCase() === 'all') return '人员名称不能是 all'
@@ -83,16 +93,19 @@ export function createRoleTemplate(
 ): RoleTemplate {
   const name = assertValidRoleName(input.name, [])
   const systemPrompt = assertValidSystemPrompt(input.systemPrompt)
-  const defaultChatSite = input.defaultChatSite ?? store.settings.defaultChatSite
+  const defaultModelSource = input.defaultModelSource === 'external' ? 'external' : 'site'
+  const defaultChatSite = defaultModelSource === 'site' ? input.defaultChatSite ?? store.settings.defaultChatSite : undefined
   const template: RoleTemplate = {
     id,
     type: 'custom',
     name,
-    defaultChatSite,
+    defaultModelSource,
     systemPrompt,
     createdAt: now,
     updatedAt: now,
   }
+  if (defaultChatSite) template.defaultChatSite = defaultChatSite
+  if (defaultModelSource === 'external') template.defaultExternalModelId = requireExternalModelId(store, input.defaultExternalModelId)
   const chatGptGptsUrl = defaultChatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(input.chatGptGptsUrl) : undefined
   if (chatGptGptsUrl) template.chatGptGptsUrl = chatGptGptsUrl
 
@@ -129,10 +142,17 @@ export function updateRoleTemplate(
   if (!template) throw new Error(`找不到人员库人员：${templateId}`)
 
   template.name = assertValidRoleName(patch.name, [])
-  template.defaultChatSite = patch.defaultChatSite ?? template.defaultChatSite ?? store.settings.defaultChatSite
+  template.defaultModelSource = patch.defaultModelSource === 'external' ? 'external' : 'site'
+  if (template.defaultModelSource === 'external') {
+    template.defaultExternalModelId = requireExternalModelId(store, patch.defaultExternalModelId)
+    delete template.defaultChatSite
+  } else {
+    delete template.defaultExternalModelId
+    template.defaultChatSite = patch.defaultChatSite ?? template.defaultChatSite ?? store.settings.defaultChatSite
+  }
   template.systemPrompt = assertValidSystemPrompt(patch.systemPrompt)
   template.updatedAt = now
-  const chatGptGptsUrl = template.defaultChatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(patch.chatGptGptsUrl) : undefined
+  const chatGptGptsUrl = template.defaultModelSource !== 'external' && template.defaultChatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(patch.chatGptGptsUrl) : undefined
   if (chatGptGptsUrl) {
     template.chatGptGptsUrl = chatGptGptsUrl
   } else {
@@ -186,22 +206,26 @@ export function createGroupRole(
   if (input.templateId && !template) throw new Error(`找不到人员库人员：${input.templateId}`)
 
   const name = assertValidRoleName(input.name ?? template?.name ?? '', [])
-  const chatSite = input.chatSite ?? template?.defaultChatSite ?? store.settings.defaultChatSite
-  assertUniqueRoleSiteIdentity(name, chatSite, getChatRoles(store, chat), store.settings.defaultChatSite)
+  const modelSource = input.modelSource ?? template?.defaultModelSource ?? 'site'
+  const externalModelId = modelSource === 'external' ? requireExternalModelId(store, input.externalModelId ?? template?.defaultExternalModelId) : undefined
+  const chatSite = modelSource === 'external' ? undefined : input.chatSite ?? template?.defaultChatSite ?? store.settings.defaultChatSite
+  assertUniqueRoleModelIdentity(name, modelSource, chatSite, externalModelId, getChatRoles(store, chat), store.settings.defaultChatSite)
   const role: GroupRole = {
     id,
     chatId: input.chatId,
-    chatSite,
+    modelSource,
     name,
-    status: 'pending',
+    status: modelSource === 'external' ? 'ready' : 'pending',
     contextCursor: 0,
     createdAt: now,
     updatedAt: now,
   }
+  if (chatSite) role.chatSite = chatSite
+  if (externalModelId) role.externalModelId = externalModelId
 
   if (input.templateId) role.templateId = input.templateId
 
-  const chatGptGptsUrl = chatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(input.chatGptGptsUrl ?? template?.chatGptGptsUrl) : undefined
+  const chatGptGptsUrl = modelSource !== 'external' && chatSite === 'chatgpt' ? normalizeOptionalChatGptGptsUrl(input.chatGptGptsUrl ?? template?.chatGptGptsUrl) : undefined
   if (chatGptGptsUrl) role.chatGptGptsUrl = chatGptGptsUrl
 
   const description = (input.description ?? template?.description)?.trim()
@@ -232,9 +256,11 @@ export function updateGroupRole(
   if (!chat) throw new Error(`找不到群聊：${role.chatId}`)
 
   const nextName = patch.name !== undefined ? assertValidRoleName(patch.name, []) : role.name
-  const nextChatSite = patch.chatSite ?? role.chatSite ?? store.settings.defaultChatSite
-  if (patch.name !== undefined || (patch.chatSite !== undefined && patch.chatSite !== role.chatSite)) {
-    assertUniqueRoleSiteIdentity(nextName, nextChatSite, getChatRoles(store, chat), store.settings.defaultChatSite, roleId)
+  const nextModelSource = patch.modelSource ?? role.modelSource ?? 'site'
+  const nextExternalModelId = nextModelSource === 'external' ? requireExternalModelId(store, patch.externalModelId ?? role.externalModelId) : undefined
+  const nextChatSite = nextModelSource === 'external' ? undefined : patch.chatSite ?? role.chatSite ?? store.settings.defaultChatSite
+  if (patch.name !== undefined || patch.modelSource !== undefined || patch.externalModelId !== undefined || patch.chatSite !== undefined) {
+    assertUniqueRoleModelIdentity(nextName, nextModelSource, nextChatSite, nextExternalModelId, getChatRoles(store, chat), store.settings.defaultChatSite, roleId)
   }
   if (patch.name !== undefined) role.name = nextName
   if (patch.description !== undefined) {
@@ -246,19 +272,29 @@ export function updateGroupRole(
     }
   }
   if (patch.systemPrompt !== undefined) throw new Error('群聊内人员人设不可编辑')
-  if (patch.chatSite !== undefined && patch.chatSite !== role.chatSite) {
-    role.chatSite = patch.chatSite
+  if (patch.modelSource !== undefined || patch.externalModelId !== undefined || patch.chatSite !== undefined) {
+    role.modelSource = nextModelSource
+    if (nextChatSite) {
+      role.chatSite = nextChatSite
+    } else {
+      delete role.chatSite
+    }
+    if (nextExternalModelId) {
+      role.externalModelId = nextExternalModelId
+    } else {
+      delete role.externalModelId
+    }
     role.contextCursor = 0
     role.status = 'pending'
     delete role.geminiConversationId
     delete role.geminiConversationUrl
-    if (patch.chatSite !== 'chatgpt') delete role.chatGptGptsUrl
+    if (nextChatSite !== 'chatgpt') delete role.chatGptGptsUrl
     delete role.lastPromptMessageId
     delete role.lastReplyAt
   }
   if (patch.chatGptGptsUrl !== undefined) {
     const chatGptGptsUrl = normalizeOptionalChatGptGptsUrl(patch.chatGptGptsUrl)
-    if (nextChatSite === 'chatgpt' && chatGptGptsUrl) {
+    if (nextModelSource !== 'external' && nextChatSite === 'chatgpt' && chatGptGptsUrl) {
       role.chatGptGptsUrl = chatGptGptsUrl
     } else {
       delete role.chatGptGptsUrl
@@ -303,10 +339,11 @@ export function createGroupRolesBatch(
   if (!chat) throw new Error(`找不到群聊：${chatId}`)
 
   const prepared = items.map((item, index) => prepareBatchItem(store, item, index))
-  const identities = new Set(getChatRoles(store, chat).map(role => roleSiteIdentityKey(role.name, role.chatSite ?? store.settings.defaultChatSite)))
+  const identities = new Set(getChatRoles(store, chat).map(role => roleModelIdentityKey(role.name, role.modelSource ?? 'site', role.chatSite ?? store.settings.defaultChatSite, role.externalModelId)))
   for (const item of prepared) {
-    const identityKey = roleSiteIdentityKey(item.name, item.chatSite ?? store.settings.defaultChatSite)
-    if (identities.has(identityKey)) throw new Error(duplicateRoleSiteMessage(item.name, item.chatSite ?? store.settings.defaultChatSite))
+    const modelSource = item.modelSource ?? 'site'
+    const identityKey = roleModelIdentityKey(item.name, modelSource, item.chatSite ?? store.settings.defaultChatSite, item.externalModelId)
+    if (identities.has(identityKey)) throw new Error(duplicateRoleModelMessage(item.name, modelSource, item.chatSite ?? store.settings.defaultChatSite, item.externalModelId))
     identities.add(identityKey)
   }
 
@@ -319,7 +356,9 @@ function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index
     if (!template) throw new Error(`找不到人员库人员：${item.roleTemplateId}`)
     return {
       templateId: item.roleTemplateId,
+      modelSource: item.modelSource,
       chatSite: item.chatSite ?? template.defaultChatSite ?? store.settings.defaultChatSite,
+      externalModelId: item.externalModelId ?? template.defaultExternalModelId,
       name: assertValidRoleName(template.name, []),
       description: template.description,
       systemPrompt: normalizeSystemPrompt(template.systemPrompt),
@@ -330,7 +369,9 @@ function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index
 
   if (item.source === 'temporary') {
     return {
+      modelSource: item.modelSource,
       chatSite: item.chatSite ?? store.settings.defaultChatSite,
+      externalModelId: item.externalModelId,
       name: assertValidRoleName(item.name, []),
       description: item.description,
       systemPrompt: normalizeSystemPrompt(item.systemPrompt),
@@ -341,18 +382,39 @@ function prepareBatchItem(store: OpenTeamStore, item: GroupRoleBatchInput, index
   throw new Error(`第 ${index + 1} 个添加项无效`)
 }
 
-function assertUniqueRoleSiteIdentity(name: string, chatSite: ChatSite, existingRoles: GroupRole[], defaultChatSite: ChatSite, currentRoleId?: string): void {
-  const identityKey = roleSiteIdentityKey(name, chatSite)
-  const duplicate = existingRoles.some(role => role.id !== currentRoleId && roleSiteIdentityKey(role.name, role.chatSite ?? defaultChatSite) === identityKey)
-  if (duplicate) throw new Error(duplicateRoleSiteMessage(name, chatSite))
+function assertUniqueRoleModelIdentity(
+  name: string,
+  modelSource: RoleModelSource,
+  chatSite: ChatSite | undefined,
+  externalModelId: string | undefined,
+  existingRoles: GroupRole[],
+  defaultChatSite: ChatSite,
+  currentRoleId?: string,
+): void {
+  const identityKey = roleModelIdentityKey(name, modelSource, chatSite ?? defaultChatSite, externalModelId)
+  const duplicate = existingRoles.some(role => (
+    role.id !== currentRoleId &&
+    roleModelIdentityKey(role.name, role.modelSource ?? 'site', role.chatSite ?? defaultChatSite, role.externalModelId) === identityKey
+  ))
+  if (duplicate) throw new Error(duplicateRoleModelMessage(name, modelSource, chatSite ?? defaultChatSite, externalModelId))
 }
 
-function roleSiteIdentityKey(name: string, chatSite: ChatSite): string {
-  return `${name.trim().toLowerCase()}:${chatSite}`
+function roleModelIdentityKey(name: string, modelSource: RoleModelSource, chatSite: ChatSite, externalModelId: string | undefined): string {
+  return modelSource === 'external'
+    ? `${name.trim().toLowerCase()}:external:${externalModelId ?? ''}`
+    : `${name.trim().toLowerCase()}:site:${chatSite}`
 }
 
-function duplicateRoleSiteMessage(name: string, chatSite: ChatSite): string {
-  return `人员已存在：${name}（${chatSite}）`
+function duplicateRoleModelMessage(name: string, modelSource: RoleModelSource, chatSite: ChatSite, externalModelId: string | undefined): string {
+  return modelSource === 'external'
+    ? `人员已存在：${name}（外部模型 ${externalModelId ?? ''}）`
+    : `人员已存在：${name}（${chatSite}）`
+}
+
+function requireExternalModelId(store: OpenTeamStore, value: string | undefined): string {
+  const externalModelId = value?.trim()
+  if (!externalModelId || !store.settings.externalModelsById[externalModelId]) throw new Error('请选择有效的外部模型')
+  return externalModelId
 }
 
 function assertValidSystemPrompt(systemPrompt: string | undefined): string {

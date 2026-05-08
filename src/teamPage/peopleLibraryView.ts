@@ -1,10 +1,11 @@
-import type { ChatSite, GroupChat, OpenTeamStore, RoleTemplate } from '../group/types'
+import { ROLE_NAME_MAX_CHARACTERS } from '../group/roleTemplates'
+import type { ChatSite, ExternalModelConfig, GroupChat, OpenTeamStore, RoleModelSource, RoleTemplate } from '../group/types'
 import type { TeamPageState } from './appState'
 
-type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultChatSite' | 'chatGptGptsUrl'>
+type TemplateDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt' | 'defaultModelSource' | 'defaultChatSite' | 'defaultExternalModelId' | 'chatGptGptsUrl'>
 type AddPersonItem =
-  | { key: string; source: 'library'; type: RoleTemplate['type']; roleTemplateId: string; name: string; description?: string; systemPrompt: string; chatSites: ChatSite[]; disabledSites: Set<ChatSite> }
-  | { key: string; source: 'temporary'; type: 'custom'; draftId: string; name: string; description?: string; systemPrompt: string; chatSites: ChatSite[]; disabledSites: Set<ChatSite> }
+  | { key: string; source: 'library'; type: RoleTemplate['type']; roleTemplateId: string; name: string; description?: string; systemPrompt: string; chatSites: string[]; disabledSites: Set<string> }
+  | { key: string; source: 'temporary'; type: 'custom'; draftId: string; name: string; description?: string; systemPrompt: string; chatSites: string[]; disabledSites: Set<string> }
 
 const PEOPLE_LIBRARY_PAGE_SIZE = 5
 const VISIBLE_CHAT_SITES = ['gemini', 'chatgpt', 'claude', 'deepseek'] as const
@@ -47,6 +48,9 @@ export interface PeopleLibraryViewDependencies {
   templateSiteDeepSeekEl: HTMLInputElement
   templateSiteQwenEl: HTMLInputElement
   templateSiteKimiEl: HTMLInputElement
+  templateSiteExternalEl: HTMLInputElement
+  templateExternalModelFieldEl: HTMLElement
+  templateExternalModelSelectEl: HTMLSelectElement
   templateChatGptGptsFieldEl: HTMLElement
   templateChatGptGptsUrlEl: HTMLInputElement
   temporaryPersonNameEl: HTMLInputElement
@@ -113,19 +117,23 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     const store = deps.getStore()
     const selectedTemplate = deps.state.selectedTemplateId ? store.roleTemplatesById[deps.state.selectedTemplateId] : undefined
     deps.templateFormTitleEl.textContent = selectedTemplate ? `编辑人员：${selectedTemplate.name}` : '新建人员'
+    renderExternalModelSelect()
     if (selectedTemplate) {
       const defaultChatSite = visibleChatSite(selectedTemplate.defaultChatSite ?? store.settings.defaultChatSite)
+      const externalSelected = selectedTemplate.defaultModelSource === 'external' && Boolean(selectedTemplate.defaultExternalModelId)
       deps.templateNameEl.value = selectedTemplate.name
       deps.templateDescriptionEl.value = selectedTemplate.description ?? ''
       deps.templatePromptEl.value = selectedTemplate.systemPrompt
-      deps.templateSiteGeminiEl.checked = defaultChatSite === 'gemini'
-      deps.templateSiteChatGptEl.checked = defaultChatSite === 'chatgpt'
-      deps.templateSiteClaudeEl.checked = defaultChatSite === 'claude'
-      deps.templateSiteDeepSeekEl.checked = defaultChatSite === 'deepseek'
-      deps.templateSiteQwenEl.checked = defaultChatSite === 'qwen'
+      deps.templateSiteGeminiEl.checked = !externalSelected && defaultChatSite === 'gemini'
+      deps.templateSiteChatGptEl.checked = !externalSelected && defaultChatSite === 'chatgpt'
+      deps.templateSiteClaudeEl.checked = !externalSelected && defaultChatSite === 'claude'
+      deps.templateSiteDeepSeekEl.checked = !externalSelected && defaultChatSite === 'deepseek'
+      deps.templateSiteQwenEl.checked = !externalSelected && defaultChatSite === 'qwen'
       deps.templateSiteKimiEl.checked = false
+      deps.templateSiteExternalEl.checked = externalSelected
+      deps.templateExternalModelSelectEl.value = selectedTemplate.defaultExternalModelId ?? firstExternalModelId() ?? ''
       deps.templateChatGptGptsUrlEl.value = selectedTemplate.chatGptGptsUrl ?? ''
-      syncTemplateChatGptGptsField()
+      syncTemplateModelFields()
     } else {
       deps.templateNameEl.value = ''
       deps.templateDescriptionEl.value = ''
@@ -137,8 +145,10 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       deps.templateSiteDeepSeekEl.checked = defaultChatSite === 'deepseek'
       deps.templateSiteQwenEl.checked = defaultChatSite === 'qwen'
       deps.templateSiteKimiEl.checked = false
+      deps.templateSiteExternalEl.checked = false
+      deps.templateExternalModelSelectEl.value = firstExternalModelId() ?? ''
       deps.templateChatGptGptsUrlEl.value = ''
-      syncTemplateChatGptGptsField()
+      syncTemplateModelFields()
     }
   }
 
@@ -158,7 +168,8 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     if (!deps.getCurrentChat()) return
     deps.addPersonModalEl.hidden = false
     deps.state.addPersonSiteMenuId = undefined
-    deps.state.addPersonTemplateType = 'builtin'
+    deps.state.addPersonSelectedKeys.clear()
+    deps.state.addPersonTemplateType = 'custom'
     deps.state.addPersonSearchQuery = ''
     deps.addPersonSearchEl.value = ''
     deps.log.info('ui:person-add-dialog:open', { chatId: deps.getCurrentChat()?.id, source: 'mixed' })
@@ -186,10 +197,11 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     deps.state.selectedTemplateId = undefined
     deps.state.previewTemplateId = undefined
     deps.state.addPersonSiteMenuId = undefined
-    deps.state.peopleLibraryTemplateType = 'builtin'
+    deps.state.peopleLibraryTemplateType = 'custom'
     deps.state.peopleLibrarySearchQuery = ''
-    deps.state.addPersonTemplateType = 'builtin'
+    deps.state.addPersonTemplateType = 'custom'
     deps.state.addPersonSearchQuery = ''
+    deps.state.addPersonSelectedKeys.clear()
   }
 
   function registerPeopleLibraryEvents(): void {
@@ -198,7 +210,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       deps.settingsButtonEl.setAttribute('aria-expanded', 'false')
       deps.peopleLibraryModalEl.hidden = false
       deps.state.peopleLibraryPage = 0
-      deps.state.peopleLibraryTemplateType = 'builtin'
+      deps.state.peopleLibraryTemplateType = 'custom'
       deps.state.peopleLibrarySearchQuery = ''
       deps.peopleLibrarySearchEl.value = ''
       deps.log.info('ui:people-library:open', { templateCount: deps.getTemplates().length })
@@ -213,7 +225,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     deps.closePersonTemplateEl.addEventListener('click', closeTemplateEditor)
     deps.closeBuiltinTemplateDetailEl.addEventListener('click', closeBuiltinTemplateDetail)
     for (const input of templateSiteInputs()) {
-      input.addEventListener('change', syncTemplateChatGptGptsField)
+      input.addEventListener('change', syncTemplateModelFields)
     }
 
     deps.peopleLibrarySearchEl.addEventListener('input', () => {
@@ -235,6 +247,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     deps.closeAddPersonEl.addEventListener('click', () => {
       deps.addPersonModalEl.hidden = true
       deps.state.addPersonSiteMenuId = undefined
+      deps.state.addPersonSelectedKeys.clear()
     })
 
     deps.addPersonSearchEl.addEventListener('input', () => {
@@ -264,6 +277,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
         .then(() => {
           deps.addPersonModalEl.hidden = true
           deps.state.addPersonSiteMenuId = undefined
+          deps.state.addPersonSelectedKeys.clear()
           deps.state.temporaryPersonDrafts.splice(0)
         })
         .catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
@@ -285,7 +299,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       const store = deps.getStore()
       const chatSite = visibleChatSite(store.settings.defaultChatSite)
       deps.state.temporaryPersonDrafts.push({ id, ...draft, chatSite })
-      deps.state.addPersonSiteByKey.set(`temporary:${id}`, new Set([chatSite]))
+      deps.state.addPersonSiteByKey.set(`temporary:${id}`, new Set([modelKeyForSite(chatSite)]))
       closeTemporaryPersonDialog()
       renderAddPersonDialog()
     })
@@ -329,7 +343,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     const site = document.createElement('div')
     site.className = 'template-description'
     const defaultChatSite = visibleChatSite(template.defaultChatSite ?? store.settings.defaultChatSite)
-    site.textContent = `默认站点：${siteLabel(defaultChatSite)}${defaultChatSite === 'chatgpt' && template.chatGptGptsUrl ? ' · GPTs' : ''}`
+    site.textContent = `默认模型：${templateModelLabel(template, store)}${defaultChatSite === 'chatgpt' && template.chatGptGptsUrl ? ' · GPTs' : ''}`
     body.append(row, description, site)
 
     const edit = document.createElement('button')
@@ -428,6 +442,14 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       checkbox.type = 'checkbox'
       checkbox.value = item.key
       checkbox.disabled = item.chatSites.length === 0
+      checkbox.checked = deps.state.addPersonSelectedKeys.has(item.key)
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) {
+          deps.state.addPersonSelectedKeys.add(item.key)
+        } else {
+          deps.state.addPersonSelectedKeys.delete(item.key)
+        }
+      })
       const content = document.createElement('span')
       content.className = 'select-row-content'
       const name = document.createElement('strong')
@@ -477,7 +499,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
   function openBuiltinTemplateDetail(template: RoleTemplate): void {
     deps.state.previewTemplateId = template.id
     deps.builtinTemplateDetailTitleEl.textContent = template.name
-    deps.builtinTemplateDetailMetaEl.textContent = `${templateTypeLabel(template.type)} · 默认站点：${siteLabel(visibleChatSite(template.defaultChatSite ?? deps.getStore().settings.defaultChatSite))}`
+    deps.builtinTemplateDetailMetaEl.textContent = `${templateTypeLabel(template.type)} · 默认模型：${templateModelLabel(template, deps.getStore())}`
     deps.builtinTemplateDetailPromptEl.textContent = template.systemPrompt || '未填写提示词'
     deps.builtinTemplateDetailModalEl.hidden = false
   }
@@ -492,7 +514,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     const libraryItems = deps.getTemplates().map(template => {
       const key = `library:${template.id}`
       const disabledSites = usedLibrarySites(template)
-      const chatSites = selectedAddPersonSites(key, template.defaultChatSite ?? store.settings.defaultChatSite, disabledSites)
+      const chatSites = selectedAddPersonSites(key, defaultModelKeyForTemplate(template, store), disabledSites)
       return {
         key,
         source: 'library' as const,
@@ -508,7 +530,7 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     const temporaryItems = deps.state.temporaryPersonDrafts.map(draft => {
       const key = `temporary:${draft.id}`
       const disabledSites = usedNameSites(draft.name)
-      const chatSites = selectedAddPersonSites(key, draft.chatSite, disabledSites)
+      const chatSites = selectedAddPersonSites(key, modelKeyForSite(draft.chatSite), disabledSites)
       return {
         key,
         source: 'temporary' as const,
@@ -554,26 +576,26 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     deps.addPersonCustomTabEl.setAttribute('aria-selected', String(!builtinActive))
   }
 
-  function addPersonSiteControl(itemKey: string, chatSites: ChatSite[], disabledSites: Set<ChatSite>): HTMLElement {
+  function addPersonSiteControl(itemKey: string, chatSites: string[], disabledSites: Set<string>): HTMLElement {
     const control = document.createElement('div')
     control.className = 'role-site-control add-person-site-control'
     const selectedSites = new Set(chatSites)
-    for (const site of VISIBLE_CHAT_SITES) {
+    for (const model of selectableModels(deps.getStore())) {
       const option = document.createElement('label')
-      option.className = `site-pill site-pill-${site} add-person-site-option${selectedSites.has(site) ? ' active' : ''}${disabledSites.has(site) ? ' disabled' : ''}`
+      option.className = `site-pill ${model.className} add-person-site-option${selectedSites.has(model.key) ? ' active' : ''}${disabledSites.has(model.key) ? ' disabled' : ''}`
       const input = document.createElement('input')
       input.type = 'checkbox'
-      input.value = site
-      input.checked = selectedSites.has(site)
-      input.disabled = disabledSites.has(site)
+      input.value = model.key
+      input.checked = selectedSites.has(model.key)
+      input.disabled = disabledSites.has(model.key)
       input.addEventListener('change', event => {
         event.stopPropagation()
-        if (disabledSites.has(site)) return
-        const nextSites = new Set(selectedAddPersonSites(itemKey, site, disabledSites))
+        if (disabledSites.has(model.key)) return
+        const nextSites = new Set(selectedAddPersonSites(itemKey, model.key, disabledSites))
         if (input.checked) {
-          nextSites.add(site)
+          nextSites.add(model.key)
         } else if (nextSites.size > 1) {
-          nextSites.delete(site)
+          nextSites.delete(model.key)
         } else {
           input.checked = true
           return
@@ -581,19 +603,20 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
         deps.state.addPersonSiteByKey.set(itemKey, nextSites)
         renderAddPersonDialog()
       })
-      option.append(input, document.createTextNode(siteLabel(site)))
+      option.append(input, document.createTextNode(model.label))
       control.append(option)
     }
     return control
   }
 
-  function selectedAddPersonSites(itemKey: string, fallbackSite: ChatSite, disabledSites = new Set<ChatSite>()): ChatSite[] {
+  function selectedAddPersonSites(itemKey: string, fallbackSite: string, disabledSites = new Set<string>()): string[] {
     const selectedSites = deps.state.addPersonSiteByKey.get(itemKey)
-    const visibleSelectedSites = selectedSites ? VISIBLE_CHAT_SITES.filter(site => selectedSites.has(site) && !disabledSites.has(site)) : []
+    const modelKeys = selectableModels(deps.getStore()).map(model => model.key)
+    const visibleSelectedSites = selectedSites ? modelKeys.filter(site => selectedSites.has(site) && !disabledSites.has(site)) : []
     if (visibleSelectedSites.length > 0) return visibleSelectedSites
 
-    const fallback = visibleChatSite(fallbackSite)
-    const nextSite = disabledSites.has(fallback) ? VISIBLE_CHAT_SITES.find(site => !disabledSites.has(site)) : fallback
+    const fallback = modelKeys.includes(fallbackSite) ? fallbackSite : modelKeyForSite(visibleChatSite(deps.getStore().settings.defaultChatSite))
+    const nextSite = disabledSites.has(fallback) ? modelKeys.find(site => !disabledSites.has(site)) : fallback
     if (!nextSite) {
       deps.state.addPersonSiteByKey.set(itemKey, new Set())
       return []
@@ -602,24 +625,24 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     return [nextSite]
   }
 
-  function usedLibrarySites(template: RoleTemplate): Set<ChatSite> {
+  function usedLibrarySites(template: RoleTemplate): Set<string> {
     const chat = deps.getCurrentChat()
     if (!chat) return new Set()
     const store = deps.getStore()
     return new Set(chat.roleIds
       .map(roleId => store.rolesById[roleId])
       .filter(role => role?.templateId === template.id)
-      .map(role => visibleChatSite(role.chatSite ?? store.settings.defaultChatSite)))
+      .map(role => roleModelKey(role, store)))
   }
 
-  function usedNameSites(name: string): Set<ChatSite> {
+  function usedNameSites(name: string): Set<string> {
     const chat = deps.getCurrentChat()
     if (!chat) return new Set()
     const store = deps.getStore()
     return new Set(chat.roleIds
       .map(roleId => store.rolesById[roleId])
       .filter(role => role?.name.trim().toLowerCase() === name.trim().toLowerCase())
-      .map(role => visibleChatSite(role.chatSite ?? store.settings.defaultChatSite)))
+      .map(role => roleModelKey(role, store)))
   }
 
   function readTemplateDraft(): TemplateDraft {
@@ -627,27 +650,35 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       name: deps.templateNameEl.value.trim(),
       description: deps.templateDescriptionEl.value.trim(),
       systemPrompt: deps.templatePromptEl.value.trim(),
-      defaultChatSite: readTemplateChatSite(),
+      defaultModelSource: readTemplateModelSource(),
+      defaultChatSite: deps.templateSiteExternalEl.checked ? undefined : readTemplateChatSite(),
+      defaultExternalModelId: deps.templateSiteExternalEl.checked ? deps.templateExternalModelSelectEl.value : undefined,
       chatGptGptsUrl: deps.templateSiteChatGptEl.checked ? deps.templateChatGptGptsUrlEl.value.trim() : undefined,
     }
   }
 
   function validatePersonDraft(draft: Pick<TemplateDraft, 'name' | 'description' | 'systemPrompt'>): string | undefined {
     if (!draft.name) return '人员名称不能为空'
-    if (Array.from(draft.name).length > 10) return '人员名称最多 10 个字'
+    if (Array.from(draft.name).length > ROLE_NAME_MAX_CHARACTERS) return `人员名称最多 ${ROLE_NAME_MAX_CHARACTERS} 个字`
     return undefined
   }
 
   function selectedAddPersonItems(): Record<string, unknown>[] {
-    const checkedKeys = new Set(Array.from(deps.addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value))
-    return addPersonItems().filter(item => checkedKeys.has(item.key)).flatMap(item => item.chatSites.map(chatSite => {
-      if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, chatSite }
+    const items = addPersonItems()
+    const itemKeys = new Set(items.map(item => item.key))
+    const checkedKeys = new Set(deps.state.addPersonSelectedKeys)
+    for (const input of deps.addLibraryPeopleListEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')) {
+      if (itemKeys.has(input.value)) checkedKeys.add(input.value)
+    }
+    return items.filter(item => checkedKeys.has(item.key)).flatMap(item => item.chatSites.map(chatSite => {
+      const modelPatch = payloadForModelKey(chatSite)
+      if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, ...modelPatch }
       return {
         source: 'temporary',
         name: item.name,
         description: item.description,
         systemPrompt: item.systemPrompt,
-        chatSite,
+        ...modelPatch,
       }
     }))
   }
@@ -659,11 +690,18 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
     return 'gemini'
   }
 
-  function syncTemplateChatGptGptsField(): void {
+  function readTemplateModelSource(): RoleModelSource {
+    return deps.templateSiteExternalEl.checked ? 'external' : 'site'
+  }
+
+  function syncTemplateModelFields(): void {
     const visible = deps.templateSiteChatGptEl.checked
     deps.templateChatGptGptsFieldEl.hidden = !visible
     deps.templateChatGptGptsFieldEl.style.display = visible ? '' : 'none'
     if (!visible) deps.templateChatGptGptsUrlEl.value = ''
+    const externalVisible = deps.templateSiteExternalEl.checked
+    deps.templateExternalModelFieldEl.hidden = !externalVisible
+    deps.templateExternalModelFieldEl.style.display = externalVisible ? '' : 'none'
   }
 
   function templateSiteInputs(): HTMLInputElement[] {
@@ -674,6 +712,48 @@ export function createPeopleLibraryView(deps: PeopleLibraryViewDependencies): Pe
       deps.templateSiteDeepSeekEl,
       deps.templateSiteQwenEl,
       deps.templateSiteKimiEl,
+      deps.templateSiteExternalEl,
+    ]
+  }
+
+  function renderExternalModelSelect(): void {
+    const models = externalModels(deps.getStore())
+    deps.templateExternalModelSelectEl.replaceChildren()
+    if (models.length === 0) {
+      deps.templateExternalModelSelectEl.append(new Option('先在设置中添加外部模型', ''))
+      deps.templateSiteExternalEl.disabled = true
+      return
+    }
+    deps.templateSiteExternalEl.disabled = false
+    for (const model of models) deps.templateExternalModelSelectEl.append(new Option(`${model.name} · ${model.modelName}`, model.id))
+  }
+
+  function firstExternalModelId(): string | undefined {
+    return externalModels(deps.getStore())[0]?.id
+  }
+
+  function defaultModelKeyForTemplate(template: RoleTemplate, store: OpenTeamStore): string {
+    if (template.defaultModelSource === 'external' && template.defaultExternalModelId && store.settings.externalModelsById[template.defaultExternalModelId]) {
+      return modelKeyForExternal(template.defaultExternalModelId)
+    }
+    return modelKeyForSite(visibleChatSite(template.defaultChatSite ?? store.settings.defaultChatSite))
+  }
+
+  function roleModelKey(role: { modelSource?: RoleModelSource; externalModelId?: string; chatSite?: ChatSite }, store: OpenTeamStore): string {
+    if (role.modelSource === 'external' && role.externalModelId) return modelKeyForExternal(role.externalModelId)
+    return modelKeyForSite(visibleChatSite(role.chatSite ?? store.settings.defaultChatSite))
+  }
+
+  function payloadForModelKey(key: string): Record<string, unknown> {
+    const externalModelId = externalModelIdFromKey(key)
+    if (externalModelId) return { modelSource: 'external', externalModelId }
+    return { modelSource: 'site', chatSite: chatSiteFromModelKey(key) }
+  }
+
+  function selectableModels(store: OpenTeamStore): Array<{ key: string; label: string; className: string }> {
+    return [
+      ...VISIBLE_CHAT_SITES.map(site => ({ key: modelKeyForSite(site), label: siteLabel(site), className: `site-pill-${site}` })),
+      ...externalModels(store).map(model => ({ key: modelKeyForExternal(model.id), label: `API · ${model.name}`, className: 'site-pill-external' })),
     ]
   }
 
@@ -707,10 +787,44 @@ function siteLabel(site: ChatSite | undefined): string {
   return 'Gemini'
 }
 
+function templateModelLabel(template: RoleTemplate, store: OpenTeamStore): string {
+  if (template.defaultModelSource === 'external' && template.defaultExternalModelId) {
+    return externalModelLabel(store.settings.externalModelsById[template.defaultExternalModelId])
+  }
+  return siteLabel(visibleChatSite(template.defaultChatSite ?? store.settings.defaultChatSite))
+}
+
+function externalModelLabel(model: ExternalModelConfig | undefined): string {
+  return model ? `API · ${model.name}` : 'API · 未配置'
+}
+
 function templateTypeLabel(type: RoleTemplate['type']): string {
   return type === 'builtin' ? '内置人员' : '自定义人员'
 }
 
 function visibleChatSite(site: ChatSite | undefined): ChatSite {
   return site && VISIBLE_CHAT_SITES.includes(site as typeof VISIBLE_CHAT_SITES[number]) ? site : 'gemini'
+}
+
+function externalModels(store: OpenTeamStore): ExternalModelConfig[] {
+  return store.settings.externalModelOrder
+    .map(modelId => store.settings.externalModelsById[modelId])
+    .filter((model): model is ExternalModelConfig => Boolean(model))
+}
+
+function modelKeyForSite(site: ChatSite): string {
+  return `site:${site}`
+}
+
+function modelKeyForExternal(modelId: string): string {
+  return `external:${modelId}`
+}
+
+function externalModelIdFromKey(key: string): string | undefined {
+  return key.startsWith('external:') ? key.slice('external:'.length) || undefined : undefined
+}
+
+function chatSiteFromModelKey(key: string): ChatSite {
+  const value = key.startsWith('site:') ? key.slice('site:'.length) : key
+  return visibleChatSite(value as ChatSite)
 }

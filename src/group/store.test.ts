@@ -12,6 +12,7 @@ import {
   updateStoreQueued,
 } from './store'
 import { BUILTIN_ROLE_TEMPLATES } from './builtinRoleTemplates'
+import { DEFAULT_CUSTOM_ROLE_TEMPLATES } from './defaultCustomRoleTemplates'
 import type { GroupMessage, OpenTeamStore } from './types'
 
 describe('group store', () => {
@@ -54,15 +55,19 @@ describe('group store', () => {
       chatsById: {},
       rolesById: {},
       messagesById: {},
-      roleTemplateOrder: [],
-      roleTemplatesById: {},
+      roleTemplateOrder: DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id),
+      roleTemplatesById: Object.fromEntries(DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => [template.id, template])),
       globalNote: undefined,
       chatNotesById: {},
       messageHighlightsById: {},
+      externalRoleMemoriesById: {},
+      externalChatMemoriesById: {},
       settings: {
         defaultMode: 'independent',
         maxContextChars: 6000,
         defaultChatSite: 'gemini',
+        externalModelOrder: [],
+        externalModelsById: {},
       },
       viewState: {
         chatReadSeqById: {},
@@ -104,12 +109,101 @@ describe('group store', () => {
       chatOrder: ['chat-1'],
       rolesById: {},
       messagesById: {},
-      roleTemplateOrder: [],
-      roleTemplatesById: {},
+      roleTemplateOrder: DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id),
+      roleTemplatesById: Object.fromEntries(DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => [template.id, template])),
       settings: {
         defaultMode: 'collaborative',
         maxContextChars: 6000,
         defaultChatSite: 'gemini',
+        externalModelOrder: [],
+        externalModelsById: {},
+      },
+    })
+  })
+
+  it('seeds existing empty stores with default custom role templates once', async () => {
+    stored[META_STORE_KEY] = {
+      version: CURRENT_STORE_VERSION - 1,
+      chatOrder: [],
+      roleTemplateOrder: [],
+      roleTemplatesById: {},
+      settings: {
+        defaultMode: 'independent',
+        defaultChatSite: 'gemini',
+      },
+    }
+
+    const store = await loadStore()
+
+    expect(store.roleTemplateOrder).toEqual(DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id))
+    expect(Object.values(store.roleTemplatesById)).toEqual(DEFAULT_CUSTOM_ROLE_TEMPLATES)
+    await saveStore(store)
+    expect(stored[META_STORE_KEY]).toMatchObject({
+      version: CURRENT_STORE_VERSION,
+      roleTemplateOrder: DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id),
+    })
+  })
+
+  it('does not restore default custom role templates after a current store has removed them', async () => {
+    stored[META_STORE_KEY] = {
+      version: CURRENT_STORE_VERSION,
+      chatOrder: [],
+      roleTemplateOrder: [],
+      roleTemplatesById: {},
+      settings: {
+        defaultMode: 'independent',
+        defaultChatSite: 'gemini',
+      },
+    }
+
+    await expect(loadStore()).resolves.toMatchObject({
+      roleTemplateOrder: [],
+      roleTemplatesById: {},
+    })
+  })
+
+  it('normalizes external model settings and drops incomplete configs', async () => {
+    stored[STORE_KEY] = {
+      settings: {
+        externalModelOrder: ['model-1', 'missing', 'model-bad'],
+        externalModelsById: {
+          'model-1': {
+            id: 'model-1',
+            name: '本地 Qwen',
+            format: 'openai',
+            baseUrl: ' https://api.example.test/v1 ',
+            apiKey: 'sk-test',
+            modelName: 'qwen-plus',
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          'model-bad': {
+            id: 'model-bad',
+            name: '',
+            format: 'openai',
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: 'sk-test',
+            modelName: 'qwen-plus',
+          },
+        },
+      },
+    }
+
+    await expect(loadStore()).resolves.toMatchObject({
+      settings: {
+        externalModelOrder: ['model-1'],
+        externalModelsById: {
+          'model-1': {
+            id: 'model-1',
+            name: '本地 Qwen',
+            format: 'openai',
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: 'sk-test',
+            modelName: 'qwen-plus',
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        },
       },
     })
   })

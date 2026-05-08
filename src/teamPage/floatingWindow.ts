@@ -3,6 +3,7 @@ export interface FloatingWindowDependencies {
   toggleWindowSizeEl: HTMLButtonElement
   toggleFullscreenEl: HTMLButtonElement
   windowLauncherEl: HTMLButtonElement
+  windowResizeHandleEl?: HTMLButtonElement
 }
 
 export interface FloatingWindowControls {
@@ -12,6 +13,9 @@ export interface FloatingWindowControls {
 
 export function createFloatingWindowControls(deps: FloatingWindowDependencies): FloatingWindowControls {
   const dragZoneHeight = 52
+  const margin = 8
+  const minShellWidth = 760
+  const minShellHeight = 520
 
   function ensureShellPositioned(): DOMRect {
     const rect = deps.appShellEl.getBoundingClientRect()
@@ -22,13 +26,20 @@ export function createFloatingWindowControls(deps: FloatingWindowDependencies): 
   }
 
   function moveShellTo(left: number, top: number): void {
-    const margin = 8
     const rect = deps.appShellEl.getBoundingClientRect()
     const maxLeft = Math.max(margin, window.innerWidth - Math.min(rect.width, window.innerWidth - margin * 2) - margin)
     const maxTop = Math.max(margin, window.innerHeight - Math.min(rect.height, window.innerHeight - margin * 2) - margin)
     deps.appShellEl.style.left = `${Math.min(Math.max(margin, left), maxLeft)}px`
     deps.appShellEl.style.top = `${Math.min(Math.max(margin, top), maxTop)}px`
     deps.appShellEl.style.transform = 'none'
+  }
+
+  function resizeShellTo(width: number, height: number): void {
+    const maxWidth = Math.max(minShellWidth, window.innerWidth - margin * 2)
+    const maxHeight = Math.max(minShellHeight, window.innerHeight - margin * 2)
+    deps.appShellEl.style.width = `${Math.min(Math.max(minShellWidth, width), maxWidth)}px`
+    deps.appShellEl.style.height = `${Math.min(Math.max(minShellHeight, height), maxHeight)}px`
+    window.requestAnimationFrame(clampShellPosition)
   }
 
   function clampShellPosition(): void {
@@ -70,6 +81,11 @@ export function createFloatingWindowControls(deps: FloatingWindowDependencies): 
     let dragOffsetX = 0
     let dragOffsetY = 0
     let activePointerId: number | undefined
+    let resizeStartX = 0
+    let resizeStartY = 0
+    let resizeStartWidth = 0
+    let resizeStartHeight = 0
+    let activeResizePointerId: number | undefined
 
     deps.appShellEl.addEventListener('pointerdown', event => {
       if (event.button !== 0) return
@@ -99,6 +115,35 @@ export function createFloatingWindowControls(deps: FloatingWindowDependencies): 
 
     deps.appShellEl.addEventListener('pointerup', stopDragging)
     deps.appShellEl.addEventListener('pointercancel', stopDragging)
+    deps.windowResizeHandleEl?.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return
+      if (deps.appShellEl.classList.contains('fullscreen') || deps.appShellEl.classList.contains('minimized')) return
+
+      const rect = ensureShellPositioned()
+      resizeStartX = event.clientX
+      resizeStartY = event.clientY
+      resizeStartWidth = rect.width
+      resizeStartHeight = rect.height
+      activeResizePointerId = event.pointerId
+      deps.appShellEl.classList.add('resizing')
+      deps.windowResizeHandleEl?.setPointerCapture(event.pointerId)
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    deps.windowResizeHandleEl?.addEventListener('pointermove', event => {
+      if (activeResizePointerId !== event.pointerId) return
+      resizeShellTo(resizeStartWidth + event.clientX - resizeStartX, resizeStartHeight + event.clientY - resizeStartY)
+    })
+
+    function stopResizing(event: PointerEvent): void {
+      if (activeResizePointerId !== event.pointerId) return
+      activeResizePointerId = undefined
+      deps.appShellEl.classList.remove('resizing')
+      if (deps.windowResizeHandleEl?.hasPointerCapture(event.pointerId)) deps.windowResizeHandleEl.releasePointerCapture(event.pointerId)
+    }
+
+    deps.windowResizeHandleEl?.addEventListener('pointerup', stopResizing)
+    deps.windowResizeHandleEl?.addEventListener('pointercancel', stopResizing)
     deps.toggleWindowSizeEl.addEventListener('click', () => setWindowMinimized(!deps.appShellEl.classList.contains('minimized')))
     deps.toggleFullscreenEl.addEventListener('click', () => setWindowFullscreen(!deps.appShellEl.classList.contains('fullscreen')))
     setWindowFullscreen(deps.appShellEl.classList.contains('fullscreen'))

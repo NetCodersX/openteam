@@ -1,5 +1,5 @@
-import { parseGroupMentions, roleMentionLabel } from '../group/mentionParser'
-import type { GroupChat, GroupMessage, GroupRole, MessageReference } from '../group/types'
+import { parseGroupMentions, roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
+import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore } from '../group/types'
 import type { TeamPageState } from './appState'
 import { getVisibleThinkingRoles, isUnavailableRolesError, shouldAutoReconnectRole, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter } from './chatExperience'
 
@@ -12,6 +12,7 @@ export interface ComposerViewDependencies {
   messageInputEl: HTMLTextAreaElement
   referenceDraftEl: HTMLElement
   mentionPanelEl: HTMLElement
+  getStore(): OpenTeamStore
   getCurrentChat(): GroupChat | undefined
   getCurrentRoles(): GroupRole[]
   roleToneClass(seed: string | undefined): string
@@ -29,7 +30,19 @@ export interface ComposerView {
   submitComposerMessage(): Promise<void>
 }
 
+type MentionOption =
+  | { type: 'all' }
+  | { type: 'role'; role: GroupRole }
+
 export function createComposerView(deps: ComposerViewDependencies): ComposerView {
+  function mentionLabelOptions() {
+    return mentionLabelOptionsFromStore(deps.getStore())
+  }
+
+  function roleDisplayName(role: GroupRole): string {
+    return roleMentionLabel(role, mentionLabelOptions())
+  }
+
   function renderComposerState(): void {
     renderReferenceDraft()
     renderMentionPanel()
@@ -37,8 +50,8 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     const chat = deps.getCurrentChat()
     const roles = deps.getCurrentRoles()
     const raw = deps.messageInputEl.value.trim()
-    const parsed = parseGroupMentions(raw || 'x', roles)
-    const targetRoleIds = raw && parsed.ok ? parsed.targetRoleIds : roles.map(role => role.id)
+    const parsed = parseGroupMentions(raw || 'x', roles, { ...mentionLabelOptions(), defaultTarget: 'none' })
+    const targetRoleIds = raw && parsed.ok ? parsed.targetRoleIds : []
     const targets = roles.filter(role => targetRoleIds.includes(role.id))
     const unavailable = targets.filter(role => role.status !== 'ready')
     const reconnecting = targets.filter(role => deps.state.reconnectingRoleKeys.has(teamRoleKey(role.chatId, role.id)))
@@ -51,25 +64,35 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
       deps.targetPreviewEl.textContent = '当前群聊还没有人员'
       deps.sendButtonEl.disabled = true
     } else if (!raw) {
-      deps.targetPreviewEl.textContent = '输入消息后可发送；无 @ 默认全员'
+      deps.targetPreviewEl.textContent = '输入消息；@ 人员后触发回复'
       deps.sendButtonEl.disabled = true
     } else if (!parsed.ok) {
       deps.targetPreviewEl.textContent = parsed.error
       deps.sendButtonEl.disabled = true
+    } else if (targets.length === 0) {
+      deps.targetPreviewEl.textContent = '将作为群消息记录，不触发 AI'
+      deps.sendButtonEl.disabled = false
     } else if (reconnecting.length > 0) {
-      deps.targetPreviewEl.textContent = `正在自动连接：${reconnecting.map(roleDisplayName).join('、')}`
-      deps.sendButtonEl.disabled = true
+      const readyTargets = targets.filter(role => !reconnecting.includes(role) && role.status === 'ready')
+      deps.targetPreviewEl.textContent = readyTargets.length > 0
+        ? `将发送给：${readyTargets.map(roleDisplayName).join('、')}；正在连接：${reconnecting.map(roleDisplayName).join('、')}`
+        : `正在自动连接：${reconnecting.map(roleDisplayName).join('、')}`
+      deps.sendButtonEl.disabled = readyTargets.length === 0
     } else if (unavailable.length > 0) {
       const waiting = unavailable.filter(role => !shouldAutoReconnectRole(role))
-      if (waiting.length > 0) {
+      const readyTargets = targets.filter(role => role.status === 'ready')
+      if (waiting.length > 0 && readyTargets.length === 0) {
         deps.targetPreviewEl.textContent = `请稍等：${waiting.map(roleDisplayName).join('、')} 正在回复`
         deps.sendButtonEl.disabled = true
+      } else if (waiting.length > 0) {
+        deps.targetPreviewEl.textContent = `将发送给：${readyTargets.map(roleDisplayName).join('、')}；跳过正在回复：${waiting.map(roleDisplayName).join('、')}`
+        deps.sendButtonEl.disabled = false
       } else {
         deps.targetPreviewEl.textContent = `将先自动连接：${unavailable.map(roleDisplayName).join('、')}`
         deps.sendButtonEl.disabled = false
       }
     } else {
-      deps.targetPreviewEl.textContent = `将发送给：${targets.map(roleDisplayName).join('、') || '全部人员'}`
+      deps.targetPreviewEl.textContent = `将发送给：${targets.map(roleDisplayName).join('、')}`
       deps.sendButtonEl.disabled = false
     }
 
@@ -103,24 +126,35 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   function renderMentionPanel(): void {
     const roles = deps.getCurrentRoles()
     const show = shouldShowMentionPanel(deps.messageInputEl.value) && roles.length > 0
+    const options = createMentionOptions(roles)
     deps.mentionPanelEl.hidden = !show
     deps.mentionPanelEl.replaceChildren()
     if (!show) return
 
-    roles.forEach((role, index) => {
+    options.forEach((mentionOption, index) => {
       const option = document.createElement('button')
       option.type = 'button'
       option.className = `mention-option${index === deps.state.mentionIndex ? ' active' : ''}`
       const avatar = document.createElement('span')
-      avatar.className = `mention-avatar ${deps.roleToneClass(role.name)}`
-      avatar.textContent = deps.roleAvatarLabel(role.name)
       const name = document.createElement('span')
       name.className = 'mention-name'
-      name.textContent = role.name
       const site = document.createElement('span')
-      site.className = `mention-site-badge site-pill-${role.chatSite ?? 'gemini'}`
-      site.textContent = siteLabel(role.chatSite)
-      option.addEventListener('click', () => insertMention(role))
+      site.className = 'mention-site-badge'
+      if (mentionOption.type === 'all') {
+        avatar.className = 'mention-avatar mention-avatar-all'
+        avatar.textContent = '全'
+        name.textContent = '所有人'
+        site.textContent = '全员'
+        option.addEventListener('click', () => insertAllMention())
+      } else {
+        const role = mentionOption.role
+        avatar.className = `mention-avatar ${deps.roleToneClass(role.name)}`
+        avatar.textContent = deps.roleAvatarLabel(role.name)
+        name.textContent = role.name
+        site.className = `mention-site-badge ${role.modelSource === 'external' ? 'site-pill-external' : `site-pill-${role.chatSite ?? 'gemini'}`}`
+        site.textContent = roleModelLabel(role, mentionLabelOptions())
+        option.addEventListener('click', () => insertMention(role))
+      }
       option.append(avatar, name, site)
       deps.mentionPanelEl.append(option)
     })
@@ -140,19 +174,21 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     deps.messageInputEl.addEventListener('keyup', () => renderComposerState())
     deps.messageInputEl.addEventListener('keydown', event => {
       const roles = deps.getCurrentRoles()
+      const mentionOptions = createMentionOptions(roles)
       if (!deps.mentionPanelEl.hidden) {
         if (event.key === 'ArrowDown') {
           event.preventDefault()
-          deps.state.mentionIndex = (deps.state.mentionIndex + 1) % roles.length
+          deps.state.mentionIndex = (deps.state.mentionIndex + 1) % mentionOptions.length
           renderMentionPanel()
         } else if (event.key === 'ArrowUp') {
           event.preventDefault()
-          deps.state.mentionIndex = (deps.state.mentionIndex - 1 + roles.length) % roles.length
+          deps.state.mentionIndex = (deps.state.mentionIndex - 1 + mentionOptions.length) % mentionOptions.length
           renderMentionPanel()
         } else if (shouldConfirmMentionWithEnter(event)) {
           event.preventDefault()
-          const role = roles[deps.state.mentionIndex]
-          if (role) insertMention(role)
+          const mentionOption = mentionOptions[deps.state.mentionIndex]
+          if (mentionOption?.type === 'all') insertAllMention()
+          if (mentionOption?.type === 'role') insertMention(mentionOption.role)
         } else if (event.key === 'Escape') {
           deps.mentionPanelEl.hidden = true
         }
@@ -178,7 +214,8 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     }
 
     const waitingRoles = targetResult.roles.filter(role => role.status === 'thinking' && !shouldAutoReconnectRole(role))
-    if (waitingRoles.length > 0) {
+    const readyRoles = targetResult.roles.filter(role => role.status === 'ready')
+    if (waitingRoles.length > 0 && readyRoles.length === 0) {
       deps.showError(`请等待人员回复完成：${waitingRoles.map(roleDisplayName).join('、')}`)
       return
     }
@@ -187,7 +224,9 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     const reconnectableRoles = targetResult.roles.filter(role => role.status !== 'ready' && shouldAutoReconnectRole(role))
     clearComposerAfterSend(raw, reference)
     try {
-      if (reconnectableRoles.length > 0) await deps.reconnectRolesForSend(chat, reconnectableRoles)
+      if (reconnectableRoles.length > 0) {
+        await deps.reconnectRolesForSend(chat, reconnectableRoles).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+      }
       await sendMessageAfterReconnect(chat, raw, reference, targetResult.roles)
     } catch (error) {
       restoreComposerDraft(raw, reference)
@@ -232,10 +271,9 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   }
 
   function resolveMessageTargets(raw: string, roles: GroupRole[]): { ok: true; roles: GroupRole[] } | { ok: false; error: string } {
-    const parsed = parseGroupMentions(raw, roles)
+    const parsed = parseGroupMentions(raw, roles, { ...mentionLabelOptions(), defaultTarget: 'none' })
     if (!parsed.ok) return { ok: false, error: parsed.error }
     const targets = roles.filter(role => parsed.targetRoleIds.includes(role.id))
-    if (targets.length === 0) return { ok: false, error: '当前群聊没有可投递人员' }
     return { ok: true, roles: targets }
   }
 
@@ -249,6 +287,14 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   }
 
   function insertMention(role: GroupRole): void {
+    insertMentionLabel(roleMentionLabel(role, mentionLabelOptions()))
+  }
+
+  function insertAllMention(): void {
+    insertMentionLabel('所有人')
+  }
+
+  function insertMentionLabel(label: string): void {
     const value = deps.messageInputEl.value
     const cursor = deps.messageInputEl.selectionStart ?? value.length
     const beforeCursor = value.slice(0, cursor)
@@ -256,7 +302,6 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     const rawPrefix = atIndex >= 0 ? value.slice(0, atIndex) : value.slice(0, cursor)
     const prefix = rawPrefix && !/\s$/.test(rawPrefix) ? `${rawPrefix} ` : rawPrefix
     const suffix = value.slice(cursor)
-    const label = roleMentionLabel(role)
     const inserted = `${prefix}@${label} ${suffix}`
     deps.messageInputEl.value = inserted
     const nextCursor = prefix.length + label.length + 2
@@ -269,17 +314,12 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   return { renderComposerState, registerComposerEvents, insertMention, setReference, submitComposerMessage }
 }
 
-function roleDisplayName(role: GroupRole): string {
-  return roleMentionLabel(role)
+function createMentionOptions(roles: GroupRole[]): MentionOption[] {
+  return [{ type: 'all' }, ...roles.map(role => ({ type: 'role' as const, role }))]
 }
 
-function siteLabel(site: GroupRole['chatSite']): string {
-  if (site === 'chatgpt') return 'ChatGPT'
-  if (site === 'claude') return 'Claude'
-  if (site === 'deepseek') return 'DeepSeek'
-  if (site === 'kimi') return 'Kimi'
-  if (site === 'qwen') return '千问'
-  return 'Gemini'
+function mentionLabelOptionsFromStore(store: OpenTeamStore) {
+  return roleMentionLabelOptionsFromSettings(store.settings)
 }
 
 function teamRoleKey(chatId: string, roleId: string): string {

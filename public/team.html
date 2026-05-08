@@ -6,43 +6,81 @@
     <title>OpenTeam</title>
     <link rel="stylesheet" href="team.css" />
   </head>
-  <body>
-    <div id="app" class="app-shell">
+  <body class="access-locked">
+    <section id="invite-gate" class="invite-gate" aria-labelledby="invite-gate-title">
+      <form id="invite-code-form" class="invite-card">
+        <div class="brand-mark">
+          <div class="logo-dot" aria-hidden="true"></div>
+          <div>
+            <h1 id="invite-gate-title">OpenTeam</h1>
+            <p>输入内测码后可使用 30 天</p>
+          </div>
+        </div>
+        <div class="field">
+          <label for="invite-code-input">内测码</label>
+          <input id="invite-code-input" type="text" placeholder="OT-XXXX-XXXX-XXXX" autocomplete="one-time-code" spellcheck="false" />
+        </div>
+        <button id="activate-invite-code" class="btn btn-primary" type="submit">激活</button>
+        <p id="invite-code-status" class="invite-status" aria-live="polite"></p>
+      </form>
+    </section>
+    <div id="app" class="app-shell" hidden>
       <div id="floating-toolbar" class="floating-toolbar">
         <button id="close-window" class="icon-btn window-dot window-dot-close" type="button" aria-label="关闭窗口" title="关闭窗口">×</button>
         <button id="toggle-window-size" class="icon-btn window-dot window-dot-minimize" type="button" aria-expanded="true" aria-label="缩小窗口" title="缩小窗口">−</button>
         <button id="toggle-fullscreen" class="icon-btn window-dot window-dot-fullscreen" type="button" aria-pressed="false" aria-label="全屏窗口" title="全屏窗口">⛶</button>
       </div>
+      <button id="window-resize-handle" class="window-resize-handle" type="button" aria-label="调整窗口大小" title="调整窗口大小"></button>
       <nav class="rail" aria-label="OpenTeam 导航">
         <div></div>
         <div class="rail-actions">
-          <button class="rail-btn active" type="button" aria-label="群聊">⌁</button>
-          <button id="open-all-notes" class="rail-btn" type="button" aria-label="查看全部笔记" title="查看全部笔记">✎</button>
+          <button class="rail-btn active" type="button" aria-label="群聊" data-tooltip="群聊">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <path d="M6.5 7.2A6.4 6.4 0 0 1 12 4.8c4 0 7.2 2.6 7.2 5.8s-3.2 5.8-7.2 5.8c-.7 0-1.4-.08-2.1-.25L5.2 18.7l1.15-4.05A5.3 5.3 0 0 1 4.8 10.6c0-1.25.62-2.42 1.7-3.4Z" />
+            </svg>
+          </button>
+          <button id="open-all-notes" class="rail-btn" type="button" aria-label="查看全部笔记" data-tooltip="全部笔记">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <rect x="5" y="5" width="5" height="5" rx="1" />
+              <rect x="14" y="5" width="5" height="5" rx="1" />
+              <rect x="5" y="14" width="5" height="5" rx="1" />
+              <rect x="14" y="14" width="5" height="5" rx="1" />
+            </svg>
+          </button>
+          <button id="open-people-library" class="rail-btn" type="button" aria-label="打开人员库" data-tooltip="人员库">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <path d="M12 12.2a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z" />
+              <path d="M5.7 19.2c.65-3.3 2.82-5.15 6.3-5.15s5.65 1.85 6.3 5.15" />
+            </svg>
+          </button>
+          <button id="open-external-models" class="rail-btn" type="button" aria-label="添加大模型" data-tooltip="添加大模型">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <path d="m12 4.5 6.2 3.55v7.1L12 18.7l-6.2-3.55v-7.1L12 4.5Z" />
+              <path d="m5.95 8.25 6.05 3.45 6.05-3.45" />
+              <path d="M12 11.7v6.8" />
+            </svg>
+          </button>
         </div>
         <div class="rail-bottom">
-          <button id="settings-button" class="rail-btn" type="button" aria-label="设置" aria-expanded="false" aria-controls="settings-menu">⚙</button>
-          <div id="settings-menu" class="settings-menu" hidden>
-            <button id="open-people-library" class="btn btn-ghost" type="button">人员库</button>
-          </div>
+          <button id="settings-button" class="rail-btn" type="button" aria-label="设置" aria-expanded="false" aria-controls="settings-menu" hidden>⚙</button>
+          <div id="settings-menu" class="settings-menu" hidden></div>
         </div>
       </nav>
       <aside class="panel sidebar">
         <div class="panel-header">
           <div class="brand-mark">
             <div class="logo-dot" aria-hidden="true"></div>
-            <div>
-              <h1>OpenTeam</h1>
+            <div class="sidebar-brand-copy">
+              <div class="sidebar-brand-line">
+                <h1>OpenTeam</h1>
+                <span class="sidebar-section-label">群聊</span>
+              </div>
+              <p id="store-summary" class="tiny">加载群聊中</p>
             </div>
           </div>
-          <button id="refresh-store" class="icon-btn" type="button" aria-label="同步并恢复当前群聊" title="同步并恢复当前群聊">↻</button>
-        </div>
-
-        <div class="sidebar-titlebar">
-          <div>
-            <h2>群聊</h2>
-            <p id="store-summary" class="tiny">加载群聊中</p>
+          <div class="sidebar-header-actions">
+            <button id="quick-create-chat" class="icon-btn" type="button" aria-label="新建群聊" aria-controls="chat-create-popover" aria-expanded="false">＋</button>
           </div>
-          <button id="quick-create-chat" class="icon-btn" type="button" aria-label="新建群聊" aria-controls="chat-create-popover" aria-expanded="false">＋</button>
         </div>
 
         <form id="create-chat-form" class="chat-create" hidden>
@@ -100,7 +138,7 @@
         <form id="composer" class="composer">
           <div id="reference-draft" class="reference-draft" hidden></div>
           <div id="mention-panel" class="mention-panel" hidden></div>
-          <textarea id="message-input" placeholder="输入消息，@成员可指定回复；不 @ 默认发给全部成员。"></textarea>
+          <textarea id="message-input" placeholder="输入消息，@成员可指定回复；不 @ 仅记录到群聊。"></textarea>
           <div class="composer-actions">
             <div>
               <div id="target-preview" class="muted tiny">选择群聊后可发送</div>
@@ -160,6 +198,7 @@
         <button id="note-redo" class="note-tool-btn" type="button" aria-label="重做">↷</button>
       </div>
       <div id="notes-editor" class="notes-editor" aria-label="富文本笔记编辑器"></div>
+      <button id="notes-resize-handle" class="notes-resize-handle" type="button" aria-label="调整笔记大小" title="调整笔记大小"></button>
     </aside>
     <span id="template-summary" hidden></span>
     <div id="template-list" hidden></div>
@@ -220,14 +259,57 @@
             <div class="people-library-toolbar">
               <input id="people-library-search" type="search" placeholder="搜索人员名称、描述或提示词" autocomplete="off" />
               <div class="template-type-tabs" role="tablist" aria-label="人员库类型">
-                <button id="people-library-tab-builtin" class="template-type-tab active" type="button" data-template-type="builtin">内置人员</button>
-                <button id="people-library-tab-custom" class="template-type-tab" type="button" data-template-type="custom">自定义人员</button>
+                <button id="people-library-tab-custom" class="template-type-tab active" type="button" data-template-type="custom">自定义人员</button>
+                <button id="people-library-tab-builtin" class="template-type-tab" type="button" data-template-type="builtin">内置人员</button>
               </div>
             </div>
             <div id="people-library-list" class="template-list"></div>
             <div id="people-library-pagination" class="pagination-bar"></div>
           </div>
         </div>
+      </section>
+    </div>
+
+    <div id="external-models-modal" class="modal-backdrop" hidden>
+      <section class="modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="external-models-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="external-models-title">外部模型</h2>
+            <p class="tiny">配置 OpenAI 或 Anthropic 兼容 API，人员可直接选择这些模型。</p>
+          </div>
+          <button id="close-external-models" class="icon-btn" type="button" aria-label="关闭外部模型">×</button>
+        </div>
+        <div id="external-models-list" class="template-list"></div>
+        <form id="external-model-form" class="modal-form">
+          <input id="external-model-id" type="hidden" />
+          <div class="field">
+            <label for="external-model-name">显示名称</label>
+            <input id="external-model-name" type="text" autocomplete="off" placeholder="例如：本地 Qwen" />
+          </div>
+          <div class="field">
+            <label for="external-model-format">接口格式</label>
+            <select id="external-model-format">
+              <option value="openai">OpenAI 格式</option>
+              <option value="anthropic">Anthropic 格式</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="external-model-base-url">模型地址</label>
+            <input id="external-model-base-url" type="url" autocomplete="off" placeholder="https://api.example.com/v1" />
+          </div>
+          <div class="field">
+            <label for="external-model-api-key">模型 Key</label>
+            <input id="external-model-api-key" type="password" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="external-model-model-name">模型名称</label>
+            <input id="external-model-model-name" type="text" autocomplete="off" placeholder="gpt-4.1 / claude-sonnet" />
+          </div>
+          <div class="template-actions">
+            <button id="reset-external-model-form" class="btn" type="button">新建</button>
+            <button class="btn btn-primary" type="submit">保存外部模型</button>
+          </div>
+        </form>
       </section>
     </div>
 
@@ -243,7 +325,7 @@
         <form id="people-library-form" class="modal-form">
           <div class="field">
             <label for="template-name">人员名称</label>
-            <input id="template-name" type="text" maxlength="10" autocomplete="off" />
+            <input id="template-name" type="text" maxlength="50" autocomplete="off" />
           </div>
           <div class="field">
             <label for="template-description">描述</label>
@@ -272,6 +354,10 @@
                 <input id="template-site-deepseek" type="radio" name="template-chat-site" value="deepseek" />
                 <span>DeepSeek</span>
               </label>
+              <label class="site-segment" for="template-site-external">
+                <input id="template-site-external" type="radio" name="template-chat-site" value="external" />
+                <span>外部模型</span>
+              </label>
               <label class="site-segment" for="template-site-qwen" hidden>
                 <input id="template-site-qwen" type="radio" name="template-chat-site" value="qwen" />
                 <span>千问</span>
@@ -286,6 +372,10 @@
             <label for="template-chatgpt-gpts-url">GPTs 链接前缀</label>
             <input id="template-chatgpt-gpts-url" type="url" autocomplete="off" placeholder="https://chatgpt.com/g/..." />
             <p class="tiny">选填。保存后，该人员使用 ChatGPT 时会优先打开这个 GPTs。</p>
+          </div>
+          <div id="template-external-model-field" class="field" hidden>
+            <label for="template-external-model-select">外部模型</label>
+            <select id="template-external-model-select"></select>
           </div>
           <div class="template-actions">
             <button class="btn btn-primary" type="submit">保存人员</button>
@@ -325,8 +415,8 @@
             <div class="add-person-toolbar">
               <input id="add-person-search" type="search" placeholder="搜索人员名称、描述或提示词" autocomplete="off" />
               <div class="template-type-tabs" role="tablist" aria-label="人员类型">
-                <button id="add-person-tab-builtin" class="template-type-tab active" type="button" data-template-type="builtin">内置人员</button>
-                <button id="add-person-tab-custom" class="template-type-tab" type="button" data-template-type="custom">自定义人员</button>
+                <button id="add-person-tab-custom" class="template-type-tab active" type="button" data-template-type="custom">自定义人员</button>
+                <button id="add-person-tab-builtin" class="template-type-tab" type="button" data-template-type="builtin">内置人员</button>
               </div>
             </div>
             <div id="add-library-people-list" class="select-list"></div>

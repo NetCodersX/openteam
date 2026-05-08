@@ -10,6 +10,8 @@ import {
   type RuntimeMessage,
 } from './runtimeClient'
 import { createMessageRouter } from './messageRouter'
+import { createExternalModelHandlers } from './externalModelHandlers'
+import { createExternalModelClient } from './externalModelClient'
 import { createPromptSender } from './promptDelivery'
 import { createRoleHandlers } from './roleHandlers'
 import { createRuntimeFrameRegistry } from './runtimeFrames'
@@ -21,6 +23,7 @@ const runtimeFrames = createRuntimeFrameRegistry()
 const log = createLogger('background')
 
 const sendPrompt = createPromptSender({ log })
+const externalModelClient = createExternalModelClient()
 
 function sendRoleMessage(tabId: number, frameId: number, message: BackgroundToRoleMessage): Promise<unknown> {
   return chrome.tabs.sendMessage(tabId, message, { frameId })
@@ -72,8 +75,9 @@ const routeMessage = createMessageRouter([
   { type: 'GROUP_STORE_GET', handler: handleStoreGet },
   ...createChatHandlers({ broadcastStoreUpdated, getChatStatusFromRoles, log, newId, now, runtimeFrames }),
   { type: 'GROUP_SETTINGS_UPDATE', handler: handleSettingsUpdate },
+  ...createExternalModelHandlers({ broadcastStoreUpdated, newId, now }),
   ...createRoleHandlers({ broadcastStoreUpdated, log, newId, now, runtimeFrames, sendPrompt }),
-  ...createMessageHandlers({ broadcastStoreUpdated, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendError, sendPrompt, sendRoleMessage }),
+  ...createMessageHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendError, sendPrompt, sendRoleMessage }),
 ])
 
 chrome.runtime.onInstalled.addListener(() => {

@@ -65,7 +65,8 @@ describe('IframeHost', () => {
     expect(iframe).toBeInstanceOf(HTMLIFrameElement)
     expect(iframe?.parentElement?.classList.contains('role-frame-shell')).toBe(true)
     expect(iframe?.parentElement?.parentElement).toBe(group)
-    expect(iframe?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('role-1')
+    expect(iframe?.parentElement?.querySelector('.role-frame-name')?.textContent).toBe('role-1')
+    expect(iframe?.parentElement?.querySelector('.role-frame-site')?.textContent).toBe('Gemini')
     expect(iframe?.dataset.chatId).toBe('chat-1')
     expect(iframe?.dataset.roleId).toBe('role-1')
     expect(iframe?.dataset.roleKey).toBe('chat-1:role-1')
@@ -99,6 +100,23 @@ describe('IframeHost', () => {
 
     const lastCall = postMessage.mock.calls[postMessage.mock.calls.length - 1]
     expect(lastCall?.[1]).toBe('https://chatgpt.com')
+  })
+
+  it('shows the role site next to each background iframe label', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const host = createIframeHost({ visibleHost })
+
+    host.activateChat(makeChat('chat-1', ['role-1', 'role-2']), [
+      { ...makeRole('chat-1', 'role-1'), name: '产品经理', chatSite: 'chatgpt' },
+      { ...makeRole('chat-1', 'role-2'), name: '技术方案', chatSite: 'deepseek' },
+    ])
+
+    const labels = [...visibleHost.querySelectorAll('.role-frame-label')]
+    expect(labels[0].querySelector('.role-frame-name')?.textContent).toBe('产品经理')
+    expect(labels[0].querySelector('.role-frame-site')?.textContent).toBe('ChatGPT')
+    expect(labels[1].querySelector('.role-frame-name')?.textContent).toBe('技术方案')
+    expect(labels[1].querySelector('.role-frame-site')?.textContent).toBe('DeepSeek')
   })
 
   it('posts role assignments to the Claude origin for Claude role frames', () => {
@@ -225,6 +243,24 @@ describe('IframeHost', () => {
     expect(group?.querySelectorAll('.role-frame-label')).toHaveLength(2)
   })
 
+  it('removes role iframes that are no longer members when reactivating a chat', () => {
+    const visibleHost = document.createElement('div')
+    document.body.append(visibleHost)
+    const onEvent = vi.fn()
+    const host = createIframeHost({ visibleHost, onEvent })
+    const chat = makeChat('chat-1', ['role-1', 'role-2'])
+    host.activateChat(chat, [makeRole('chat-1', 'role-1'), makeRole('chat-1', 'role-2')])
+    expect(host.getRoleFrame('chat-1', 'role-2')).toBeInstanceOf(HTMLIFrameElement)
+
+    host.activateChat(makeChat('chat-1', ['role-1']), [makeRole('chat-1', 'role-1')])
+
+    expect(host.getRoleFrame('chat-1', 'role-1')).toBeInstanceOf(HTMLIFrameElement)
+    expect(host.getRoleFrame('chat-1', 'role-2')).toBeUndefined()
+    expect(host.getChatGroup('chat-1')?.querySelectorAll('iframe')).toHaveLength(1)
+    expect(visibleHost.querySelector('[data-role-key="chat-1:role-2"]')).toBeNull()
+    expect(onEvent).toHaveBeenCalledWith({ type: 'role-disposed', chatId: 'chat-1', roleId: 'role-2' })
+  })
+
   it('updates chat group and role frame labels when display names change', () => {
     const visibleHost = document.createElement('div')
     document.body.append(visibleHost)
@@ -235,12 +271,12 @@ describe('IframeHost', () => {
     host.activateChat(chat, [role])
 
     expect(host.getChatGroup('chat-1')?.querySelector('.chat-frame-group-title')?.textContent).toBe('产品评审群')
-    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('产品经理')
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-name')?.textContent).toBe('产品经理')
 
     host.activateChat({ ...chat, name: '增长复盘群' }, [{ ...role, name: '增长顾问' }])
 
     expect(host.getChatGroup('chat-1')?.querySelector('.chat-frame-group-title')?.textContent).toBe('增长复盘群')
-    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('增长顾问')
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-name')?.textContent).toBe('增长顾问')
   })
 
   it('does not move active chat iframes through a hidden host on same-chat reactivation', () => {
@@ -290,7 +326,7 @@ describe('IframeHost', () => {
     host.activateChat({ ...chat, name: '新群名' }, [{ ...role, name: '新角色' }])
 
     expect(host.getChatGroup('chat-1')?.querySelector('.chat-frame-group-title')?.textContent).toBe('新群名')
-    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-label')?.textContent).toBe('新角色')
+    expect(host.getRoleFrame('chat-1', 'role-1')?.parentElement?.querySelector('.role-frame-name')?.textContent).toBe('新角色')
     expect(onEvent).toHaveBeenCalled()
   })
 

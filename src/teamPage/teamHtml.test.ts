@@ -15,6 +15,19 @@ function readTeamDocument(): string {
 }
 
 describe('team.html chat creation UI', () => {
+  it('starts behind a local invite-code activation gate', () => {
+    const html = readTeamDocument()
+
+    expect(html).toContain('<body class="access-locked">')
+    expect(html).toContain('id="invite-gate"')
+    expect(html).toContain('id="invite-code-form"')
+    expect(html).toContain('id="invite-code-input"')
+    expect(html).toContain('id="invite-code-status"')
+    expect(html).toContain('id="activate-invite-code"')
+    expect(html).toMatch(/body\.access-locked #app\s*{[^}]*display:\s*none;/s)
+    expect(html).toMatch(/body:not\(\.access-locked\) #invite-gate\s*{[^}]*display:\s*none;/s)
+  })
+
   it('loads team styles from an external stylesheet', () => {
     const html = readTeamHtml()
     const css = readTeamCss()
@@ -111,11 +124,38 @@ describe('team.html chat creation UI', () => {
 
     expect(html).toContain('aria-label="查看全部笔记"')
     expect(html).toContain('id="open-all-notes"')
+    expect(html).toContain('data-tooltip="全部笔记"')
     expect(html).not.toContain('aria-label="消息"')
     expect(html).not.toContain('aria-label="实验"')
+    expect(html).not.toContain('>✎</button>')
     expect(html).toMatch(/\.all-notes-modal\s*{[^}]*width:\s*min\(980px,\s*calc\(100vw - 48px\)\);/s)
     expect(html).toMatch(/\.all-notes-workspace\s*{[^}]*grid-template-columns:\s*240px minmax\(0,\s*1fr\);/s)
     expect(html).toMatch(/\.all-note-target\.deleted-chat\s*{[^}]*border-color:\s*rgba\(248,\s*184,\s*78,\s*0\.22\);/s)
+  })
+
+  it('promotes people library and external models from settings into the left rail', () => {
+    const html = readTeamDocument()
+    const railActions = html.match(/<div class="rail-actions">(?<body>[\s\S]*?)<\/div>/)?.groups?.body ?? ''
+    const settingsMenu = html.match(/<div id="settings-menu" class="settings-menu" hidden>(?<body>[\s\S]*?)<\/div>/)?.groups?.body ?? ''
+
+    expect(railActions).toContain('id="open-people-library"')
+    expect(railActions).toContain('aria-label="群聊"')
+    expect(railActions).toContain('data-tooltip="群聊"')
+    expect(railActions).toContain('aria-label="打开人员库"')
+    expect(railActions).toContain('data-tooltip="人员库"')
+    expect(railActions).toContain('id="open-external-models"')
+    expect(railActions).toContain('aria-label="添加大模型"')
+    expect(railActions).toContain('data-tooltip="添加大模型"')
+    expect(railActions).toContain('<svg aria-hidden="true"')
+    expect(railActions).not.toContain('>⌁</button>')
+    expect(railActions).not.toContain('>人</button>')
+    expect(railActions).not.toContain('>模</button>')
+    expect(settingsMenu).not.toContain('id="open-people-library"')
+    expect(settingsMenu).not.toContain('id="open-external-models"')
+    expect(html).toMatch(/\.rail\s*{[^}]*grid-template-rows:\s*74px 1fr auto;/s)
+    expect(html).toMatch(/\.rail-actions\s*{[^}]*padding-top:\s*0;/s)
+    expect(html).toMatch(/\.rail-btn\[data-tooltip\]::after\s*{[^}]*content:\s*attr\(data-tooltip\);/s)
+    expect(html).toMatch(/\.rail-btn\[data-tooltip\]:hover::after,\s*\.rail-btn\[data-tooltip\]:focus-visible::after\s*{[^}]*opacity:\s*1;/s)
   })
 
   it('styles window controls as visible mac-style traffic lights', () => {
@@ -126,10 +166,12 @@ describe('team.html chat creation UI', () => {
     expect(html).toContain('class="icon-btn window-dot window-dot-close"')
     expect(html).toContain('class="icon-btn window-dot window-dot-minimize"')
     expect(html).toContain('class="icon-btn window-dot window-dot-fullscreen"')
-    expect(toolbarRule).toContain('right: 12px;')
-    expect(toolbarRule).not.toContain('left: 12px;')
-    expect(fullscreenToolbarRule).toContain('right: 14px;')
-    expect(fullscreenToolbarRule).not.toContain('left: 14px;')
+    expect(toolbarRule).toContain('left: 18px;')
+    expect(toolbarRule).toContain('right: auto;')
+    expect(toolbarRule).toContain('z-index: 12;')
+    expect(fullscreenToolbarRule).toContain('left: 18px;')
+    expect(fullscreenToolbarRule).toContain('right: auto;')
+    expect(html).toMatch(/\.floating-toolbar \.icon-btn\s*{[^}]*width:\s*11px;[^}]*height:\s*11px;/s)
     expect(html).toMatch(/\.floating-toolbar \.icon-btn\.window-dot-close\s*{[^}]*background:\s*#ff5f57;/s)
     expect(html).toMatch(/\.floating-toolbar \.icon-btn\.window-dot-minimize\s*{[^}]*background:\s*#febc2e;/s)
     expect(html).toMatch(/\.floating-toolbar \.icon-btn\.window-dot-fullscreen\s*{[^}]*background:\s*#28c840;/s)
@@ -139,10 +181,10 @@ describe('team.html chat creation UI', () => {
   it('uses template default sites for library people and the add-person picker for temporary people', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/peopleLibraryView.ts'), 'utf8')
 
-    expect(source).toContain('function addPersonSiteControl(itemKey: string, chatSites: ChatSite[], disabledSites: Set<ChatSite>): HTMLElement')
-    expect(source).toContain('function selectedAddPersonSites(itemKey: string, fallbackSite: ChatSite, disabledSites = new Set<ChatSite>()): ChatSite[]')
+    expect(source).toContain('function addPersonSiteControl(itemKey: string, chatSites: string[], disabledSites: Set<string>): HTMLElement')
+    expect(source).toContain('function selectedAddPersonSites(itemKey: string, fallbackSite: string, disabledSites = new Set<string>()): string[]')
     expect(source).toContain("item.chatSites.map(chatSite =>")
-    expect(source).toContain("if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, chatSite }")
+    expect(source).toContain("if (item.source === 'library') return { source: 'library', roleTemplateId: item.roleTemplateId, ...modelPatch }")
     expect(source).toContain("source: 'temporary'")
     expect(source).toContain("if (deps.templateSiteClaudeEl.checked) return 'claude'")
     expect(source).toContain("if (deps.templateSiteDeepSeekEl.checked) return 'deepseek'")
@@ -164,10 +206,11 @@ describe('team.html chat creation UI', () => {
     expect(source).not.toContain("'#default-site-qwen'")
     expect(domRefsSource).toContain('templateSiteGeminiEl')
     expect(source).toContain('function readTemplateChatSite(): ChatSite')
-    expect(source).toContain('defaultChatSite: readTemplateChatSite()')
+    expect(source).toContain('defaultChatSite: deps.templateSiteExternalEl.checked ? undefined : readTemplateChatSite()')
+    expect(source).toContain('defaultExternalModelId: deps.templateSiteExternalEl.checked ? deps.templateExternalModelSelectEl.value : undefined')
     expect(source).toContain('template.defaultChatSite ?? store.settings.defaultChatSite')
     expect(source).toContain('chatGptGptsUrl: deps.templateSiteChatGptEl.checked ? deps.templateChatGptGptsUrlEl.value.trim() : undefined')
-    expect(source).toContain('function syncTemplateChatGptGptsField(): void')
+    expect(source).toContain('function syncTemplateModelFields(): void')
     expect(html).not.toContain('默认站点：Gemini')
     expect(html).not.toContain('默认站点：ChatGPT')
     expect(html).not.toContain('默认站点：Claude')
@@ -186,6 +229,7 @@ describe('team.html chat creation UI', () => {
     expect(html).toContain('id="new-template"')
     expect(html).toContain('id="person-template-modal"')
     expect(html).toContain('id="close-person-template"')
+    expect(personTemplateModal).toContain('id="template-name" type="text" maxlength="50"')
     expect(peopleLibraryModal).not.toContain('id="people-library-form"')
     expect(peopleLibraryModal).not.toContain('id="template-name"')
     expect(personTemplateModal).not.toContain('id="delete-template"')
@@ -212,9 +256,9 @@ describe('team.html chat creation UI', () => {
     const html = readTeamDocument()
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/rolePanelView.ts'), 'utf8')
 
-    expect(source).toContain("sitePill.className = `site-pill site-pill-${role.chatSite ?? 'gemini'}`")
+    expect(source).toContain("sitePill.className = `site-pill ${model.className}`")
     expect(source).toContain("menu.className = 'role-site-menu'")
-    expect(source).toContain("option.className = `role-site-option${role.chatSite === site ? ' active' : ''}`")
+    expect(source).toContain("option.className = `role-site-option${active ? ' active' : ''}`")
     expect(source).not.toContain("siteActions.className = 'chat-row tiny'")
     expect(source).not.toContain('roleSiteBadge(role.chatSite)')
     expect(html).toMatch(/\.site-pill\s*{[^}]*border-radius:\s*999px;/s)
@@ -252,13 +296,13 @@ describe('team.html chat creation UI', () => {
     expect(domRefsSource).toContain("'#add-person-tab-custom'")
   })
 
-  it('uses a clean page background without decorative side panels', () => {
+  it('uses a deep desktop-style page background without decorative side panels', () => {
     const html = readTeamDocument()
 
     expect(html).not.toContain('body::before')
     expect(html).not.toContain('body::after')
-    expect(html).toContain('--bg: #000000;')
-    expect(html).toMatch(/body\s*{[^}]*background:\s*var\(--bg\);/s)
+    expect(html).toContain('--bg: #090d13;')
+    expect(html).toMatch(/body\s*{[^}]*background:\s*[\s\S]*linear-gradient\(180deg,\s*#252a32,\s*#151a21 34%,\s*#090d13\);/s)
   })
 
   it('styles iframe background groups with chat and role labels', () => {
@@ -334,6 +378,7 @@ describe('team.html chat creation UI', () => {
     expect(chatListSource).toContain("menu.className = 'chat-action-menu'")
     expect(chatListSource).toContain("rename.textContent = '编辑名称'")
     expect(chatListSource).toContain("duplicate.textContent = '复制群聊'")
+    expect(chatListSource).toContain("exportRecord.textContent = '导出记录'")
     expect(chatListSource).toContain("clearMessages.textContent = '清空消息'")
     expect(chatListSource).toContain("closeFrames.textContent = '关闭群聊'")
     expect(chatListSource).toContain("remove.textContent = '删除群聊'")
@@ -341,12 +386,22 @@ describe('team.html chat creation UI', () => {
     expect(chatListSource).toContain("runCommand('GROUP_CHAT_CLOSE'")
     expect(chatListSource).toContain("runCommand('GROUP_CHAT_UPDATE'")
     expect(chatListSource).toContain("runCommand('GROUP_CHAT_DUPLICATE'")
+    expect(chatListSource).toContain('formatChatExportMarkdown')
     expect(chatListSource).toContain("sendRuntimeMessage('GROUP_CHAT_DELETE'")
     expect(chatListSource).toContain("response.error === 'Unknown OpenTeam message'")
     expect(chatListSource).toContain('deleteChatFromLocalStore(chatId)')
     expect(html).toMatch(/\.chat-action-menu\s*{[^}]*position:\s*absolute;/s)
     expect(html).toMatch(/\.chat-action-menu\s*{[^}]*right:\s*14px;/s)
     expect(html).not.toMatch(/\.chat-action-menu\s*{[^}]*grid-column:\s*2 \/ 4;/s)
+  })
+
+  it('renders a bottom-right floating window resize handle', () => {
+    const html = readTeamDocument()
+
+    expect(html).toContain('id="window-resize-handle"')
+    expect(html).toContain('class="window-resize-handle"')
+    expect(html).toMatch(/\.window-resize-handle\s*{[^}]*cursor:\s*nwse-resize;/s)
+    expect(html).toMatch(/\.app-shell\.fullscreen \.window-resize-handle\s*{[^}]*display:\s*none;/s)
   })
 
   it('renders compact icon actions for assistant messages', () => {
@@ -435,8 +490,9 @@ describe('team.html chat creation UI', () => {
     const html = readTeamDocument()
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/composerView.ts'), 'utf8')
 
-    expect(source).toContain('roleMentionLabel(role)')
-    expect(source).toContain("site.className = `mention-site-badge site-pill-${role.chatSite ?? 'gemini'}`")
+    expect(source).toContain('roleMentionLabel(role, mentionLabelOptions())')
+    expect(source).toContain('roleModelLabel(role, mentionLabelOptions())')
+    expect(source).toContain("site.className = `mention-site-badge ${role.modelSource === 'external' ? 'site-pill-external' : `site-pill-${role.chatSite ?? 'gemini'}`}`")
     expect(html).toMatch(/\.mention-panel\s*{[^}]*left:\s*12px;/s)
     expect(html).toMatch(/\.mention-panel\s*{[^}]*bottom:\s*calc\(100% \+ 8px\);/s)
     expect(html).toMatch(/\.mention-panel\s*{[^}]*width:\s*min\(280px,\s*calc\(100% - 24px\)\);/s)
@@ -445,16 +501,15 @@ describe('team.html chat creation UI', () => {
     expect(html).not.toMatch(/\.mention-panel\s*{[^}]*right:\s*78px;/s)
   })
 
-  it('makes the refresh control sync and recover the current chat', () => {
+  it('keeps the sidebar header focused on chat creation instead of a refresh control', () => {
     const html = readTeamDocument()
-    const source = readFileSync(resolve(process.cwd(), 'src/teamPage/roleRecoveryController.ts'), 'utf8')
     const uiSource = readFileSync(resolve(process.cwd(), 'src/teamPage/teamUiController.ts'), 'utf8')
 
-    expect(html).toContain('aria-label="同步并恢复当前群聊"')
-    expect(html).toContain('title="同步并恢复当前群聊"')
-    expect(source).toContain('async function refreshCurrentChat()')
-    expect(source).toContain("log.info('ui:refresh-recover-chat'")
-    expect(uiSource).toContain('refreshCurrentChat().catch')
+    expect(html).not.toContain('id="refresh-store"')
+    expect(html).not.toContain('aria-label="同步并恢复当前群聊"')
+    expect(html).toContain('id="quick-create-chat"')
+    expect(uiSource).not.toContain('#refresh-store')
+    expect(uiSource).not.toContain('refreshCurrentChat().catch')
   })
 
   it('asks for confirmation before closing the OpenTeam window', () => {
@@ -464,14 +519,14 @@ describe('team.html chat creation UI', () => {
     expect(source).toContain('window.close()')
   })
 
-  it('uses a lighter composer and simplified chat header', () => {
+  it('uses a refined composer and desktop-style chat header', () => {
     const html = readTeamDocument()
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/chatHeaderView.ts'), 'utf8')
     const uiSource = readFileSync(resolve(process.cwd(), 'src/teamPage/teamUiController.ts'), 'utf8')
 
-    expect(html).toContain('placeholder="输入消息，@成员可指定回复；不 @ 默认发给全部成员。"')
-    expect(html).toMatch(/\.chat-header\s*{[^}]*min-height:\s*72px;/s)
-    expect(html).toMatch(/\.chat-header\s*{[^}]*padding:\s*16px 132px 14px 22px;/s)
+    expect(html).toContain('placeholder="输入消息，@成员可指定回复；不 @ 仅记录到群聊。"')
+    expect(html).toMatch(/\.chat-header\s*{[^}]*min-height:\s*84px;/s)
+    expect(html).toMatch(/\.chat-header\s*{[^}]*padding:\s*18px 36px 15px 24px;/s)
     expect(html).toMatch(/\.composer\s*{[^}]*margin:\s*0 22px 18px;/s)
     expect(html).toMatch(/\.composer\s*{[^}]*border:\s*1px solid rgba\(132,\s*153,\s*171,\s*0\.22\);/s)
     expect(html).toMatch(/\.drawer-summary\s*{[^}]*min-height:\s*30px;/s)
@@ -510,7 +565,7 @@ describe('team.html chat creation UI', () => {
     expect(source).toContain('renderMessageMentions(message)')
     expect(source).toContain('appendMentionsToBody(body, mentions)')
     expect(source).toContain('message.mentionedRoleIds')
-    expect(source).toContain('roleMentionLabel(role)')
+    expect(source).toContain('roleMentionLabel(role, mentionLabelOptions())')
     expect(html).toMatch(/\.message-mentions\s*{[^}]*display:\s*inline-flex;/s)
     expect(html).toMatch(/\.message-mention\s*{[^}]*font-weight:\s*820;/s)
   })
@@ -552,7 +607,9 @@ describe('team.html chat creation UI', () => {
     expect(source).toContain("time.className = 'chat-time'")
     expect(source).toContain("time.textContent = formatChatListTime(chat.updatedAt)")
     expect(source).not.toContain("textNode(`${chat.roleIds.length} 人员 · ${formatTime(chat.updatedAt)}`)")
-    expect(html).toMatch(/\.chat-item\s*{[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\) auto;/s)
+    expect(html).toMatch(/\.chat-list\s*{[^}]*--chat-list-row-height:\s*70px;/s)
+    expect(html).toMatch(/\.chat-list\s*{[^}]*gap:\s*5px;/s)
+    expect(html).toMatch(/\.chat-item\s*{[^}]*grid-template-columns:\s*40px minmax\(0, 1fr\) auto;/s)
     expect(html).toContain('.chat-avatar')
     expect(html).toContain('.chat-time')
     expect(html).toMatch(/\.chat-time\s*{[^}]*font-size:\s*10px;/s)

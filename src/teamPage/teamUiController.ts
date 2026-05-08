@@ -2,9 +2,10 @@ import { getDefaultChatSiteUrl } from '../group/conversationUrl'
 import type { ChatSite, GroupChat, GroupRole, RoomMode } from '../group/types'
 import type { TeamPageState } from './appState'
 import { requireElement } from './domRefs'
+import type { RoleFrameState } from './iframeHost'
 
 interface TeamUiIframeHost {
-  restoreChat(chat: GroupChat, roles: GroupRole[]): void
+  restoreChat(chat: GroupChat, roles: GroupRole[]): RoleFrameState[]
 }
 
 export interface TeamUiControllerDependencies {
@@ -17,7 +18,6 @@ export interface TeamUiControllerDependencies {
   togglePeopleDrawerEl: HTMLButtonElement
   rolePanelEl: HTMLElement
   iframeHost: TeamUiIframeHost
-  refreshCurrentChat(): Promise<void>
   getCurrentChat(): GroupChat | undefined
   getCurrentRoles(): GroupRole[]
   getSelectedLoginSite(): ChatSite
@@ -26,8 +26,10 @@ export interface TeamUiControllerDependencies {
   renderRolePanel(): void
   renderAddPersonDialog(): void
   closePeopleModals(): void
+  closeExternalModels(): void
   registerComposerEvents(): void
   registerPeopleLibraryEvents(): void
+  registerExternalModelsEvents(): void
   runCommand(type: string, payload?: Record<string, unknown>): Promise<void>
   showError(message: string): void
   log: {
@@ -42,10 +44,6 @@ export interface TeamUiController {
 
 export function createTeamUiController(deps: TeamUiControllerDependencies): TeamUiController {
   function registerUi(): void {
-    requireElement<HTMLButtonElement>('#refresh-store').addEventListener('click', () => {
-      deps.refreshCurrentChat().catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
-    })
-
     deps.quickCreateChatEl.addEventListener('click', () => {
       setChatCreatePopoverVisible(deps.createChatFormEl.hidden)
     })
@@ -59,6 +57,7 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
     })
 
     deps.registerPeopleLibraryEvents()
+    deps.registerExternalModelsEvents()
 
     deps.togglePeopleDrawerEl.addEventListener('click', () => {
       deps.state.peopleDrawerOpen = !deps.state.peopleDrawerOpen
@@ -84,7 +83,7 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
         deps.state.chatMenuChatId = undefined
         deps.renderChatList()
       }
-      if (deps.state.roleSiteMenuRoleId && !target?.closest('.role-site-menu, .site-pill, .role-more')) {
+      if (deps.state.roleSiteMenuRoleId && !target?.closest('.role-site-menu, .site-pill')) {
         deps.state.roleSiteMenuRoleId = undefined
         deps.renderRolePanel()
       }
@@ -99,8 +98,10 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
       deps.settingsMenuEl.hidden = true
       deps.settingsButtonEl.setAttribute('aria-expanded', 'false')
       deps.closePeopleModals()
+      deps.closeExternalModels()
       deps.state.chatMenuChatId = undefined
       deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = undefined
       deps.renderChatList()
       deps.renderRolePanel()
     })
@@ -126,10 +127,12 @@ export function createTeamUiController(deps: TeamUiControllerDependencies): Team
     requireElement<HTMLButtonElement>('#restore-chat').addEventListener('click', () => {
       const chat = deps.getCurrentChat()
       if (!chat) return
-      const roles = deps.getCurrentRoles()
+      const roles = deps.getCurrentRoles().filter(role => role.modelSource !== 'external')
       deps.log.info('ui:restore-chat', { chatId: chat.id, roleIds: roles.map(role => role.id) })
-      deps.iframeHost.restoreChat(chat, roles)
-      Promise.all(roles.map(role => deps.runCommand('GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id }))).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+      const restoredFrames = deps.iframeHost.restoreChat({ ...chat, roleIds: roles.map(role => role.id) }, roles)
+      const assignedRoleIds = new Set(restoredFrames.filter(frame => frame.status === 'assigned').map(frame => frame.roleId))
+      const rolesToRecover = roles.filter(role => !assignedRoleIds.has(role.id))
+      Promise.all(rolesToRecover.map(role => deps.runCommand('GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id }))).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
     })
 
     deps.registerComposerEvents()

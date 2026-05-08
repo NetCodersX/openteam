@@ -3,6 +3,8 @@ import type { MessageHighlightColor } from './highlightColors'
 
 export type RoomMode = 'independent' | 'collaborative'
 export type ChatSite = 'gemini' | 'chatgpt' | 'claude' | 'deepseek' | 'kimi' | 'qwen'
+export type RoleModelSource = 'site' | 'external'
+export type ExternalModelFormat = 'openai' | 'anthropic'
 
 export type ChatStatus = 'draft' | 'initializing' | 'ready' | 'running' | 'error'
 
@@ -24,6 +26,8 @@ export interface OpenTeamStore {
   globalNote?: RichNoteDocument
   chatNotesById?: Record<string, RichNoteDocument>
   messageHighlightsById?: Record<string, MessageHighlight[]>
+  externalRoleMemoriesById?: Record<string, ExternalRoleMemory>
+  externalChatMemoriesById?: Record<string, ExternalChatMemory>
   settings: OpenTeamSettings
   viewState?: OpenTeamViewState
 }
@@ -37,6 +41,33 @@ export interface OpenTeamSettings {
   defaultMode: RoomMode
   maxContextChars: number
   defaultChatSite: ChatSite
+  externalModelOrder: string[]
+  externalModelsById: Record<string, ExternalModelConfig>
+}
+
+export interface ExternalModelConfig {
+  id: string
+  name: string
+  format: ExternalModelFormat
+  baseUrl: string
+  apiKey: string
+  modelName: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ExternalRoleMemory {
+  roleId: string
+  summary?: string
+  summarizedThroughSeq: number
+  updatedAt: number
+}
+
+export interface ExternalChatMemory {
+  chatId: string
+  summary?: string
+  summarizedThroughSeq: number
+  updatedAt: number
 }
 
 export interface GroupChat {
@@ -57,7 +88,9 @@ export interface RoleTemplate {
   type: RoleTemplateType
   name: string
   description?: string
+  defaultModelSource?: RoleModelSource
   defaultChatSite?: ChatSite
+  defaultExternalModelId?: string
   chatGptGptsUrl?: string
   systemPrompt: string
   createdAt: number
@@ -68,7 +101,9 @@ export interface GroupRole {
   id: string
   chatId: string
   templateId?: string
+  modelSource?: RoleModelSource
   chatSite?: ChatSite
+  externalModelId?: string
   name: string
   description?: string
   systemPrompt?: string
@@ -96,6 +131,7 @@ export interface GroupMessage {
   roleName?: string
   targetRoleIds?: string[]
   mentionedRoleIds?: string[]
+  mentionsAll?: boolean
   references?: MessageReference[]
   createdAt: number
   status: DeliveryStatus

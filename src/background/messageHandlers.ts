@@ -1,11 +1,13 @@
 import { buildUnsyncedContext } from '../group/contextSync'
 import { extractSupportedConversationId, normalizeSupportedChatConversationUrl } from '../group/conversationUrl'
 import { normalizeMessageHighlightColor } from '../group/highlightColors'
-import { parseGroupMentions } from '../group/mentionParser'
+import { buildExternalModelPrompt, type ExternalMemoryPatch } from '../group/externalModelContext'
+import { parseGroupMentions, roleMentionLabelOptionsFromSettings } from '../group/mentionParser'
 import { buildPrompt } from '../group/promptBuilder'
 import { mapRuntimeRoleStatus } from '../group/runtimeProtocol'
 import type { BackgroundToRoleMessage } from '../group/runtimeProtocol'
-import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RuntimeFrameBinding } from '../group/types'
+import type { ExternalModelConfig, GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore, RuntimeFrameBinding } from '../group/types'
+import { createExternalModelClient, type ExternalModelClient } from './externalModelClient'
 import type { BackgroundMessageRoute } from './messageRouter'
 import type { PromptDelivery, PromptSender } from './promptDelivery'
 import { messageTabId, rememberHost, senderFrameId, senderTabId, type RuntimeMessage } from './runtimeClient'
@@ -13,6 +15,24 @@ import type { RuntimeFrameRegistry } from './runtimeFrames'
 import { getChatMessages, getChatRoles, mutateStore, requireChat, requireRole } from './storeAccess'
 
 const STALE_THINKING_MS = 120_000
+const DEFAULT_DELIVERY_RETRY_DELAYS_MS = [2_000, 2_000, 4_000, 8_000, 15_000] as const
+const DEFAULT_EXTERNAL_MODEL_RETRY_DELAYS_MS = [2_000, 2_000, 4_000, 8_000, 15_000] as const
+const DEFAULT_ROLE_ERROR_RETRY_DELAYS_MS = [2_000, 8_000] as const
+
+interface ExternalPromptDelivery {
+  roleId: string
+  chatId: string
+  messageId: string
+  replyAttemptId: string
+  model: ExternalModelConfig
+  prompt: string
+}
+
+interface ExternalModelRunRegistry {
+  register(chatId: string, roleId: string, replyAttemptId: string, controller: AbortController): void
+  abort(chatId: string, roleId: string, replyAttemptId?: string): void
+  unregister(chatId: string, roleId: string, replyAttemptId: string): void
+}
 
 export const MESSAGE_ROUTE_TYPES = [
   'GROUP_ROLE_RETRY_REPLY',
@@ -44,9 +64,20 @@ export interface MessageHandlersDependencies {
   sendRoleMessage(tabId: number, frameId: number, message: BackgroundToRoleMessage): Promise<unknown>
   sendError(reason: string): Promise<void> | void
   sendPrompt: PromptSender
+  externalModelClient?: ExternalModelClient
+  externalModelRuns?: ExternalModelRunRegistry
+  deliveryRetryDelaysMs?: readonly number[]
+  externalModelRetryDelaysMs?: readonly number[]
+  roleErrorRetryDelaysMs?: readonly number[]
+  waitForRetry?(ms: number): Promise<void>
 }
 
 export function createMessageHandlers(deps: MessageHandlersDependencies): BackgroundMessageRoute[] {
+  const deepSeekPromptBatcher = createDeepSeekPromptBatcher(deps)
+  const externalModelClient = deps.externalModelClient ?? createExternalModelClient()
+  const externalModelRuns = deps.externalModelRuns ?? createExternalModelRunRegistry()
+  const roleErrorRetryCounts = new Map<string, number>()
+
   const handleMessageSend = async (message: RuntimeMessage) => {
     const chatId = requireString(message.chatId, '缺少群聊 ID')
     const raw = requireString(message.raw, '消息内容不能为空')
@@ -56,15 +87,18 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     const { store, result } = await mutateStore(store => {
       const chat = requireChat(store, chatId)
       const roles = getChatRoles(store, chat)
-      const parsed = parseGroupMentions(raw, roles)
+      const parsed = parseGroupMentions(raw, roles, { ...roleMentionLabelOptionsFromSettings(store.settings), defaultTarget: 'none' })
       if (!parsed.ok) throw new Error(parsed.error)
-      if (parsed.targetRoleIds.length === 0) throw new Error('当前群聊没有可投递人员')
       deps.log.debug('message-send:parsed-targets', { chatId: chat.id, targetRoleIds: parsed.targetRoleIds })
 
       const targetRoles = parsed.targetRoleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
-      const unavailable = targetRoles.filter(role => !isRoleDeliverable(role, deps.runtimeFrames.getByRole(chat.id, role.id), timestamp))
+      const unavailable = targetRoles.filter(role => {
+        if (isExternalModelRole(role)) return !getExternalModelForRole(store, role)
+        return !isRoleDeliverable(role, deps.runtimeFrames.getByRole(chat.id, role.id), timestamp)
+      })
+      const deliverableTargetRoles = targetRoles.filter(role => !unavailable.includes(role))
 
-      if (unavailable.length > 0) {
+      if (unavailable.length > 0 && deliverableTargetRoles.length === 0) {
         deps.log.warn('message-send:unavailable-targets', {
           chatId: chat.id,
           targets: unavailable.map(role => ({
@@ -73,13 +107,27 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
             status: role.status,
             updatedAt: role.updatedAt,
             staleThinking: isStaleThinkingRole(role, timestamp),
-            binding: deps.runtimeFrames.getByRole(chat.id, role.id),
+            binding: isExternalModelRole(role) ? undefined : deps.runtimeFrames.getByRole(chat.id, role.id),
           })),
         })
         throw new Error(`以下人员不可用，请等待或恢复：${unavailable.map(role => role.name).join('、')}`)
       }
+      if (unavailable.length > 0) {
+        deps.log.warn('message-send:partial-unavailable-targets', {
+          chatId: chat.id,
+          skippedTargets: unavailable.map(role => ({
+            id: role.id,
+            name: role.name,
+            status: role.status,
+            updatedAt: role.updatedAt,
+            staleThinking: isStaleThinkingRole(role, timestamp),
+            binding: isExternalModelRole(role) ? undefined : deps.runtimeFrames.getByRole(chat.id, role.id),
+          })),
+          deliverableTargetIds: deliverableTargetRoles.map(role => role.id),
+        })
+      }
 
-      for (const role of targetRoles) recoverDeliverableRoleStatus(role, timestamp, deps.log)
+      for (const role of deliverableTargetRoles) recoverDeliverableRoleStatus(role, timestamp, deps.log)
 
       const reference = resolveReference(store, chat, message.reference ?? (Array.isArray(message.references) ? message.references[0] : undefined), deps.newId)
       const userMessage: GroupMessage = {
@@ -90,29 +138,58 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         content: parsed.content,
         targetRoleIds: parsed.targetRoleIds,
         mentionedRoleIds: parsed.mentionedRoleIds.length > 0 ? parsed.mentionedRoleIds : undefined,
+        mentionsAll: parsed.mentionsAll,
         references: reference ? [reference] : undefined,
         createdAt: timestamp,
-        status: 'pending',
-        deliveryStatus: Object.fromEntries(parsed.targetRoleIds.map(roleId => [roleId, 'pending'])),
+        status: parsed.targetRoleIds.length > 0 ? 'pending' : 'received',
+        deliveryStatus: Object.fromEntries(parsed.targetRoleIds.map(roleId => [roleId, unavailable.some(role => role.id === roleId) ? 'error' : 'pending'])),
       }
+      updateUserMessageDeliveryStatus(userMessage)
 
       store.messagesById[userMessage.id] = userMessage
       chat.messageIds.push(userMessage.id)
       chat.nextMessageSeq += 1
       deps.log.info('message-send:stored', { chatId: chat.id, messageId: userMessage.id, targetCount: parsed.targetRoleIds.length })
-      chat.status = 'running'
       chat.updatedAt = timestamp
+      if (parsed.targetRoleIds.length === 0) {
+        return { message: userMessage, deliveries: [], externalDeliveries: [] }
+      }
+
+      chat.status = 'running'
 
       const messages = getChatMessages(store, chat)
-      const deliveries: PromptDelivery[] = parsed.targetRoleIds.map(roleId => {
-        const role = requireRole(store, chat.id, roleId)
-        const binding = deps.runtimeFrames.getByRole(chat.id, role.id)!
-        const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
+      const deliveries: PromptDelivery[] = []
+      const externalDeliveries: ExternalPromptDelivery[] = []
+      for (const role of deliverableTargetRoles) {
+        const roleId = role.id
         const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
         const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
-        const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
         const replyAttemptId = deps.newId('attempt')
-        if (!includesPersona) {
+        if (isExternalModelRole(role)) {
+          const model = requireExternalModelForRole(store, role)
+          const prompt = buildExternalModelPrompt(store, chat, role, userMessage, roles)
+          if (prompt.memoryPatch) applyExternalMemoryPatch(store, prompt.memoryPatch, timestamp)
+          externalDeliveries.push({
+            roleId,
+            chatId: chat.id,
+            messageId: userMessage.id,
+            replyAttemptId,
+            model,
+            prompt: prompt.content,
+          })
+        } else {
+          const binding = deps.runtimeFrames.getByRole(chat.id, role.id)!
+          const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
+          const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
+          deliveries.push({
+            roleId,
+            chatSite: role.chatSite ?? store.settings.defaultChatSite,
+            tabId: binding.tabId,
+            frameId: binding.frameId,
+            message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
+          })
+        }
+        if (!includesPersona && !isExternalModelRole(role)) {
           deps.log.debug('prompt:persona-skipped', {
             chatId: chat.id,
             roleId: role.id,
@@ -128,58 +205,64 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         role.lastPromptMessageId = userMessage.id
         role.replyAttemptId = replyAttemptId
         role.updatedAt = timestamp
+      }
+      for (const role of unavailable) {
+        const keepActiveThinking = role.status === 'thinking' && !isStaleThinkingRole(role, timestamp)
+        if (!keepActiveThinking) role.status = 'error'
+        role.updatedAt = timestamp
+        if (role.lastPromptMessageId === userMessage.id) delete role.lastPromptMessageId
+        if (!keepActiveThinking) delete role.replyAttemptId
+      }
 
-        return {
-          roleId,
-          tabId: binding.tabId,
-          frameId: binding.frameId,
-          message: { type: 'TEAM_SEND_PROMPT', chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
-        }
-      })
-
-      return { message: userMessage, deliveries }
+      return { message: userMessage, deliveries, externalDeliveries }
     })
 
     deps.log.info('message-send:deliveries-ready', {
       chatId,
       messageId: result.message.id,
-      deliveries: result.deliveries.map(delivery => ({ roleId: delivery.roleId, tabId: delivery.tabId, frameId: delivery.frameId, contentLength: delivery.message.content.length })),
+      deliveries: [
+        ...result.deliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'site', chatSite: delivery.chatSite, tabId: delivery.tabId, frameId: delivery.frameId, contentLength: delivery.message.content.length })),
+        ...result.externalDeliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'external', modelId: delivery.model.id, contentLength: delivery.prompt.length })),
+      ],
     })
     await deps.broadcastStoreUpdated(store)
 
-    for (const delivery of result.deliveries) {
-      try {
-        await deps.sendPrompt(delivery)
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error)
-        await markDeliveryError(deps, chatId, delivery.roleId, result.message.id, reason)
-      }
+    await sendPromptDeliveries(deps, deepSeekPromptBatcher, chatId, result.message.id, result.deliveries)
+    let responseStore = store
+    for (const delivery of result.externalDeliveries) {
+      responseStore = await sendExternalModelDelivery(deps, externalModelClient, externalModelRuns, delivery) ?? responseStore
     }
 
-    return { ok: true, message: result.message, deliveries: result.deliveries.map(delivery => ({ roleId: delivery.roleId })), store }
+    return {
+      ok: true,
+      message: result.message,
+      deliveries: [
+        ...result.deliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'site' })),
+        ...result.externalDeliveries.map(delivery => ({ roleId: delivery.roleId, modelSource: 'external' })),
+      ],
+      store: responseStore,
+    }
   }
 
   const handleRoleRetryReply = async (message: RuntimeMessage) => {
     const chatId = requireString(message.chatId, '缺少群聊 ID')
     const roleId = requireString(message.roleId, '缺少人员 ID')
     const timestamp = deps.now()
-    const binding = deps.runtimeFrames.getByRole(chatId, roleId)
-    if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，请先恢复人员')
 
     const { store, result } = await mutateStore(store => {
       const chat = requireChat(store, chatId)
       const role = requireRole(store, chat.id, roleId)
       const requestedMessageId = readOptionalString(message.messageId)
-      const userMessage = resolveRetryUserMessage(store, chat, role, requestedMessageId, deps.log)
+      const retryTarget = resolveRetryTarget(store, chat, role, requestedMessageId, deps.log)
+      const userMessage = retryTarget?.userMessage
       if (!userMessage) throw new Error(requestedMessageId ? '该消息没有发送给这个人员' : '找不到可重试的用户消息')
+      if (retryTarget?.discardMessageId) discardMessage(store, chat, retryTarget.discardMessageId)
 
       const roles = getChatRoles(store, chat)
       const messages = getChatMessages(store, chat)
       const reference = userMessage.references?.[0]
-      const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
       const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
       const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
-      const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
       const replyAttemptId = deps.newId('attempt')
 
       userMessage.deliveryStatus ??= {}
@@ -192,9 +275,30 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       chat.status = 'running'
       chat.updatedAt = timestamp
 
+      if (isExternalModelRole(role)) {
+        const model = requireExternalModelForRole(store, role)
+        const prompt = buildExternalModelPrompt(store, chat, role, userMessage, roles)
+        if (prompt.memoryPatch) applyExternalMemoryPatch(store, prompt.memoryPatch, timestamp)
+        return {
+          externalDelivery: {
+            roleId,
+            chatId: chat.id,
+            messageId: userMessage.id,
+            replyAttemptId,
+            model,
+            prompt: prompt.content,
+          },
+        }
+      }
+
+      const binding = deps.runtimeFrames.getByRole(chat.id, role.id)
+      if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，请先恢复人员')
+      const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
+      const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
       return {
         delivery: {
           roleId,
+          chatSite: role.chatSite ?? store.settings.defaultChatSite,
           tabId: binding.tabId,
           frameId: binding.frameId,
           message: { type: 'TEAM_SEND_PROMPT' as const, chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId, content, includesPersona },
@@ -202,29 +306,36 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       }
     })
 
+    await deps.broadcastStoreUpdated(store)
+    const externalDelivery = 'externalDelivery' in result ? result.externalDelivery : undefined
+    if (externalDelivery) {
+      deps.log.info('role-retry-reply:deliver-external', {
+        chatId,
+        roleId,
+        messageId: externalDelivery.messageId,
+        replyAttemptId: externalDelivery.replyAttemptId,
+        modelId: externalDelivery.model.id,
+      })
+      const responseStore = await sendExternalModelDelivery(deps, externalModelClient, externalModelRuns, externalDelivery) ?? store
+      return { ok: true, store: responseStore, messageId: externalDelivery.messageId }
+    }
+    const delivery = 'delivery' in result ? result.delivery : undefined
+    if (!delivery) throw new Error('重试投递生成失败')
     deps.log.info('role-retry-reply:deliver', {
       chatId,
       roleId,
-      messageId: result.delivery.message.messageId,
-      replyAttemptId: result.delivery.message.replyAttemptId,
-      tabId: result.delivery.tabId,
-      frameId: result.delivery.frameId,
+      messageId: delivery.message.messageId,
+      replyAttemptId: delivery.message.replyAttemptId,
+      tabId: delivery.tabId,
+      frameId: delivery.frameId,
     })
-    await deps.broadcastStoreUpdated(store)
-    try {
-      await deps.sendPrompt(result.delivery)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      await markDeliveryError(deps, chatId, roleId, result.delivery.message.messageId, reason)
-    }
-    return { ok: true, store, messageId: result.delivery.message.messageId }
+    await sendPromptDelivery(deps, chatId, delivery.message.messageId, delivery)
+    return { ok: true, store, messageId: delivery.message.messageId }
   }
 
   const handleRoleStopReply = async (message: RuntimeMessage) => {
     const chatId = requireString(message.chatId, '缺少群聊 ID')
     const roleId = requireString(message.roleId, '缺少人员 ID')
-    const binding = deps.runtimeFrames.getByRole(chatId, roleId)
-    if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，无法停止回复')
 
     const { result: active } = await mutateStore(store => {
       const chat = requireChat(store, chatId)
@@ -233,30 +344,40 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       return {
         messageId: role.lastPromptMessageId,
         replyAttemptId: role.replyAttemptId,
+        isExternal: isExternalModelRole(role),
       }
     })
 
-    const response = await deps.sendRoleMessage(binding.tabId, binding.frameId, {
-      type: 'TEAM_STOP_GENERATION',
-      chatId,
-      roleId,
-      messageId: active.messageId,
-      replyAttemptId: active.replyAttemptId,
-    })
-    if (isRecord(response) && response.ok === false) throw new Error(readOptionalString(response.error) ?? '停止回复失败')
+    if (active.isExternal) {
+      externalModelRuns.abort(chatId, roleId, active.replyAttemptId)
+    } else {
+      const binding = deps.runtimeFrames.getByRole(chatId, roleId)
+      if (!binding?.ready) throw new Error('人员 iframe 尚未就绪，无法停止回复')
+      const response = await deps.sendRoleMessage(binding.tabId, binding.frameId, {
+        type: 'TEAM_STOP_GENERATION',
+        chatId,
+        roleId,
+        messageId: active.messageId,
+        replyAttemptId: active.replyAttemptId,
+      })
+      if (isRecord(response) && response.ok === false) throw new Error(readOptionalString(response.error) ?? '停止回复失败')
+    }
 
     const timestamp = deps.now()
     const { store } = await mutateStore(store => {
       const chat = requireChat(store, chatId)
       const role = requireRole(store, chat.id, roleId)
       if (role.lastPromptMessageId !== active.messageId) return
-      role.status = 'stopped'
-      role.replyAttemptId = deps.newId('stopped')
+      const finalizedVisibleReply = active.isExternal ? finalizeActiveExternalAssistantReply(store, chat, role, active.messageId) : false
+      if (!finalizedVisibleReply) {
+        role.status = 'stopped'
+        role.replyAttemptId = deps.newId('stopped')
+      }
       role.updatedAt = timestamp
       chat.status = deps.getChatStatusFromRoles(store, chat)
       chat.updatedAt = timestamp
     })
-    deps.log.info('role-stop-reply:stopped', { chatId, roleId, messageId: active.messageId, tabId: binding.tabId, frameId: binding.frameId })
+    deps.log.info('role-stop-reply:stopped', { chatId, roleId, messageId: active.messageId, modelSource: active.isExternal ? 'external' : 'site' })
     await deps.broadcastStoreUpdated(store)
     return { ok: true, store, messageId: active.messageId }
   }
@@ -413,9 +534,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       const userMessage = store.messagesById[messageId]
       if (userMessage?.deliveryStatus?.[role.id] === 'pending') {
         userMessage.deliveryStatus[role.id] = 'sent'
-        if (Object.values(userMessage.deliveryStatus).every(status => status === 'sent' || status === 'received')) {
-          userMessage.status = 'sent'
-        }
+        updateUserMessageDeliveryStatus(userMessage)
       }
       if (userMessage) role.contextCursor = Math.max(role.contextCursor, userMessage.seq)
       role.updatedAt = deps.now()
@@ -444,10 +563,11 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     const { store, result } = await mutateStore(store => {
       const chat = requireChat(store, identity.chatId)
       const role = requireRole(store, chat.id, identity.roleId)
-      role.status = mappedStatus
+      const keepActivePromptError = mappedStatus === 'error' && Boolean(role.lastPromptMessageId)
+      role.status = keepActivePromptError ? 'thinking' : mappedStatus
       role.updatedAt = timestamp
-      if (mappedStatus === 'ready' || mappedStatus === 'error') delete role.lastPromptMessageId
-      if (mappedStatus === 'ready' || mappedStatus === 'error') delete role.replyAttemptId
+      if (mappedStatus === 'ready' || (mappedStatus === 'error' && !keepActivePromptError)) delete role.lastPromptMessageId
+      if (mappedStatus === 'ready' || (mappedStatus === 'error' && !keepActivePromptError)) delete role.replyAttemptId
       if (mappedStatus === 'stopped') role.replyAttemptId = deps.newId('stopped')
       chat.status = deps.getChatStatusFromRoles(store, chat)
       chat.updatedAt = timestamp
@@ -498,7 +618,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         const userMessage = store.messagesById[promptMessageId]
         if (userMessage?.deliveryStatus?.[role.id]) {
           userMessage.deliveryStatus[role.id] = 'received'
-          if (Object.values(userMessage.deliveryStatus).every(status => status === 'received')) userMessage.status = 'received'
+          updateUserMessageDeliveryStatus(userMessage)
         }
       }
 
@@ -519,6 +639,8 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
 
     deps.log.info('role-reply:stored', { chatId: result.reply.chatId, roleId: result.reply.roleId, replyMessageId: result.reply.id })
     await deps.broadcastStoreUpdated(store)
+    if (promptMessageId) clearRoleErrorRetryCount(roleErrorRetryCounts, identity.chatId, identity.roleId, promptMessageId)
+    if (promptMessageId) await deepSeekPromptBatcher.complete(identity.chatId, promptMessageId, identity.roleId)
     return { ok: true, message: result.reply, store }
   }
 
@@ -556,11 +678,34 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     const replyAttemptId = readOptionalString(message.replyAttemptId)
     deps.log.warn('role-error:received', { ...identity, promptMessageId, replyAttemptId, reason, senderUrl: sender.url, tabId: messageTabId(message, sender), frameId: senderFrameId(sender) })
 
+    const retry = promptMessageId
+      ? await prepareRoleErrorRetry(deps, roleErrorRetryCounts, identity.chatId, identity.roleId, promptMessageId, replyAttemptId, reason)
+      : undefined
+    if (retry) {
+      await deps.broadcastStoreUpdated(retry.store)
+      deps.log.warn('role-error:retry-scheduled', {
+        chatId: identity.chatId,
+        roleId: identity.roleId,
+        messageId: promptMessageId,
+        retryCount: retry.retryCount,
+        delayMs: retry.delayMs,
+        reason,
+      })
+      await waitForRetryDelay(deps, retry.delayMs)
+      if (retry.externalDelivery) {
+        const responseStore = await sendExternalModelDelivery(deps, externalModelClient, externalModelRuns, retry.externalDelivery) ?? retry.store
+        return { ok: true, retried: true, store: responseStore }
+      }
+      await sendPromptDelivery(deps, identity.chatId, promptMessageId, retry.delivery)
+      return { ok: true, retried: true, store: retry.store }
+    }
+
+    const timestamp = deps.now()
     const { store } = await mutateStore(store => {
       const chat = requireChat(store, identity.chatId)
       const role = requireRole(store, chat.id, identity.roleId)
       role.status = 'error'
-      role.updatedAt = deps.now()
+      role.updatedAt = timestamp
       if (!promptMessageId || role.lastPromptMessageId === promptMessageId) delete role.lastPromptMessageId
       if (!replyAttemptId || role.replyAttemptId === replyAttemptId) delete role.replyAttemptId
 
@@ -568,15 +713,20 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         const userMessage = store.messagesById[promptMessageId]
         if (userMessage?.deliveryStatus?.[role.id]) {
           userMessage.deliveryStatus[role.id] = 'error'
-          userMessage.status = 'error'
+          updateUserMessageDeliveryStatus(userMessage)
+        }
+        if (isUserMessageForRole(userMessage, chat, role)) {
+          upsertFailedAssistantAfterPrompt(store, chat, role, promptMessageId, reason, timestamp, deps.newId)
         }
       }
-      chat.status = 'error'
+      chat.status = deps.getChatStatusFromRoles(store, chat)
       chat.updatedAt = role.updatedAt
     })
 
     await deps.broadcastStoreUpdated(store)
     await deps.sendError(reason)
+    if (promptMessageId) clearRoleErrorRetryCount(roleErrorRetryCounts, identity.chatId, identity.roleId, promptMessageId)
+    if (promptMessageId) await deepSeekPromptBatcher.complete(identity.chatId, promptMessageId, identity.roleId)
     return { ok: true, store }
   }
 
@@ -671,13 +821,708 @@ async function markDeliveryError(deps: MessageHandlersDependencies, chatId: stri
     const userMessage = store.messagesById[messageId]
     if (userMessage?.deliveryStatus) {
       userMessage.deliveryStatus[roleId] = 'error'
-      userMessage.status = 'error'
+      updateUserMessageDeliveryStatus(userMessage)
     }
-    chat.status = 'error'
+    chat.status = deps.getChatStatusFromRoles(store, chat)
     chat.updatedAt = role.updatedAt
   })
   await deps.broadcastStoreUpdated(store)
   await deps.sendError(reason)
+}
+
+function updateUserMessageDeliveryStatus(message: GroupMessage): void {
+  const statuses = Object.values(message.deliveryStatus ?? {})
+  if (statuses.length === 0) return
+  if (statuses.every(status => status === 'error')) {
+    message.status = 'error'
+    return
+  }
+  if (statuses.every(status => status === 'received' || status === 'error')) {
+    message.status = 'received'
+    return
+  }
+  if (statuses.every(status => status === 'sent' || status === 'received' || status === 'error')) {
+    message.status = 'sent'
+    return
+  }
+  message.status = 'pending'
+}
+
+type PreparedRoleErrorRetry = {
+  store: OpenTeamStore
+  retryCount: number
+  delayMs: number
+} & (
+  | { delivery: PromptDelivery; externalDelivery?: undefined }
+  | { delivery?: undefined; externalDelivery: ExternalPromptDelivery }
+)
+
+async function prepareRoleErrorRetry(
+  deps: MessageHandlersDependencies,
+  retryCounts: Map<string, number>,
+  chatId: string,
+  roleId: string,
+  promptMessageId: string,
+  replyAttemptId: string | undefined,
+  reason: string,
+): Promise<PreparedRoleErrorRetry | undefined> {
+  if (!isRetryableRoleError(reason)) return undefined
+  const retryDelays = deps.roleErrorRetryDelaysMs ?? DEFAULT_ROLE_ERROR_RETRY_DELAYS_MS
+  const key = roleErrorRetryKey(chatId, roleId, promptMessageId)
+  const usedRetries = retryCounts.get(key) ?? 0
+  if (usedRetries >= retryDelays.length) return undefined
+
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, chatId)
+    const role = requireRole(store, chat.id, roleId)
+    const staleReason = staleReplyReason(store, chat, role, promptMessageId, replyAttemptId)
+    if (staleReason) return undefined
+    const userMessage = store.messagesById[promptMessageId]
+    if (!isUserMessageForRole(userMessage, chat, role)) return undefined
+    if (userMessage.deliveryStatus?.[role.id] !== 'sent') return undefined
+    if (hasAssistantReplyAfterPrompt(store, chat, role, promptMessageId)) return undefined
+
+    const roles = getChatRoles(store, chat)
+    const messages = getChatMessages(store, chat)
+    const roleHistoryCount = countLocalRoleHistory(messages, role, userMessage.id)
+    const includesPersona = shouldIncludePersonaForPrompt(roleHistoryCount)
+    const nextReplyAttemptId = deps.newId('attempt')
+
+    userMessage.deliveryStatus ??= {}
+    userMessage.deliveryStatus[role.id] = 'pending'
+    updateUserMessageDeliveryStatus(userMessage)
+    role.status = 'thinking'
+    role.lastPromptMessageId = userMessage.id
+    role.replyAttemptId = nextReplyAttemptId
+    role.updatedAt = timestamp
+    chat.status = 'running'
+    chat.updatedAt = timestamp
+
+    if (isExternalModelRole(role)) {
+      const model = getExternalModelForRole(store, role)
+      if (!model) return undefined
+      const prompt = buildExternalModelPrompt(store, chat, role, userMessage, roles)
+      if (prompt.memoryPatch) applyExternalMemoryPatch(store, prompt.memoryPatch, timestamp)
+      return {
+        externalDelivery: {
+          roleId,
+          chatId: chat.id,
+          messageId: userMessage.id,
+          replyAttemptId: nextReplyAttemptId,
+          model,
+          prompt: prompt.content,
+        },
+      }
+    }
+
+    const binding = deps.runtimeFrames.getByRole(chat.id, role.id)
+    if (!binding?.ready) return undefined
+    const reference = userMessage.references?.[0]
+    const unsyncedContext = buildUnsyncedContext(chat, role, messages, userMessage, store.settings.maxContextChars)
+    const content = buildPrompt({ chat, role, userMessage, roles, unsyncedContext, reference, includePersona: includesPersona })
+    return {
+      delivery: {
+        roleId,
+        chatSite: role.chatSite ?? store.settings.defaultChatSite,
+        tabId: binding.tabId,
+        frameId: binding.frameId,
+        message: { type: 'TEAM_SEND_PROMPT' as const, chatId: chat.id, roleId, messageId: userMessage.id, replyAttemptId: nextReplyAttemptId, content, includesPersona },
+      },
+    }
+  })
+
+  if (!result) return undefined
+  const retryCount = usedRetries + 1
+  retryCounts.set(key, retryCount)
+  return { ...result, store, retryCount, delayMs: retryDelays[usedRetries] ?? 0 }
+}
+
+function isRetryableRoleError(reason: string): boolean {
+  const normalized = reason.toLowerCase()
+  const nonRetryablePatterns = [
+    'abort',
+    'aborted',
+    'unauthorized',
+    'invalid_api_key',
+    'model_not_found',
+    '401',
+    '403',
+    'api key',
+    '已停止',
+    '停止回复',
+    '用户停止',
+    '找不到外部模型',
+    '模型不存在',
+    '密钥',
+  ]
+  return !nonRetryablePatterns.some(pattern => normalized.includes(pattern))
+}
+
+function clearRoleErrorRetryCount(retryCounts: Map<string, number>, chatId: string, roleId: string, messageId: string): void {
+  retryCounts.delete(roleErrorRetryKey(chatId, roleId, messageId))
+}
+
+function roleErrorRetryKey(chatId: string, roleId: string, messageId: string): string {
+  return `${chatId}:${roleId}:${messageId}`
+}
+
+function withLatestPromptBinding(deps: MessageHandlersDependencies, chatId: string, delivery: PromptDelivery): PromptDelivery {
+  const binding = deps.runtimeFrames.getByRole(chatId, delivery.roleId)
+  if (!binding?.ready) return delivery
+  return { ...delivery, tabId: binding.tabId, frameId: binding.frameId }
+}
+
+async function isPromptDeliveryStillActive(
+  deps: MessageHandlersDependencies,
+  chatId: string,
+  roleId: string,
+  messageId: string,
+  replyAttemptId: string | undefined,
+): Promise<boolean> {
+  const { result } = await mutateStore(store => {
+    const chat = requireChat(store, chatId)
+    const role = requireRole(store, chat.id, roleId)
+    if (role.status === 'stopped') return false
+    if (staleReplyReason(store, chat, role, messageId, replyAttemptId)) return false
+    if (hasAssistantReplyAfterPrompt(store, chat, role, messageId)) return false
+    return true
+  })
+  return result
+}
+
+function hasAssistantReplyAfterPrompt(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string): boolean {
+  const promptIndex = chat.messageIds.indexOf(promptMessageId)
+  if (promptIndex < 0) return false
+  for (let index = promptIndex + 1; index < chat.messageIds.length; index += 1) {
+    const message = store.messagesById[chat.messageIds[index]]
+    if (isAssistantMessageForRole(message, chat, role) && (message.status === 'received' || Boolean(message.content.trim()))) return true
+  }
+  return false
+}
+
+async function waitForRetryDelay(deps: MessageHandlersDependencies, delayMs: number): Promise<void> {
+  if (delayMs <= 0) return
+  if (deps.waitForRetry) {
+    await deps.waitForRetry(delayMs)
+    return
+  }
+  await new Promise<void>(resolve => setTimeout(resolve, delayMs))
+}
+
+interface DeepSeekPromptBatcher {
+  enqueue(chatId: string, messageId: string, deliveries: PromptDelivery[]): Promise<void>
+  complete(chatId: string, messageId: string, roleId: string): Promise<void>
+}
+
+interface DeepSeekPromptBatchState {
+  chatId: string
+  messageId: string
+  pending: PromptDelivery[]
+  activeRoleIds: Set<string>
+}
+
+function createDeepSeekPromptBatcher(deps: MessageHandlersDependencies): DeepSeekPromptBatcher {
+  const batches = new Map<string, DeepSeekPromptBatchState>()
+
+  const pump = async (state: DeepSeekPromptBatchState): Promise<void> => {
+    const launched: Array<Promise<void>> = []
+    while (state.activeRoleIds.size < 2 && state.pending.length > 0) {
+      const delivery = state.pending.shift()!
+      state.activeRoleIds.add(delivery.roleId)
+      deps.log.info('deepseek-prompt:batch-send', {
+        chatId: state.chatId,
+        messageId: state.messageId,
+        roleId: delivery.roleId,
+        activeCount: state.activeRoleIds.size,
+        remainingCount: state.pending.length,
+      })
+      launched.push(sendPromptDelivery(deps, state.chatId, state.messageId, delivery).then(async sent => {
+        if (!sent) await complete(state.chatId, state.messageId, delivery.roleId)
+      }))
+    }
+    await Promise.all(launched)
+  }
+
+  const complete = async (chatId: string, messageId: string, roleId: string): Promise<void> => {
+    const key = deepSeekBatchKey(chatId, messageId)
+    const state = batches.get(key)
+    if (!state || !state.activeRoleIds.delete(roleId)) return
+    if (state.pending.length === 0 && state.activeRoleIds.size === 0) {
+      batches.delete(key)
+      return
+    }
+    await pump(state)
+  }
+
+  return {
+    async enqueue(chatId, messageId, deliveries) {
+      if (deliveries.length === 0) return
+      const key = deepSeekBatchKey(chatId, messageId)
+      const state: DeepSeekPromptBatchState = { chatId, messageId, pending: [...deliveries], activeRoleIds: new Set() }
+      batches.set(key, state)
+      await pump(state)
+    },
+    complete,
+  }
+}
+
+async function sendPromptDeliveries(deps: MessageHandlersDependencies, deepSeekPromptBatcher: DeepSeekPromptBatcher, chatId: string, messageId: string, deliveries: PromptDelivery[]): Promise<void> {
+  const deepSeekDeliveries: PromptDelivery[] = []
+  const standardDeliveries: Array<Promise<boolean>> = []
+  for (const delivery of deliveries) {
+    if (delivery.chatSite === 'deepseek') {
+      deepSeekDeliveries.push(delivery)
+      continue
+    }
+    standardDeliveries.push(sendPromptDelivery(deps, chatId, messageId, delivery))
+  }
+  await Promise.all(standardDeliveries)
+  await deepSeekPromptBatcher.enqueue(chatId, messageId, deepSeekDeliveries)
+}
+
+async function sendPromptDelivery(deps: MessageHandlersDependencies, chatId: string, messageId: string, delivery: PromptDelivery): Promise<boolean> {
+  const retryDelays = deps.deliveryRetryDelaysMs ?? DEFAULT_DELIVERY_RETRY_DELAYS_MS
+  let lastReason = '发送失败'
+
+  for (let attemptIndex = 0; attemptIndex <= retryDelays.length; attemptIndex += 1) {
+    try {
+      await deps.sendPrompt(withLatestPromptBinding(deps, chatId, delivery))
+      return true
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : String(error)
+      const canRetry = attemptIndex < retryDelays.length && await isPromptDeliveryStillActive(deps, chatId, delivery.roleId, messageId, delivery.message.replyAttemptId)
+      if (!canRetry) break
+
+      const delayMs = retryDelays[attemptIndex] ?? 0
+      deps.log.warn('delivery:retry-scheduled', {
+        chatId,
+        roleId: delivery.roleId,
+        messageId,
+        retryCount: attemptIndex + 1,
+        delayMs,
+        reason: lastReason,
+      })
+      await waitForRetryDelay(deps, delayMs)
+    }
+  }
+
+  await markDeliveryError(deps, chatId, delivery.roleId, messageId, lastReason)
+  return false
+}
+
+async function sendExternalModelDelivery(deps: MessageHandlersDependencies, client: ExternalModelClient, runs: ExternalModelRunRegistry, delivery: ExternalPromptDelivery): Promise<OpenTeamStore | undefined> {
+  const controller = new AbortController()
+  runs.register(delivery.chatId, delivery.roleId, delivery.replyAttemptId, controller)
+  let replyMessageId: string | undefined
+  let content = ''
+  try {
+    deps.log.info('external-model:send:start', {
+      chatId: delivery.chatId,
+      roleId: delivery.roleId,
+      messageId: delivery.messageId,
+      modelId: delivery.model.id,
+      format: delivery.model.format,
+      promptLength: delivery.prompt.length,
+    })
+
+    const initialized = await createExternalAssistantPlaceholder(deps, delivery)
+    if (initialized.ignored) {
+      deps.log.warn('external-model:reply:ignored-stale', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason: initialized.reason })
+      return initialized.store
+    }
+    replyMessageId = initialized.replyMessageId
+    await deps.broadcastStoreUpdated(initialized.store)
+
+    const retryDelays = deps.externalModelRetryDelaysMs ?? DEFAULT_EXTERNAL_MODEL_RETRY_DELAYS_MS
+    for (let attemptIndex = 0; attemptIndex <= retryDelays.length; attemptIndex += 1) {
+      try {
+        content = ''
+        const stream = typeof client.stream === 'function'
+          ? client.stream({ model: delivery.model, prompt: delivery.prompt, abortSignal: controller.signal })
+          : streamCompleteFallback(client, { model: delivery.model, prompt: delivery.prompt, abortSignal: controller.signal })
+        for await (const chunk of abortableChunks(stream, controller.signal)) {
+          throwIfAborted(controller.signal)
+          if (!chunk) continue
+          content += chunk
+          const update = await updateExternalAssistantContent(deps, delivery, replyMessageId, content)
+          if (update.ignored) {
+            deps.log.warn('external-model:stream:ignored-stale', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason: update.reason })
+            return update.store
+          }
+          await deps.broadcastStoreUpdated(update.store)
+        }
+        throwIfAborted(controller.signal)
+        if (!content.trim()) throw new Error('外部模型返回格式无效')
+        break
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) throw error
+        if (content.trim()) throw error
+        const reason = error instanceof Error ? error.message : String(error)
+        const canRetry = attemptIndex < retryDelays.length && await isPromptDeliveryStillActive(deps, delivery.chatId, delivery.roleId, delivery.messageId, delivery.replyAttemptId)
+        if (!canRetry) throw error
+
+        const delayMs = retryDelays[attemptIndex] ?? 0
+        deps.log.warn('external-model:retry-scheduled', {
+          chatId: delivery.chatId,
+          roleId: delivery.roleId,
+          messageId: delivery.messageId,
+          retryCount: attemptIndex + 1,
+          delayMs,
+          reason,
+        })
+        await waitForRetryDelay(deps, delayMs)
+      }
+    }
+
+    const finalized = await finishExternalAssistantReply(deps, delivery, replyMessageId, content)
+    if (finalized.ignored) {
+      deps.log.warn('external-model:reply:ignored-stale', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason: finalized.reason })
+      return finalized.store
+    }
+    deps.log.info('external-model:reply:stored', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, replyMessageId })
+    await deps.broadcastStoreUpdated(finalized.store)
+    return finalized.store
+  } catch (error) {
+    if (isAbortError(error) || controller.signal.aborted) {
+      deps.log.info('external-model:send:aborted', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, replyMessageId, contentLength: content.length })
+      if (replyMessageId) {
+        const stopped = await markExternalAssistantStopped(deps, delivery, replyMessageId, content)
+        await deps.broadcastStoreUpdated(stopped.store)
+        return stopped.store
+      }
+      return undefined
+    }
+    const reason = error instanceof Error ? error.message : String(error)
+    deps.log.warn('external-model:send:failed', { chatId: delivery.chatId, roleId: delivery.roleId, messageId: delivery.messageId, reason })
+    await markDeliveryError(deps, delivery.chatId, delivery.roleId, delivery.messageId, reason)
+    return undefined
+  } finally {
+    runs.unregister(delivery.chatId, delivery.roleId, delivery.replyAttemptId)
+  }
+}
+
+async function createExternalAssistantPlaceholder(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+): Promise<{ ignored: true; reason: string; store: OpenTeamStore } | { ignored: false; replyMessageId: string; store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, delivery.chatId)
+    const role = requireRole(store, chat.id, delivery.roleId)
+    const staleReason = staleReplyReason(store, chat, role, delivery.messageId, delivery.replyAttemptId)
+    if (staleReason) return { ignored: true as const, reason: staleReason }
+
+    const reply: GroupMessage = {
+      id: deps.newId('msg'),
+      chatId: chat.id,
+      seq: chat.nextMessageSeq,
+      type: 'assistant',
+      content: '',
+      contentFormat: 'markdown',
+      roleId: role.id,
+      roleName: role.name,
+      createdAt: timestamp,
+      status: 'pending',
+    }
+    store.messagesById[reply.id] = reply
+    chat.messageIds.push(reply.id)
+    chat.nextMessageSeq += 1
+
+    const userMessage = store.messagesById[delivery.messageId]
+    if (userMessage?.deliveryStatus?.[role.id] === 'pending') {
+      userMessage.deliveryStatus[role.id] = 'sent'
+      updateUserMessageDeliveryStatus(userMessage)
+    }
+    role.updatedAt = timestamp
+    chat.updatedAt = timestamp
+    return { ignored: false as const, replyMessageId: reply.id }
+  })
+  return result.ignored ? { ...result, store } : { ...result, store }
+}
+
+async function updateExternalAssistantContent(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+  replyMessageId: string,
+  content: string,
+): Promise<{ ignored: true; reason: string; store: OpenTeamStore } | { ignored: false; store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+    const chat = requireChat(store, delivery.chatId)
+    const role = requireRole(store, chat.id, delivery.roleId)
+    const staleReason = staleReplyReason(store, chat, role, delivery.messageId, delivery.replyAttemptId)
+    if (staleReason) return { ignored: true as const, reason: staleReason }
+    const reply = store.messagesById[replyMessageId]
+    if (!isAssistantMessageForRole(reply, chat, role)) return { ignored: true as const, reason: 'reply-message-not-found' }
+    reply.content = content
+    reply.status = 'pending'
+    role.updatedAt = timestamp
+    chat.updatedAt = timestamp
+    return { ignored: false as const }
+  })
+  return result.ignored ? { ...result, store } : { ...result, store }
+}
+
+async function finishExternalAssistantReply(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+  replyMessageId: string,
+  content: string,
+): Promise<{ ignored: true; reason: string; store: OpenTeamStore } | { ignored: false; store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store, result } = await mutateStore(store => {
+      const chat = requireChat(store, delivery.chatId)
+      const role = requireRole(store, chat.id, delivery.roleId)
+      const staleReason = staleReplyReason(store, chat, role, delivery.messageId, delivery.replyAttemptId)
+      if (staleReason) return { ignored: true as const, reason: staleReason }
+      const reply = store.messagesById[replyMessageId]
+      if (!isAssistantMessageForRole(reply, chat, role)) return { ignored: true as const, reason: 'reply-message-not-found' }
+      reply.content = content
+      reply.status = 'received'
+      markChatHasNewMessage(store, chat)
+
+      const userMessage = store.messagesById[delivery.messageId]
+      if (userMessage?.deliveryStatus?.[role.id]) {
+        userMessage.deliveryStatus[role.id] = 'received'
+        updateUserMessageDeliveryStatus(userMessage)
+      }
+
+      role.status = 'ready'
+      role.lastReplyAt = timestamp
+      role.updatedAt = timestamp
+      if (role.lastPromptMessageId === delivery.messageId) delete role.lastPromptMessageId
+      if (role.replyAttemptId === delivery.replyAttemptId) delete role.replyAttemptId
+      chat.status = deps.getChatStatusFromRoles(store, chat)
+      chat.updatedAt = timestamp
+      return { ignored: false as const }
+    })
+  return result.ignored ? { ...result, store } : { ...result, store }
+}
+
+async function markExternalAssistantStopped(
+  deps: MessageHandlersDependencies,
+  delivery: ExternalPromptDelivery,
+  replyMessageId: string,
+  content: string,
+): Promise<{ store: OpenTeamStore }> {
+  const timestamp = deps.now()
+  const { store } = await mutateStore(store => {
+    const chat = requireChat(store, delivery.chatId)
+    const role = requireRole(store, chat.id, delivery.roleId)
+    const reply = store.messagesById[replyMessageId]
+    const hasContent = Boolean(content.trim())
+    const replyAlreadyFinalized = isAssistantMessageForRole(reply, chat, role) && reply.status !== 'pending'
+    if (isAssistantMessageForRole(reply, chat, role) && !replyAlreadyFinalized) {
+      reply.content = content
+      reply.status = hasContent ? 'received' : 'error'
+    }
+
+    const userMessage = store.messagesById[delivery.messageId]
+    if (userMessage?.deliveryStatus?.[role.id] && !replyAlreadyFinalized) {
+      userMessage.deliveryStatus[role.id] = hasContent ? 'received' : 'error'
+      updateUserMessageDeliveryStatus(userMessage)
+    }
+
+    const stoppedSamePrompt = role.lastPromptMessageId === delivery.messageId
+    if (stoppedSamePrompt) {
+      role.status = 'stopped'
+      if (hasContent) delete role.lastPromptMessageId
+    }
+    if (hasContent && stoppedSamePrompt) delete role.replyAttemptId
+    role.updatedAt = timestamp
+    chat.status = deps.getChatStatusFromRoles(store, chat)
+    chat.updatedAt = timestamp
+  })
+  return { store }
+}
+
+async function* streamCompleteFallback(client: ExternalModelClient, input: { model: ExternalModelConfig; prompt: string; abortSignal?: AbortSignal }): AsyncIterable<string> {
+  const result = await client.complete(input)
+  yield result.content
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function finalizeActiveExternalAssistantReply(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string): boolean {
+  const reply = findPendingAssistantAfterPrompt(store, chat, role, promptMessageId)
+  if (!reply) return false
+
+  if (!reply.content.trim()) reply.content = '已停止回复'
+  reply.status = 'received'
+
+  const userMessage = store.messagesById[promptMessageId]
+  if (userMessage?.deliveryStatus?.[role.id]) {
+    userMessage.deliveryStatus[role.id] = 'received'
+    updateUserMessageDeliveryStatus(userMessage)
+  }
+
+  role.status = 'stopped'
+  delete role.lastPromptMessageId
+  delete role.replyAttemptId
+  return true
+}
+
+function findPendingAssistantAfterPrompt(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string): AssistantGroupMessage | undefined {
+  const promptIndex = chat.messageIds.indexOf(promptMessageId)
+  if (promptIndex < 0) return undefined
+
+  for (let index = chat.messageIds.length - 1; index > promptIndex; index -= 1) {
+    const message = store.messagesById[chat.messageIds[index]]
+    if (isAssistantMessageForRole(message, chat, role) && message.status === 'pending') return message
+  }
+  return undefined
+}
+
+function findFailedOrPendingAssistantAfterPrompt(store: OpenTeamStore, chat: GroupChat, role: GroupRole, promptMessageId: string): AssistantGroupMessage | undefined {
+  const promptIndex = chat.messageIds.indexOf(promptMessageId)
+  if (promptIndex < 0) return undefined
+
+  for (let index = chat.messageIds.length - 1; index > promptIndex; index -= 1) {
+    const message = store.messagesById[chat.messageIds[index]]
+    if (isAssistantMessageForRole(message, chat, role) && (message.status === 'pending' || message.status === 'error')) {
+      const previousPrompt = findPromptBeforeAssistant(store, chat, role, message.id)
+      if (previousPrompt?.id === promptMessageId) return message
+    }
+  }
+  return undefined
+}
+
+function upsertFailedAssistantAfterPrompt(
+  store: OpenTeamStore,
+  chat: GroupChat,
+  role: GroupRole,
+  promptMessageId: string,
+  reason: string,
+  timestamp: number,
+  newId: MessageHandlersDependencies['newId'],
+): AssistantGroupMessage {
+  const content = roleFailureReplyContent(reason)
+  const existingReply = findFailedOrPendingAssistantAfterPrompt(store, chat, role, promptMessageId)
+  if (existingReply) {
+    existingReply.content = content
+    existingReply.contentFormat = 'markdown'
+    existingReply.status = 'error'
+    return existingReply
+  }
+
+  const reply: AssistantGroupMessage = {
+    id: newId('msg'),
+    chatId: chat.id,
+    seq: chat.nextMessageSeq,
+    type: 'assistant',
+    content,
+    contentFormat: 'markdown',
+    roleId: role.id,
+    roleName: role.name,
+    createdAt: timestamp,
+    status: 'error',
+  }
+  store.messagesById[reply.id] = reply
+  chat.messageIds.push(reply.id)
+  chat.nextMessageSeq += 1
+  markChatHasNewMessage(store, chat)
+  return reply
+}
+
+function roleFailureReplyContent(reason: string): string {
+  if (/超时|timeout/i.test(reason)) return '回复超时了。\n\n可以点击下方的重新回复按钮再试一次。'
+  return `回复失败：${reason}\n\n可以点击下方的重新回复按钮再试一次。`
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+}
+
+async function* abortableChunks<T>(stream: AsyncIterable<T>, signal: AbortSignal): AsyncIterable<T> {
+  const iterator = stream[Symbol.asyncIterator]()
+  let abortListener: (() => void) | undefined
+  const abortPromise = new Promise<never>((_, reject) => {
+    abortListener = () => reject(new DOMException('Aborted', 'AbortError'))
+    if (signal.aborted) {
+      abortListener()
+      return
+    }
+    signal.addEventListener('abort', abortListener, { once: true })
+  })
+
+  try {
+    while (true) {
+      const next = await Promise.race([iterator.next(), abortPromise])
+      if (next.done) return
+      yield next.value
+    }
+  } finally {
+    if (abortListener) signal.removeEventListener('abort', abortListener)
+    if (signal.aborted) Promise.resolve(iterator.return?.()).catch(() => undefined)
+  }
+}
+
+function deepSeekBatchKey(chatId: string, messageId: string): string {
+  return `${chatId}:${messageId}`
+}
+
+function createExternalModelRunRegistry(): ExternalModelRunRegistry {
+  const runs = new Map<string, AbortController>()
+  return {
+    register(chatId, roleId, replyAttemptId, controller) {
+      runs.set(externalModelRunKey(chatId, roleId, replyAttemptId), controller)
+    },
+    abort(chatId, roleId, replyAttemptId) {
+      if (replyAttemptId) {
+        runs.get(externalModelRunKey(chatId, roleId, replyAttemptId))?.abort()
+        return
+      }
+      for (const [key, controller] of runs) {
+        if (key.startsWith(`${chatId}:${roleId}:`)) controller.abort()
+      }
+    },
+    unregister(chatId, roleId, replyAttemptId) {
+      runs.delete(externalModelRunKey(chatId, roleId, replyAttemptId))
+    },
+  }
+}
+
+function externalModelRunKey(chatId: string, roleId: string, replyAttemptId: string): string {
+  return `${chatId}:${roleId}:${replyAttemptId}`
+}
+
+function isExternalModelRole(role: GroupRole): boolean {
+  return role.modelSource === 'external'
+}
+
+function getExternalModelForRole(store: OpenTeamStore, role: GroupRole): ExternalModelConfig | undefined {
+  if (!isExternalModelRole(role) || !role.externalModelId) return undefined
+  return store.settings.externalModelsById[role.externalModelId]
+}
+
+function requireExternalModelForRole(store: OpenTeamStore, role: GroupRole): ExternalModelConfig {
+  const model = getExternalModelForRole(store, role)
+  if (!model) throw new Error(`找不到外部模型：${role.externalModelId ?? role.name}`)
+  return model
+}
+
+function applyExternalMemoryPatch(store: OpenTeamStore, patch: ExternalMemoryPatch, timestamp: number): void {
+  if (patch.scope === 'chat') {
+    store.externalChatMemoriesById ??= {}
+    store.externalChatMemoriesById[patch.id] = {
+      chatId: patch.id,
+      summary: patch.summary,
+      summarizedThroughSeq: patch.summarizedThroughSeq,
+      updatedAt: timestamp,
+    }
+    return
+  }
+
+  store.externalRoleMemoriesById ??= {}
+  store.externalRoleMemoriesById[patch.id] = {
+    roleId: patch.id,
+    summary: patch.summary,
+    summarizedThroughSeq: patch.summarizedThroughSeq,
+    updatedAt: timestamp,
+  }
 }
 
 function isStaleThinkingRole(role: GroupRole, timestamp: number): boolean {
@@ -716,7 +1561,10 @@ function readPersonaLength(role: GroupRole): number {
   return (role.systemPrompt?.trim() || role.description?.trim() || role.name.trim()).length
 }
 
-function isUserMessageForRole(message: GroupMessage | undefined, chat: GroupChat, role: GroupRole): message is GroupMessage {
+type UserGroupMessage = GroupMessage & { type: 'user' }
+type AssistantGroupMessage = GroupMessage & { type: 'assistant' }
+
+function isUserMessageForRole(message: GroupMessage | undefined, chat: GroupChat, role: GroupRole): message is UserGroupMessage {
   return Boolean(
     message &&
       message.chatId === chat.id &&
@@ -725,7 +1573,7 @@ function isUserMessageForRole(message: GroupMessage | undefined, chat: GroupChat
   )
 }
 
-function isAssistantMessageForRole(message: GroupMessage | undefined, chat: GroupChat, role: GroupRole): message is GroupMessage {
+function isAssistantMessageForRole(message: GroupMessage | undefined, chat: GroupChat, role: GroupRole): message is AssistantGroupMessage {
   return Boolean(message && message.chatId === chat.id && message.type === 'assistant' && message.roleId === role.id)
 }
 
@@ -740,6 +1588,51 @@ function findLatestPendingRetryMessage(store: OpenTeamStore, chat: GroupChat, ro
     if (isUserMessageForRole(message, chat, role) && isPendingRetryStatus(message, role)) return message
   }
   return undefined
+}
+
+interface RetryTarget {
+  userMessage: GroupMessage
+  discardMessageId?: string
+}
+
+function resolveRetryTarget(
+  store: OpenTeamStore,
+  chat: GroupChat,
+  role: GroupRole,
+  requestedMessageId: string | undefined,
+  log: MessageHandlersDependencies['log'],
+): RetryTarget | undefined {
+  if (!requestedMessageId) {
+    const userMessage = resolveRetryUserMessage(store, chat, role, undefined, log)
+    return userMessage ? { userMessage } : undefined
+  }
+
+  const requestedMessage = store.messagesById[requestedMessageId]
+  if (isUserMessageForRole(requestedMessage, chat, role)) return { userMessage: requestedMessage }
+
+  if (isAssistantMessageForRole(requestedMessage, chat, role) && (isExternalModelRole(role) || requestedMessage.status === 'error')) {
+    const userMessage = findPromptBeforeAssistant(store, chat, role, requestedMessage.id)
+    return userMessage ? { userMessage, discardMessageId: requestedMessage.id } : undefined
+  }
+
+  return undefined
+}
+
+function findPromptBeforeAssistant(store: OpenTeamStore, chat: GroupChat, role: GroupRole, assistantMessageId: string): GroupMessage | undefined {
+  const assistantIndex = chat.messageIds.indexOf(assistantMessageId)
+  if (assistantIndex <= 0) return undefined
+
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const message = store.messagesById[chat.messageIds[index]]
+    if (isUserMessageForRole(message, chat, role)) return message
+  }
+  return undefined
+}
+
+function discardMessage(store: OpenTeamStore, chat: GroupChat, messageId: string): void {
+  delete store.messagesById[messageId]
+  chat.messageIds = chat.messageIds.filter(id => id !== messageId)
+  if (store.messageHighlightsById) delete store.messageHighlightsById[messageId]
 }
 
 function resolveRetryUserMessage(

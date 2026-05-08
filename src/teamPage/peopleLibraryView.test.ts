@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultStore } from '../group/store'
+import { getAllRoleTemplates } from '../group/roleTemplates'
 import type { GroupChat, OpenTeamStore, RoleTemplate } from '../group/types'
 import { createTeamPageState } from './appState'
 import { createPeopleLibraryView } from './peopleLibraryView'
@@ -36,6 +37,7 @@ function makeChat(id: string): GroupChat {
 }
 
 function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: RoleTemplate[]; currentChat?: GroupChat }) {
+  const state = createTeamPageState()
   const addLibraryPeopleListEl = document.createElement('div')
   const addLibraryPeopleFormEl = document.createElement('form')
   const peopleLibrarySearchEl = document.createElement('input')
@@ -48,6 +50,9 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
   const peopleLibraryPaginationEl = document.createElement('div')
   const templateListEl = document.createElement('div')
   const templateSiteChatGptEl = document.createElement('input')
+  const templateSiteExternalEl = document.createElement('input')
+  const templateExternalModelFieldEl = Object.assign(document.createElement('div'), { hidden: true })
+  const templateExternalModelSelectEl = document.createElement('select')
   const templateChatGptGptsFieldEl = Object.assign(document.createElement('div'), { hidden: true })
   const templateChatGptGptsUrlEl = document.createElement('input')
   const templateNameEl = document.createElement('input')
@@ -60,8 +65,9 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
   const builtinTemplateDetailPromptEl = document.createElement('pre')
   const closeBuiltinTemplateDetailEl = document.createElement('button')
   const runCommand = vi.fn(async () => undefined)
+  const showError = vi.fn()
   const view = createPeopleLibraryView({
-    state: createTeamPageState(),
+    state,
     getStore: () => options.store,
     settingsButtonEl: document.createElement('button'),
     settingsMenuEl: document.createElement('div'),
@@ -98,6 +104,9 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
     templateSiteDeepSeekEl: document.createElement('input'),
     templateSiteQwenEl: document.createElement('input'),
     templateSiteKimiEl: document.createElement('input'),
+    templateSiteExternalEl,
+    templateExternalModelFieldEl,
+    templateExternalModelSelectEl,
     templateChatGptGptsFieldEl,
     templateChatGptGptsUrlEl,
     temporaryPersonNameEl: document.createElement('input'),
@@ -120,10 +129,11 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
       return element
     },
     runCommand,
-    showError: vi.fn(),
+    showError,
     log: { info: vi.fn() },
   })
   return {
+    state,
     view,
     addLibraryPeopleFormEl,
     addLibraryPeopleListEl,
@@ -149,6 +159,7 @@ function setupPeopleLibraryView(options: { store: OpenTeamStore; templates: Role
     templateChatGptGptsFieldEl,
     templateChatGptGptsUrlEl,
     peopleLibraryFormEl,
+    showError,
   }
 }
 
@@ -203,7 +214,7 @@ describe('team page people library view boundary', () => {
 
     view.registerPeopleLibraryEvents()
     view.renderAddPersonDialog()
-    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="claude"]')!
+    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="site:claude"]')!
     claudeSite.checked = true
     claudeSite.dispatchEvent(new Event('change', { bubbles: true }))
     addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!.checked = true
@@ -213,10 +224,35 @@ describe('team page people library view boundary', () => {
     expect(runCommand).toHaveBeenCalledWith('GROUP_ROLES_CREATE_BATCH', {
       chatId: chat.id,
       items: [
-        { source: 'library', roleTemplateId: template.id, chatSite: 'gemini' },
-        { source: 'library', roleTemplateId: template.id, chatSite: 'claude' },
+        { source: 'library', roleTemplateId: template.id, modelSource: 'site', chatSite: 'gemini' },
+        { source: 'library', roleTemplateId: template.id, modelSource: 'site', chatSite: 'claude' },
       ],
     })
+  })
+
+  it('keeps selected people checked while changing their chat sites', () => {
+    const template = makeTemplate(1)
+    const chat = makeChat('chat-1')
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      roleTemplateOrder: [template.id],
+      roleTemplatesById: { [template.id]: template },
+    }
+    const { view, addLibraryPeopleListEl } = setupPeopleLibraryView({ store, templates: [template], currentChat: chat })
+
+    view.registerPeopleLibraryEvents()
+    view.renderAddPersonDialog()
+    const personCheckbox = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!
+    personCheckbox.checked = true
+    personCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
+    const claudeSite = addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="site:claude"]')!
+    claudeSite.checked = true
+    claudeSite.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(addLibraryPeopleListEl.querySelector<HTMLInputElement>('input[type="checkbox"][value="library:template-1"]')!.checked).toBe(true)
   })
 
   it('submits a ChatGPT GPTs prefix when creating a library person', async () => {
@@ -248,7 +284,9 @@ describe('team page people library view boundary', () => {
       name: '飞飞教练',
       description: '',
       systemPrompt: '以教练方式回应',
+      defaultModelSource: 'site',
       defaultChatSite: 'chatgpt',
+      defaultExternalModelId: undefined,
       chatGptGptsUrl: 'https://chatgpt.com/g/g-LrdzaEiqT-fei-fei-jiao-lian/c/69f7fabe-9878-83a8-a867-88ebb36967d4',
     })
   })
@@ -294,9 +332,32 @@ describe('team page people library view boundary', () => {
       name: '观察员',
       description: '',
       systemPrompt: '',
+      defaultModelSource: 'site',
       defaultChatSite: 'gemini',
+      defaultExternalModelId: undefined,
       chatGptGptsUrl: undefined,
     })
+  })
+
+  it('allows library people names up to 50 characters', async () => {
+    const store = createDefaultStore()
+    const {
+      view,
+      runCommand,
+      showError,
+      templateNameEl,
+      peopleLibraryFormEl,
+    } = setupPeopleLibraryView({ store, templates: [] })
+    const longName = '研'.repeat(50)
+
+    view.registerPeopleLibraryEvents()
+    view.renderTemplates()
+    templateNameEl.value = longName
+    peopleLibraryFormEl.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await Promise.resolve()
+
+    expect(showError).not.toHaveBeenCalled()
+    expect(runCommand).toHaveBeenCalledWith('ROLE_TEMPLATE_CREATE', expect.objectContaining({ name: longName }))
   })
 
   it('filters the people library by built-in and custom tabs', () => {
@@ -321,18 +382,18 @@ describe('team page people library view boundary', () => {
     view.registerPeopleLibraryEvents()
     view.renderTemplates()
 
-    expect(peopleLibraryListEl.textContent).toContain('弗兰克尔')
-    expect(peopleLibraryListEl.textContent).toContain('内置')
-    expect(peopleLibraryListEl.textContent).not.toContain('人员1')
-    expect(peopleLibraryBuiltinTabEl.className).toContain('active')
-    expect(peopleLibraryListEl.querySelector('.template-delete')).toBeNull()
-
-    peopleLibraryCustomTabEl.click()
     expect(peopleLibraryListEl.textContent).toContain('人员1')
     expect(peopleLibraryListEl.textContent).toContain('自定义')
     expect(peopleLibraryListEl.textContent).not.toContain('弗兰克尔')
     expect(peopleLibraryCustomTabEl.className).toContain('active')
     expect(peopleLibraryListEl.querySelector('.template-delete')).toBeDefined()
+
+    peopleLibraryBuiltinTabEl.click()
+    expect(peopleLibraryListEl.textContent).toContain('弗兰克尔')
+    expect(peopleLibraryListEl.textContent).toContain('内置')
+    expect(peopleLibraryListEl.textContent).not.toContain('人员1')
+    expect(peopleLibraryBuiltinTabEl.className).toContain('active')
+    expect(peopleLibraryListEl.querySelector('.template-delete')).toBeNull()
   })
 
   it('searches people library entries by name, description, and persona text', () => {
@@ -434,14 +495,35 @@ describe('team page people library view boundary', () => {
 
     view.registerPeopleLibraryEvents()
     view.renderAddPersonDialog()
-    expect(addLibraryPeopleListEl.textContent).toContain('弗兰克尔')
-    expect(addLibraryPeopleListEl.textContent).not.toContain('人员1')
-    expect(addPersonBuiltinTabEl.className).toContain('active')
-
-    addPersonCustomTabEl.click()
     expect(addLibraryPeopleListEl.textContent).toContain('人员1')
     expect(addLibraryPeopleListEl.textContent).not.toContain('弗兰克尔')
     expect(addPersonCustomTabEl.className).toContain('active')
+
+    addPersonBuiltinTabEl.click()
+    expect(addLibraryPeopleListEl.textContent).toContain('弗兰克尔')
+    expect(addLibraryPeopleListEl.textContent).not.toContain('人员1')
+    expect(addPersonBuiltinTabEl.className).toContain('active')
+  })
+
+  it('shows default custom people in the add-person custom tab for a default store', () => {
+    const store = createDefaultStore()
+    const chat = makeChat('chat-1')
+    store.currentChatId = chat.id
+    store.chatOrder = [chat.id]
+    store.chatsById[chat.id] = chat
+    const { view, addLibraryPeopleListEl, addPersonCustomTabEl } = setupPeopleLibraryView({
+      store,
+      templates: getAllRoleTemplates(store),
+      currentChat: chat,
+    })
+
+    view.registerPeopleLibraryEvents()
+    view.renderAddPersonDialog()
+    addPersonCustomTabEl.click()
+
+    expect(addLibraryPeopleListEl.textContent).toContain('产品经理')
+    expect(addLibraryPeopleListEl.textContent).toContain('工程师')
+    expect(addLibraryPeopleListEl.textContent).toContain('增长顾问')
   })
 
   it('searches add-person choices by name, description, and persona text', () => {

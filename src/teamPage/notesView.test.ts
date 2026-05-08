@@ -124,6 +124,42 @@ describe('team page notes view', () => {
     expect(panel.style.right).toBe('auto')
     expect(panel.classList.contains('dragging')).toBe(false)
   })
+
+  it('lets the note window be resized without exceeding the viewport', () => {
+    const chat = makeChat('chat-1')
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+    }
+    const { view } = setupNotesView(store, chat)
+    const panel = document.querySelector<HTMLElement>('#notes-panel')!
+    const handle = document.querySelector<HTMLElement>('#notes-resize-handle')!
+
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+      x: 420,
+      y: 80,
+      left: 420,
+      top: 80,
+      right: 860,
+      bottom: 680,
+      width: 440,
+      height: 600,
+      toJSON: () => ({}),
+    } as DOMRect)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 900 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 })
+
+    view.registerNotesEvents()
+    handle.dispatchEvent(pointerEvent('pointerdown', { clientX: 860, clientY: 680, pointerId: 2 }))
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 1060, clientY: 900, pointerId: 2 }))
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 1060, clientY: 900, pointerId: 2 }))
+
+    expect(panel.style.width).toBe('468px')
+    expect(panel.style.height).toBe('668px')
+    expect(panel.classList.contains('resizing')).toBe(false)
+  })
 })
 
 function setupNotesView(
@@ -136,6 +172,7 @@ function setupNotesView(
     <button id="toggle-notes-panel"></button>
     <aside id="notes-panel">
       <div id="notes-drag-handle"></div>
+      <button id="notes-resize-handle"></button>
       <button id="close-notes-panel"></button>
       <button id="global-note-tab" data-note-scope="global"></button>
       <button id="chat-note-tab" data-note-scope="chat"></button>
@@ -155,6 +192,7 @@ function setupNotesView(
     state: createTeamPageState(),
     notesPanelEl: document.querySelector<HTMLElement>('#notes-panel')!,
     notesDragHandleEl: document.querySelector<HTMLElement>('#notes-drag-handle')!,
+    notesResizeHandleEl: document.querySelector<HTMLElement>('#notes-resize-handle')!,
     toggleNotesPanelEl: document.querySelector<HTMLButtonElement>('#toggle-notes-panel')!,
     closeNotesPanelEl: document.querySelector<HTMLButtonElement>('#close-notes-panel')!,
     globalNoteTabEl: document.querySelector<HTMLButtonElement>('#global-note-tab')!,

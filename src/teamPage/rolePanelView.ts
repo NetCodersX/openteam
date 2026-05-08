@@ -1,5 +1,5 @@
-import { roleMentionLabel } from '../group/mentionParser'
-import type { ChatSite, GroupRole, OpenTeamStore, RoleStatus } from '../group/types'
+import { roleMentionLabel, roleMentionLabelOptionsFromSettings } from '../group/mentionParser'
+import type { ChatSite, ExternalModelConfig, GroupRole, OpenTeamStore, RoleModelSource, RoleStatus } from '../group/types'
 import type { TeamPageState } from './appState'
 
 const VISIBLE_CHAT_SITES = ['gemini', 'chatgpt', 'claude', 'deepseek'] as const
@@ -21,6 +21,8 @@ export interface RolePanelViewDependencies {
   roleToneClass(seed: string | undefined): string
   roleAvatarLabel(name: string | undefined): string
   insertMention(role: GroupRole): void
+  refreshCurrentChat(): Promise<void>
+  focusRoleFrame(chatId: string, roleId: string | undefined): void
   runCommand(type: string, payload?: Record<string, unknown>): Promise<void>
   showError(message: string): void
 }
@@ -36,6 +38,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     const selectedRole = deps.state.selectedRoleId ? store.rolesById[deps.state.selectedRoleId] : undefined
     deps.rolePanelEl.classList.toggle('open', deps.state.peopleDrawerOpen)
     deps.roleSummaryEl.textContent = `${roles.length} 人员${selectedRole ? ` · 当前：${selectedRole.name}` : ''}`
+    renderRolePanelActions()
     deps.roleListEl.replaceChildren()
 
     if (!deps.getCurrentChat()) {
@@ -53,6 +56,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     card.addEventListener('click', () => {
       deps.state.selectedRoleId = role.id
       deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = undefined
       renderRolePanel()
     })
 
@@ -78,20 +82,16 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
 
     const meta = document.createElement('div')
     meta.className = 'chat-row tiny role-meta'
-    meta.append(roleSiteControl(role), textNode(`cursor ${role.contextCursor}`), textNode(role.geminiConversationUrl ? '已有会话' : '未绑定会话'))
+    meta.append(roleSiteControl(role), roleContextProgress(role), roleConnectionStatus(role))
     main.append(row, description, meta)
 
-    const more = document.createElement('button')
-    more.type = 'button'
-    more.className = 'role-more'
-    more.setAttribute('aria-label', `切换 ${role.name} 的站点`)
-    more.textContent = '···'
-    more.addEventListener('click', event => {
-      event.stopPropagation()
-      deps.state.roleSiteMenuRoleId = deps.state.roleSiteMenuRoleId === role.id ? undefined : role.id
-      renderRolePanel()
-    })
-    card.append(avatar, main, more)
+    const actions = document.createElement('div')
+    actions.className = 'role-card-actions'
+    const refresh = roleRefreshButton(role)
+    const jump = roleJumpButton(role)
+    const remove = roleDeleteButton(role)
+    actions.append(refresh, jump, remove)
+    card.append(avatar, main, actions)
 
     if (role.status === 'error') {
       const error = document.createElement('div')
@@ -102,16 +102,85 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     return card
   }
 
+  function renderRolePanelActions(): void {
+    const header = deps.roleSummaryEl.parentElement?.parentElement
+    if (!header) return
+    let actions = header.querySelector<HTMLElement>('.role-panel-actions')
+    if (!actions) {
+      actions = document.createElement('div')
+      actions.className = 'role-panel-actions'
+      const login = header.querySelector('#open-gemini-login')
+      if (login) {
+        header.insertBefore(actions, login)
+        actions.append(login)
+      } else {
+        header.append(actions)
+      }
+    }
+  }
+
+  function roleRefreshButton(role: GroupRole): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'role-refresh'
+    button.dataset.roleRefresh = role.id
+    button.setAttribute('aria-label', `刷新 ${role.name} 的成员窗口`)
+    button.title = role.modelSource === 'external' ? 'API 成员无需刷新窗口' : '刷新成员窗口'
+    button.textContent = '↻'
+    if (role.modelSource === 'external') button.disabled = true
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      if (role.modelSource === 'external') return
+      deps.iframeHost.recoverRole(role)
+      deps.runCommand('GROUP_ROLE_RECOVER', { chatId: role.chatId, roleId: role.id })
+        .catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+    })
+    return button
+  }
+
+  function roleJumpButton(role: GroupRole): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'role-jump'
+    button.setAttribute('aria-label', `跳转到 ${role.name} 的原始窗口`)
+    button.title = '跳转到原始窗口'
+    button.textContent = '↗'
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      deps.focusRoleFrame(role.chatId, role.id)
+    })
+    return button
+  }
+
+  function roleDeleteButton(role: GroupRole): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'role-delete'
+    button.dataset.roleDelete = role.id
+    button.setAttribute('aria-label', `删除 ${role.name}`)
+    button.title = '删除成员'
+    button.append(trashIcon())
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      deps.state.roleSiteMenuRoleId = undefined
+      deps.state.roleActionMenuRoleId = undefined
+      kickRoleFromChat(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+    })
+    return button
+  }
+
   function roleSiteControl(role: GroupRole): HTMLElement {
     const control = document.createElement('div')
     control.className = 'role-site-control'
     const sitePill = document.createElement('button')
     sitePill.type = 'button'
-    sitePill.className = `site-pill site-pill-${role.chatSite ?? 'gemini'}`
+    const model = roleModelOption(role, deps.getStore())
+    sitePill.className = `site-pill ${model.className}`
     sitePill.setAttribute('aria-expanded', String(deps.state.roleSiteMenuRoleId === role.id))
-    sitePill.textContent = siteLabel(role.chatSite)
+    sitePill.textContent = model.label
     sitePill.addEventListener('click', event => {
       event.stopPropagation()
+      deps.state.roleActionMenuRoleId = undefined
       deps.state.roleSiteMenuRoleId = deps.state.roleSiteMenuRoleId === role.id ? undefined : role.id
       renderRolePanel()
     })
@@ -124,29 +193,40 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
     const menu = document.createElement('div')
     menu.className = 'role-site-menu'
     menu.addEventListener('click', event => event.stopPropagation())
-    for (const site of VISIBLE_CHAT_SITES) {
+    for (const model of selectableModels(deps.getStore())) {
       const option = document.createElement('button')
       option.type = 'button'
-      option.className = `role-site-option${role.chatSite === site ? ' active' : ''}`
-      option.textContent = role.chatSite === site ? `✓ ${siteLabel(site)}` : siteLabel(site)
+      const active = roleModelKey(role, deps.getStore()) === model.key
+      option.className = `role-site-option${active ? ' active' : ''}`
+      option.textContent = active ? `✓ ${model.label}` : model.label
       option.addEventListener('click', () => {
         deps.state.roleSiteMenuRoleId = undefined
-        if (role.chatSite === site) {
+        if (active) {
           renderRolePanel()
           return
         }
-        switchRoleSite(role, site).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+        switchRoleSite(role, model.key).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
       })
       menu.append(option)
     }
     return menu
   }
 
-  async function switchRoleSite(role: GroupRole, chatSite: ChatSite): Promise<void> {
-    if (role.chatSite === chatSite) return
-    await deps.runCommand('GROUP_ROLE_UPDATE', { roleId: role.id, patch: { chatSite } })
+  async function kickRoleFromChat(role: GroupRole): Promise<void> {
+    if (!window.confirm(`确定将「${role.name}」移出当前群聊吗？历史聊天记录会保留。`)) {
+      renderRolePanel()
+      return
+    }
+    await deps.runCommand('GROUP_ROLE_DELETE', { roleId: role.id })
+  }
+
+  async function switchRoleSite(role: GroupRole, modelKey: string): Promise<void> {
+    if (roleModelKey(role, deps.getStore()) === modelKey) return
+    const patch = rolePatchForModelKey(modelKey)
+    await deps.runCommand('GROUP_ROLE_UPDATE', { roleId: role.id, patch })
     const updatedRole = deps.getStore().rolesById[role.id]
     if (!updatedRole) return
+    if (updatedRole.modelSource === 'external') return
     deps.iframeHost.recoverRole(updatedRole)
     await deps.runCommand('GROUP_ROLE_RECOVER', { chatId: updatedRole.chatId, roleId: updatedRole.id })
   }
@@ -155,7 +235,7 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
 
   function wireMentionShortcut(element: HTMLElement, role: GroupRole): void {
     element.classList.add('mention-shortcut')
-    element.title = `@${roleMentionLabel(role)}`
+    element.title = `@${roleMentionLabel(role, roleMentionLabelOptionsFromSettings(deps.getStore().settings))}`
     element.addEventListener('click', event => {
       event.stopPropagation()
       deps.insertMention(role)
@@ -168,6 +248,17 @@ export function createRolePanelView(deps: RolePanelViewDependencies): RolePanelV
   }
 }
 
+function trashIcon(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('focusable', 'false')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', 'M9 4h6l1 2h4v2H4V6h4l1-2Zm-2 6h10l-.7 9.1A2 2 0 0 1 14.3 21H9.7a2 2 0 0 1-2-1.9L7 10Zm3 2v6h1.6v-6H10Zm2.4 0v6H14v-6h-1.6Z')
+  svg.append(path)
+  return svg
+}
+
 function siteLabel(site: ChatSite | undefined): string {
   if (site === 'chatgpt') return 'ChatGPT'
   if (site === 'claude') return 'Claude'
@@ -177,6 +268,47 @@ function siteLabel(site: ChatSite | undefined): string {
   return 'Gemini'
 }
 
+function selectableModels(store: OpenTeamStore): Array<{ key: string; label: string; className: string }> {
+  return [
+    ...VISIBLE_CHAT_SITES.map(site => ({ key: modelKeyForSite(site), label: siteLabel(site), className: `site-pill-${site}` })),
+    ...externalModels(store).map(model => ({ key: modelKeyForExternal(model.id), label: `API · ${model.name}`, className: 'site-pill-external' })),
+  ]
+}
+
+function roleModelOption(role: GroupRole, store: OpenTeamStore): { key: string; label: string; className: string } {
+  const key = roleModelKey(role, store)
+  return selectableModels(store).find(model => model.key === key) ?? { key, label: 'API · 未配置', className: 'site-pill-external' }
+}
+
+function roleModelKey(role: Pick<GroupRole, 'modelSource' | 'externalModelId' | 'chatSite'>, store: OpenTeamStore): string {
+  if (role.modelSource === 'external' && role.externalModelId) return modelKeyForExternal(role.externalModelId)
+  return modelKeyForSite(role.chatSite ?? store.settings.defaultChatSite)
+}
+
+function rolePatchForModelKey(key: string): { modelSource: RoleModelSource; chatSite?: ChatSite; externalModelId?: string } {
+  const externalModelId = key.startsWith('external:') ? key.slice('external:'.length) : ''
+  if (externalModelId) return { modelSource: 'external', externalModelId }
+  return { modelSource: 'site', chatSite: visibleChatSite(key.startsWith('site:') ? key.slice('site:'.length) : key) }
+}
+
+function externalModels(store: OpenTeamStore): ExternalModelConfig[] {
+  return store.settings.externalModelOrder
+    .map(modelId => store.settings.externalModelsById[modelId])
+    .filter((model): model is ExternalModelConfig => Boolean(model))
+}
+
+function modelKeyForSite(site: ChatSite): string {
+  return `site:${site}`
+}
+
+function modelKeyForExternal(modelId: string): string {
+  return `external:${modelId}`
+}
+
+function visibleChatSite(value: string | undefined): ChatSite {
+  return value === 'chatgpt' || value === 'claude' || value === 'deepseek' || value === 'kimi' || value === 'qwen' ? value : 'gemini'
+}
+
 function statusPill(status: string, label: string): HTMLElement {
   const pill = document.createElement('span')
   pill.className = `status-pill status-${status}`
@@ -184,11 +316,25 @@ function statusPill(status: string, label: string): HTMLElement {
   return pill
 }
 
+function roleContextProgress(role: GroupRole): HTMLElement {
+  const progress = document.createElement('span')
+  progress.className = 'role-meta-item'
+  progress.textContent = role.contextCursor > 0 ? `已读 ${role.contextCursor} 条` : '尚未读取消息'
+  return progress
+}
+
+function roleConnectionStatus(role: GroupRole): HTMLElement {
+  const status = document.createElement('span')
+  status.className = 'role-meta-item'
+  status.textContent = role.modelSource === 'external' ? '连接 API' : role.geminiConversationUrl ? '网页已连接' : '等待连接'
+  return status
+}
+
 function roleStatusLabel(status: RoleStatus): string {
   const labels: Record<RoleStatus, string> = {
     pending: '待唤醒',
     loading: '加载中',
-    ready: '就绪',
+    ready: '在线',
     thinking: '回复中',
     stopped: '已停止',
     error: '异常',

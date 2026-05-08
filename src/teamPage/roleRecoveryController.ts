@@ -33,7 +33,7 @@ export interface RoleRecoveryController {
   reconnectRolesForSend(chat: GroupChat, roles: GroupRole[]): Promise<void>
   refreshCurrentChat(): Promise<void>
   resyncMessageReply(message: GroupMessage): Promise<void>
-  retryRoleReply(role: GroupRole): Promise<void>
+  retryRoleReply(role: GroupRole, messageId?: string): Promise<void>
   stopRoleReply(role: GroupRole): Promise<void>
 }
 
@@ -44,7 +44,7 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
     const chat = deps.state.selectedChatId ? store.chatsById[deps.state.selectedChatId] : undefined
     if (!chat) return
 
-    const reconnectableRoles = deps.getCurrentRoles().filter(role => role.status !== 'ready' && shouldAutoReconnectRole(role))
+    const reconnectableRoles = deps.getCurrentRoles().filter(shouldRefreshRoleManually)
     if (reconnectableRoles.length === 0) return
 
     deps.log.info('ui:refresh-recover-chat', { chatId: chat.id, roleIds: reconnectableRoles.map(role => role.id) })
@@ -111,7 +111,7 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
   }
 
   async function reconnectRolesForSend(chat: GroupChat, roles: GroupRole[]): Promise<void> {
-    const uniqueRoles = [...new Map(roles.map(role => [role.id, role])).values()]
+    const uniqueRoles = [...new Map(roles.filter(role => role.modelSource !== 'external').map(role => [role.id, role])).values()]
     if (uniqueRoles.length === 0) return
 
     for (const role of uniqueRoles) deps.state.reconnectingRoleKeys.add(teamRoleKey(chat.id, role.id))
@@ -138,6 +138,7 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
     if (deps.iframeHost.focusRoleFrame(chatId, roleId)) return
     const role = store.rolesById[roleId]
     if (!role) return
+    if (role.modelSource === 'external') return
     deps.iframeHost.recoverRole(role)
   }
 
@@ -148,10 +149,10 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
     await deps.refreshStore(false)
   }
 
-  async function retryRoleReply(role: GroupRole): Promise<void> {
+  async function retryRoleReply(role: GroupRole, messageId = role.lastPromptMessageId): Promise<void> {
     const chat = deps.getStore().chatsById[role.chatId]
     if (!chat) return
-    await deps.runCommand('GROUP_ROLE_RETRY_REPLY', { chatId: chat.id, roleId: role.id, messageId: role.lastPromptMessageId })
+    await deps.runCommand('GROUP_ROLE_RETRY_REPLY', { chatId: chat.id, roleId: role.id, messageId })
     await deps.refreshStore(false)
   }
 
@@ -208,6 +209,12 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
       return role?.chatId === chatId && role.name.trim() ? role.name : roleId
     })
   }
+}
+
+function shouldRefreshRoleManually(role: GroupRole): boolean {
+  if (role.modelSource === 'external') return false
+  if (role.status === 'thinking') return shouldAutoReconnectRole(role)
+  return true
 }
 
 function teamRoleKey(chatId: string, roleId: string): string {

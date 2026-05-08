@@ -44,6 +44,18 @@ export interface TeamPageDomRefs {
   allNoteUndoEl: HTMLButtonElement
   allNoteRedoEl: HTMLButtonElement
   openPeopleLibraryEl: HTMLButtonElement
+  openExternalModelsEl: HTMLButtonElement
+  closeExternalModelsEl: HTMLButtonElement
+  externalModelsModalEl: HTMLElement
+  externalModelsListEl: HTMLElement
+  externalModelFormEl: HTMLFormElement
+  externalModelIdEl: HTMLInputElement
+  externalModelNameEl: HTMLInputElement
+  externalModelFormatEl: HTMLSelectElement
+  externalModelBaseUrlEl: HTMLInputElement
+  externalModelApiKeyEl: HTMLInputElement
+  externalModelModelNameEl: HTMLInputElement
+  resetExternalModelFormEl: HTMLButtonElement
   closePeopleLibraryEl: HTMLButtonElement
   peopleLibraryModalEl: HTMLElement
   personTemplateModalEl: HTMLElement
@@ -51,6 +63,7 @@ export interface TeamPageDomRefs {
   temporaryPersonModalEl: HTMLElement
   notesPanelEl: HTMLElement
   notesDragHandleEl: HTMLElement
+  notesResizeHandleEl: HTMLElement
   toggleNotesPanelEl: HTMLButtonElement
   closeNotesPanelEl: HTMLButtonElement
   globalNoteTabEl: HTMLButtonElement
@@ -93,6 +106,9 @@ export interface TeamPageDomRefs {
   templateSiteDeepSeekEl: HTMLInputElement
   templateSiteQwenEl: HTMLInputElement
   templateSiteKimiEl: HTMLInputElement
+  templateSiteExternalEl: HTMLInputElement
+  templateExternalModelFieldEl: HTMLElement
+  templateExternalModelSelectEl: HTMLSelectElement
   templateChatGptGptsFieldEl: HTMLElement
   templateChatGptGptsUrlEl: HTMLInputElement
   temporaryPersonNameEl: HTMLInputElement
@@ -101,6 +117,7 @@ export interface TeamPageDomRefs {
   togglePeopleDrawerEl: HTMLButtonElement
   rolePanelEl: HTMLElement
   windowLauncherEl: HTMLButtonElement
+  windowResizeHandleEl: HTMLButtonElement
   iframeHostEl: HTMLElement
 }
 
@@ -157,6 +174,18 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     allNoteUndoEl: requireElement<HTMLButtonElement>('#all-note-undo'),
     allNoteRedoEl: requireElement<HTMLButtonElement>('#all-note-redo'),
     openPeopleLibraryEl: requireElement<HTMLButtonElement>('#open-people-library'),
+    openExternalModelsEl: requireElement<HTMLButtonElement>('#open-external-models'),
+    closeExternalModelsEl: requireElement<HTMLButtonElement>('#close-external-models'),
+    externalModelsModalEl: requireElement<HTMLElement>('#external-models-modal'),
+    externalModelsListEl: requireElement<HTMLElement>('#external-models-list'),
+    externalModelFormEl: requireElement<HTMLFormElement>('#external-model-form'),
+    externalModelIdEl: requireElement<HTMLInputElement>('#external-model-id'),
+    externalModelNameEl: requireElement<HTMLInputElement>('#external-model-name'),
+    externalModelFormatEl: requireElement<HTMLSelectElement>('#external-model-format'),
+    externalModelBaseUrlEl: requireElement<HTMLInputElement>('#external-model-base-url'),
+    externalModelApiKeyEl: requireElement<HTMLInputElement>('#external-model-api-key'),
+    externalModelModelNameEl: requireElement<HTMLInputElement>('#external-model-model-name'),
+    resetExternalModelFormEl: requireElement<HTMLButtonElement>('#reset-external-model-form'),
     closePeopleLibraryEl: requireElement<HTMLButtonElement>('#close-people-library'),
     peopleLibraryModalEl: requireElement<HTMLElement>('#people-library-modal'),
     personTemplateModalEl: requireElement<HTMLElement>('#person-template-modal'),
@@ -164,6 +193,7 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     temporaryPersonModalEl: requireElement<HTMLElement>('#temporary-person-modal'),
     notesPanelEl: requireElement<HTMLElement>('#notes-panel'),
     notesDragHandleEl: requireElement<HTMLElement>('#notes-drag-handle'),
+    notesResizeHandleEl: requireElement<HTMLElement>('#notes-resize-handle'),
     toggleNotesPanelEl: requireElement<HTMLButtonElement>('#toggle-notes-panel'),
     closeNotesPanelEl: requireElement<HTMLButtonElement>('#close-notes-panel'),
     globalNoteTabEl: requireElement<HTMLButtonElement>('#global-note-tab'),
@@ -206,6 +236,9 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     templateSiteDeepSeekEl: requireElement<HTMLInputElement>('#template-site-deepseek'),
     templateSiteQwenEl: requireElement<HTMLInputElement>('#template-site-qwen'),
     templateSiteKimiEl: requireElement<HTMLInputElement>('#template-site-kimi'),
+    templateSiteExternalEl: requireElement<HTMLInputElement>('#template-site-external'),
+    templateExternalModelFieldEl: requireElement<HTMLElement>('#template-external-model-field'),
+    templateExternalModelSelectEl: requireElement<HTMLSelectElement>('#template-external-model-select'),
     templateChatGptGptsFieldEl: requireElement<HTMLElement>('#template-chatgpt-gpts-field'),
     templateChatGptGptsUrlEl: requireElement<HTMLInputElement>('#template-chatgpt-gpts-url'),
     temporaryPersonNameEl: requireElement<HTMLInputElement>('#temporary-person-name'),
@@ -214,6 +247,7 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     togglePeopleDrawerEl: requireElement<HTMLButtonElement>('#toggle-people-drawer'),
     rolePanelEl: requireElement<HTMLElement>('.role-panel'),
     windowLauncherEl: requireElement<HTMLButtonElement>('#window-launcher'),
+    windowResizeHandleEl: requireElement<HTMLButtonElement>('#window-resize-handle'),
     iframeHostEl: requireElement<HTMLElement>('#iframe-host'),
   }
 }

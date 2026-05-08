@@ -16,6 +16,40 @@ describe('team page app state', () => {
     expect(state.temporaryPersonDrafts).toEqual([])
   })
 
+  it('prefers the store current chat when choosing the selected chat after commands', async () => {
+    const { createTeamPageState, pickSelectedChatId } = await import('./appState')
+    const state = createTeamPageState()
+    state.store.chatOrder = ['chat-old', 'chat-new']
+    state.store.chatsById = {
+      'chat-old': {
+        id: 'chat-old',
+        name: '旧群聊',
+        mode: 'independent',
+        roleIds: [],
+        messageIds: [],
+        nextMessageSeq: 1,
+        status: 'ready',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      'chat-new': {
+        id: 'chat-new',
+        name: '新群聊',
+        mode: 'independent',
+        roleIds: [],
+        messageIds: [],
+        nextMessageSeq: 1,
+        status: 'ready',
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    }
+    state.store.currentChatId = 'chat-new'
+    state.selectedChatId = 'chat-old'
+
+    expect(pickSelectedChatId(state)).toBe('chat-new')
+  })
+
   it('keeps mutable page state declarations out of the team page entrypoint', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/teamPage/index.ts'), 'utf8')
     const messagesSource = readFileSync(resolve(process.cwd(), 'src/teamPage/messagesView.ts'), 'utf8')
@@ -28,6 +62,7 @@ describe('team page app state', () => {
       'let peopleDrawerOpen',
       'let chatMenuChatId',
       'let roleSiteMenuRoleId',
+      'let roleActionMenuRoleId',
       'let addPersonSiteMenuId',
       'let pendingSwitchAnimationFrame',
       'let thinkingTimeoutTimers',

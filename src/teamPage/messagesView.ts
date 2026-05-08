@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import { DEFAULT_MESSAGE_HIGHLIGHT_COLOR, MESSAGE_HIGHLIGHT_COLORS, messageHighlightColorRgb, type MessageHighlightColor } from '../group/highlightColors'
-import { roleMentionLabel } from '../group/mentionParser'
+import { roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
 import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, MessageReference, OpenTeamStore } from '../group/types'
 import type { TeamPageState } from './appState'
 import { buildChatRenderItems, getChatStartupNotice, getStoppedReplyRoles, getVisibleThinkingRoles, THINKING_TIMEOUT_MS } from './chatExperience'
@@ -32,7 +32,7 @@ export interface MessagesViewDependencies {
   setReference(message: GroupMessage): void
   insertTextIntoActiveNote?(text: string): void
   resyncMessageReply(message: GroupMessage): Promise<void>
-  retryRoleReply(role: GroupRole): Promise<void>
+  retryRoleReply(role: GroupRole, messageId?: string): Promise<void>
   stopRoleReply(role: GroupRole): Promise<void>
   runCommand(type: string, payload?: Record<string, unknown>): Promise<void>
   render(): void
@@ -74,7 +74,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       if (roles.length === 0) {
         deps.messagesEl.append(emptyChatPeopleCard('暂无人员', '先添加人员，再开始群聊协作。'))
       } else {
-        deps.messagesEl.append(startupNotice ? deps.emptyCard(startupNotice.title, startupNotice.body) : deps.emptyCard('等待第一条消息', '唤醒人员后，在下方输入任务；无 @ 默认发送给全部人员。'))
+        deps.messagesEl.append(startupNotice ? deps.emptyCard(startupNotice.title, startupNotice.body) : deps.emptyCard('等待第一条消息', '直接发送会记录消息；@ 人员或 @所有人 后触发回复。'))
       }
     }
 
@@ -89,7 +89,10 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       deps.messagesEl.append(renderMessageNode(item.message, item.showName, item.showAvatar))
     }
 
-    for (const role of getVisibleThinkingRoles(deps.getCurrentRoles())) {
+    const streamingRoleIds = new Set(messages
+      .filter(message => message.type === 'assistant' && message.status === 'pending' && message.roleId)
+      .map(message => message.roleId!))
+    for (const role of getVisibleThinkingRoles(deps.getCurrentRoles()).filter(role => !streamingRoleIds.has(role.id))) {
       deps.messagesEl.append(replyControlBubble(role))
     }
     for (const role of getStoppedReplyRoles(deps.getCurrentRoles())) {
@@ -112,6 +115,11 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     const signature = messageSignature(message, showName, showAvatar)
     const cached = deps.state.messageNodeCache.get(message.id)
     if (cached?.signature === signature) return cached.node
+    const streamingSignature = streamingMessageSignature(message, showName, showAvatar)
+    if (cached?.streamingSignature && streamingSignature && cached.streamingSignature === streamingSignature && patchStreamingMessageNode(cached.node, message)) {
+      cacheMessageNode(message.id, signature, cached.node, streamingSignature)
+      return cached.node
+    }
 
     const article = document.createElement('article')
     article.className = `message-row message ${message.type}${showName ? '' : ' compact'}${showAvatar ? '' : ' no-avatar'}`
@@ -122,7 +130,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       pill.className = 'message-system-pill'
       pill.textContent = message.content
       article.append(pill)
-      cacheMessageNode(message.id, signature, article)
+      cacheMessageNode(message.id, signature, article, streamingSignature)
       return article
     }
 
@@ -146,7 +154,11 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       title.textContent = deps.messageTitle(message)
       name.append(title)
       const role = roleForMessage(message)
-      if (role) name.append(siteBadge(role.chatSite))
+      if (role) {
+        name.append(siteBadge(role))
+        const jumpButton = siteJumpButton(message.chatId, role)
+        if (jumpButton) name.append(jumpButton)
+      }
       wireMentionShortcut(name, role)
       stack.append(name)
     }
@@ -155,11 +167,14 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     bubble.className = 'message-bubble'
     const body = document.createElement('div')
     body.className = 'message-body'
+    if (message.type === 'assistant' && message.status === 'pending') body.classList.add('thinking-dots')
     if (message.type === 'user') {
       const mentions = renderMessageMentions(message)
       if (mentions) appendMentionsToBody(body, mentions)
     }
-    if (shouldRenderMarkdownMessage(message)) {
+    if (message.type === 'assistant' && message.status === 'pending' && !message.content.trim()) {
+      body.textContent = '正在回复中 '
+    } else if (shouldRenderMarkdownMessage(message)) {
       renderMarkdownMessageBody(body, message.content)
     } else {
       renderPlainMessageBody(body, message.content)
@@ -171,7 +186,14 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     if (message.type === 'assistant') {
       const tools = document.createElement('div')
       tools.className = 'message-tools'
-      if (message.roleId) {
+      const role = roleForMessage(message)
+      if (message.roleId && message.status === 'pending' && role) {
+        tools.append(createMessageIconButton('停止回复', 'stop', () => deps.stopRoleReply(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error))), { activateOnPointerDown: true }))
+      } else if (message.roleId && message.status === 'error' && role) {
+        tools.append(createMessageIconButton('重新回复', 'retry', () => deps.retryRoleReply(role, message.id).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))))
+      } else if (message.roleId && role?.modelSource === 'external') {
+        tools.append(createMessageIconButton('重新回复', 'retry', () => deps.retryRoleReply(role, message.id).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))))
+      } else if (message.roleId) {
         tools.append(createMessageIconButton('跳转到原始窗口', 'jump', () => deps.focusRoleFrame(message.chatId, message.roleId)))
         tools.append(createMessageIconButton('重新同步完整回复', 'retry', () => handleResyncMessage(message)))
       }
@@ -183,17 +205,33 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     stack.append(bubble)
     inner.append(avatar, stack)
     article.append(inner)
-    cacheMessageNode(message.id, signature, article)
+    cacheMessageNode(message.id, signature, article, streamingSignature)
     return article
   }
 
-  function cacheMessageNode(messageId: string, signature: string, node: HTMLElement): void {
-    deps.state.messageNodeCache.set(messageId, { signature, node })
+  function cacheMessageNode(messageId: string, signature: string, node: HTMLElement, streamingSignature?: string): void {
+    deps.state.messageNodeCache.set(messageId, { signature, node, streamingSignature })
     while (deps.state.messageNodeCache.size > MAX_CACHED_MESSAGE_NODES) {
       const oldestMessageId = deps.state.messageNodeCache.keys().next().value
       if (!oldestMessageId) return
       deps.state.messageNodeCache.delete(oldestMessageId)
     }
+  }
+
+  function patchStreamingMessageNode(node: HTMLElement, message: GroupMessage): boolean {
+    const body = node.querySelector<HTMLElement>('.message-body')
+    if (!body) return false
+    body.className = 'message-body thinking-dots'
+    body.replaceChildren()
+    if (!message.content.trim()) {
+      body.textContent = '正在回复中 '
+    } else if (shouldRenderMarkdownMessage(message)) {
+      renderMarkdownMessageBody(body, message.content)
+    } else {
+      renderPlainMessageBody(body, message.content)
+    }
+    renderSavedHighlights(body, message)
+    return true
   }
 
   function renderMarkdownMessageBody(body: HTMLElement, content: string): void {
@@ -219,13 +257,30 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     return message.contentFormat === 'markdown' || message.type === 'assistant'
   }
 
-  function createMessageIconButton(label: string, icon: MessageActionIcon, onClick: (button: HTMLButtonElement) => void): HTMLButtonElement {
+  function createMessageIconButton(label: string, icon: MessageActionIcon, onClick: (button: HTMLButtonElement) => void, options: { activateOnPointerDown?: boolean } = {}): HTMLButtonElement {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'message-tool-btn'
     button.setAttribute('aria-label', label)
     setMessageButtonIcon(button, icon)
-    button.addEventListener('click', () => onClick(button))
+    let activatedOnPointerDown = false
+    if (options.activateOnPointerDown) {
+      button.addEventListener('pointerdown', event => {
+        if (typeof PointerEvent !== 'undefined' && event instanceof PointerEvent && event.button !== 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        activatedOnPointerDown = true
+        onClick(button)
+      })
+    }
+    button.addEventListener('click', event => {
+      if (activatedOnPointerDown) {
+        activatedOnPointerDown = false
+        return
+      }
+      event.stopPropagation()
+      onClick(button)
+    })
     return button
   }
 
@@ -323,23 +378,47 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       highlights: deps.getStore().messageHighlightsById?.[message.id],
       targetRoleIds: message.targetRoleIds,
       mentionedRoleIds: message.mentionedRoleIds,
+      mentionsAll: message.mentionsAll,
+      showName,
+      showAvatar,
+    })
+  }
+
+  function streamingMessageSignature(message: GroupMessage, showName = true, showAvatar = true): string | undefined {
+    if (message.type !== 'assistant' || message.status !== 'pending') return undefined
+    return JSON.stringify({
+      type: message.type,
+      roleId: message.roleId,
+      roleName: message.roleName,
+      roleSite: roleForMessage(message)?.chatSite,
+      contentFormat: message.contentFormat,
+      createdAt: message.createdAt,
+      status: message.status,
+      references: message.references,
+      highlights: deps.getStore().messageHighlightsById?.[message.id],
       showName,
       showAvatar,
     })
   }
 
   function renderMessageMentions(message: GroupMessage): HTMLElement | undefined {
-    if (!message.mentionedRoleIds?.length) return undefined
+    if (!message.mentionsAll && !message.mentionedRoleIds?.length) return undefined
     const store = deps.getStore()
-    const roles = message.mentionedRoleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
-    if (roles.length === 0) return undefined
+    const roles = (message.mentionedRoleIds ?? []).map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
+    if (!message.mentionsAll && roles.length === 0) return undefined
 
     const mentions = document.createElement('div')
     mentions.className = 'message-mentions'
+    if (message.mentionsAll) {
+      const mention = document.createElement('span')
+      mention.className = 'message-mention'
+      mention.textContent = '@所有人'
+      mentions.append(mention)
+    }
     for (const role of roles) {
       const mention = document.createElement('span')
       mention.className = 'message-mention'
-      mention.textContent = `@${roleMentionLabel(role)}`
+      mention.textContent = `@${roleMentionLabel(role, mentionLabelOptions())}`
       mentions.append(mention)
     }
     return mentions
@@ -388,7 +467,9 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       const title = document.createElement('span')
       title.className = 'message-name-text'
       title.textContent = role.name
-      name.append(title, siteBadge(role.chatSite))
+      name.append(title, siteBadge(role))
+      const jumpButton = siteJumpButton(role.chatId, role)
+      if (jumpButton) name.append(jumpButton)
       wireMentionShortcut(name, role)
       stack.append(name)
     }
@@ -403,7 +484,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     tools.append(
       stopped
         ? createMessageIconButton('重新发送', 'retry', () => deps.retryRoleReply(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error))))
-        : createMessageIconButton('停止回复', 'stop', () => deps.stopRoleReply(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))),
+        : createMessageIconButton('停止回复', 'stop', () => deps.stopRoleReply(role).catch(error => deps.showError(error instanceof Error ? error.message : String(error))), { activateOnPointerDown: true }),
     )
     bubble.append(tools)
     stack.append(bubble)
@@ -454,7 +535,7 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
   function wireMentionShortcut(element: HTMLElement, role: GroupRole | undefined): void {
     if (!role) return
     element.classList.add('mention-shortcut')
-    element.title = `@${roleMentionLabel(role)}`
+    element.title = `@${roleMentionLabel(role, mentionLabelOptions())}`
     element.addEventListener('click', event => {
       event.stopPropagation()
       deps.insertMention(role)
@@ -661,23 +742,25 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     markMenu = undefined
   }
 
-  function siteBadge(site: GroupRole['chatSite']): HTMLElement {
+  function siteBadge(role: GroupRole): HTMLElement {
     const badge = document.createElement('span')
-    badge.className = `role-site-badge site-pill-${site ?? 'gemini'}`
-    badge.textContent = siteLabel(site)
+    badge.className = `role-site-badge ${role.modelSource === 'external' ? 'site-pill-external' : `site-pill-${role.chatSite ?? 'gemini'}`}`
+    badge.textContent = roleModelLabel(role, mentionLabelOptions())
     return badge
   }
 
-  return { renderMessages }
-}
+  function siteJumpButton(chatId: string, role: GroupRole): HTMLButtonElement | undefined {
+    if (role.modelSource === 'external') return undefined
+    const button = createMessageIconButton('跳转到原始窗口', 'jump', () => deps.focusRoleFrame(chatId, role.id))
+    button.classList.add('message-site-jump-btn')
+    return button
+  }
 
-function siteLabel(site: GroupRole['chatSite']): string {
-  if (site === 'chatgpt') return 'ChatGPT'
-  if (site === 'claude') return 'Claude'
-  if (site === 'deepseek') return 'DeepSeek'
-  if (site === 'kimi') return 'Kimi'
-  if (site === 'qwen') return '千问'
-  return 'Gemini'
+  function mentionLabelOptions() {
+    return roleMentionLabelOptionsFromSettings(deps.getStore().settings)
+  }
+
+  return { renderMessages }
 }
 
 function closestMessageBody(node: Node): HTMLElement | undefined {

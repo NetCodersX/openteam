@@ -1,5 +1,5 @@
 import { getSafeSupportedChatIframeSrcForRole, getSupportedChatOrigin } from '../group/conversationUrl'
-import type { GroupChat, GroupRole } from '../group/types'
+import type { ChatSite, GroupChat, GroupRole } from '../group/types'
 
 export const FRAME_ASSIGN_MESSAGE = 'OPENTEAM_ASSIGN_FRAME_ROLE'
 export const CHAT_IFRAME_ALLOW = 'clipboard-read; clipboard-write; microphone; camera; geolocation; autoplay; fullscreen; picture-in-picture; storage-access; web-share'
@@ -61,6 +61,7 @@ interface RoleFrameRecord {
   chatId: string
   roleId: string
   roleName: string
+  roleSite?: ChatSite
   shell: HTMLElement
   label: HTMLElement
   iframe: HTMLIFrameElement
@@ -203,6 +204,7 @@ export class IframeHost {
     this.activeChatSignature = activationSignature
 
     const chatRoleIds = new Set(chat.roleIds)
+    this.removeStaleRoleFrames(chat.id, chatRoleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
         const record = this.ensureRoleFrame(role)
@@ -223,6 +225,7 @@ export class IframeHost {
     this.activeChatSignature = undefined
     const group = this.getOrCreateChatGroup(chat)
     const chatRoleIds = new Set(chat.roleIds)
+    this.removeStaleRoleFrames(chat.id, chatRoleIds)
     for (const role of roles) {
       if (role.chatId === chat.id && chatRoleIds.has(role.id)) {
         const record = this.ensureRoleFrame(role)
@@ -297,7 +300,7 @@ export class IframeHost {
     const key = roleKey(role.chatId, role.id)
     const existing = this.framesByRoleKey.get(key)
     if (existing) {
-      this.updateRoleFrameLabel(existing, role.name)
+      this.updateRoleFrameLabel(existing, role)
       this.emit({ type: 'role-reused', chatId: role.chatId, roleId: role.id, iframe: existing.iframe })
       return existing
     }
@@ -313,12 +316,12 @@ export class IframeHost {
 
     const label = this.document.createElement('div')
     label.className = 'role-frame-label'
-    label.textContent = role.name
+    this.renderRoleFrameLabel(label, role)
 
     const src = getSafeSupportedChatIframeSrcForRole(role.geminiConversationUrl, role)
     const iframe = this.document.createElement('iframe')
     iframe.className = 'role-frame'
-    iframe.title = `${role.name} chat`
+    iframe.title = `${role.name} ${siteLabel(role.chatSite)} chat`
     iframe.allow = CHAT_IFRAME_ALLOW
     iframe.dataset.chatId = role.chatId
     iframe.dataset.roleId = role.id
@@ -333,6 +336,7 @@ export class IframeHost {
       chatId: role.chatId,
       roleId: role.id,
       roleName: role.name,
+      roleSite: role.chatSite,
       shell,
       label,
       iframe,
@@ -353,6 +357,20 @@ export class IframeHost {
       srcKind: src === getSafeSupportedChatIframeSrcForRole(undefined, role) ? 'site-home' : 'conversation',
     })
     return record
+  }
+
+  private removeStaleRoleFrames(chatId: string, activeRoleIds: Set<string>): void {
+    for (const record of [...this.framesByRoleKey.values()]) {
+      if (record.chatId !== chatId || activeRoleIds.has(record.roleId)) continue
+      this.removeRoleFrame(record)
+    }
+  }
+
+  private removeRoleFrame(record: RoleFrameRecord): void {
+    this.stopAssignLoop(record)
+    record.shell.remove()
+    this.framesByRoleKey.delete(roleKey(record.chatId, record.roleId))
+    this.emit({ type: 'role-disposed', chatId: record.chatId, roleId: record.roleId })
   }
 
   private getOrCreateChatGroup(chat: IframeHostChat | string): HTMLElement {
@@ -479,11 +497,27 @@ export class IframeHost {
     titleEl.textContent = title
   }
 
-  private updateRoleFrameLabel(record: RoleFrameRecord, roleName: string): void {
-    if (record.roleName === roleName && record.label.textContent === roleName) return
-    record.roleName = roleName
-    record.label.textContent = roleName
-    record.iframe.title = `${roleName} chat`
+  private updateRoleFrameLabel(record: RoleFrameRecord, role: IframeHostRole): void {
+    if (
+      record.roleName === role.name &&
+      record.roleSite === role.chatSite &&
+      record.label.querySelector('.role-frame-name')?.textContent === role.name &&
+      record.label.querySelector('.role-frame-site')?.textContent === siteLabel(role.chatSite)
+    ) return
+    record.roleName = role.name
+    record.roleSite = role.chatSite
+    this.renderRoleFrameLabel(record.label, role)
+    record.iframe.title = `${role.name} ${siteLabel(role.chatSite)} chat`
+  }
+
+  private renderRoleFrameLabel(label: HTMLElement, role: IframeHostRole): void {
+    const name = this.document.createElement('span')
+    name.className = 'role-frame-name'
+    name.textContent = role.name
+    const site = this.document.createElement('span')
+    site.className = `role-frame-site site-pill-${role.chatSite ?? 'gemini'}`
+    site.textContent = siteLabel(role.chatSite)
+    label.replaceChildren(name, site)
   }
 
   private emit(event: IframeHostEvent): void {
@@ -503,10 +537,19 @@ function chatActivationSignature(chat: IframeHostChat, roles: IframeHostRole[]):
   const roleIds = new Set(chat.roleIds)
   const roleSignature = roles
     .filter(role => role.chatId === chat.id && roleIds.has(role.id))
-    .map(role => `${role.id}:${role.name}:${role.geminiConversationUrl ?? ''}:${role.chatGptGptsUrl ?? ''}`)
+    .map(role => `${role.id}:${role.name}:${role.chatSite ?? ''}:${role.geminiConversationUrl ?? ''}:${role.chatGptGptsUrl ?? ''}`)
     .sort()
     .join('|')
   return `${chat.id}:${chat.name}:${chat.roleIds.join(',')}:${roleSignature}`
+}
+
+function siteLabel(site: ChatSite | undefined): string {
+  if (site === 'chatgpt') return 'ChatGPT'
+  if (site === 'claude') return 'Claude'
+  if (site === 'deepseek') return 'DeepSeek'
+  if (site === 'kimi') return 'Kimi'
+  if (site === 'qwen') return '千问'
+  return 'Gemini'
 }
 
 function disabledRoleFrameState(role: IframeHostRole): RoleFrameState {

@@ -12,11 +12,13 @@ describe('team page floating window boundary', () => {
 
     expect(viewSource).toContain('function ensureShellPositioned(): DOMRect')
     expect(viewSource).toContain('function moveShellTo(left: number, top: number): void')
+    expect(viewSource).toContain('function resizeShellTo(width: number, height: number): void')
     expect(viewSource).toContain('function clampShellPosition(): void')
     expect(viewSource).toContain('function setWindowMinimized(minimized: boolean): void')
     expect(viewSource).toContain('function registerFloatingWindowControls(): void')
     expect(entrySource).not.toContain('function ensureShellPositioned(): DOMRect')
     expect(entrySource).not.toContain('function moveShellTo(left: number, top: number): void')
+    expect(entrySource).not.toContain('function resizeShellTo(width: number, height: number): void')
     expect(entrySource).not.toContain('function clampShellPosition(): void')
     expect(entrySource).not.toContain('function registerFloatingWindowControls(): void')
   })
@@ -147,5 +149,49 @@ describe('team page floating window boundary', () => {
     expect(appShellEl.style.left).toBe('')
     expect(appShellEl.style.top).toBe('')
     expect(appShellEl.classList.contains('dragging')).toBe(false)
+  })
+
+  it('resizes the floating shell from the resize handle with minimum dimensions', () => {
+    const appShellEl = document.createElement('main')
+    const toggleWindowSizeEl = document.createElement('button')
+    const toggleFullscreenEl = document.createElement('button')
+    const windowLauncherEl = document.createElement('button')
+    const windowResizeHandleEl = document.createElement('button')
+    appShellEl.append(windowResizeHandleEl)
+    document.body.append(appShellEl)
+    Object.defineProperty(appShellEl, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        left: 100,
+        top: 80,
+        right: 1000,
+        bottom: 700,
+        width: 900,
+        height: 620,
+        x: 100,
+        y: 80,
+        toJSON: () => ({}),
+      }),
+    })
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+    windowResizeHandleEl.setPointerCapture = () => undefined
+    windowResizeHandleEl.releasePointerCapture = () => undefined
+    windowResizeHandleEl.hasPointerCapture = () => true
+
+    createFloatingWindowControls({
+      appShellEl,
+      toggleWindowSizeEl,
+      toggleFullscreenEl,
+      windowLauncherEl,
+      windowResizeHandleEl,
+    }).registerFloatingWindowControls()
+
+    windowResizeHandleEl.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 1000, clientY: 700, pointerId: 1, bubbles: true }))
+    windowResizeHandleEl.dispatchEvent(new PointerEvent('pointermove', { clientX: 500, clientY: 320, pointerId: 1, bubbles: true }))
+
+    expect(appShellEl.style.width).toBe('760px')
+    expect(appShellEl.style.height).toBe('520px')
+    expect(appShellEl.classList.contains('resizing')).toBe(true)
   })
 })

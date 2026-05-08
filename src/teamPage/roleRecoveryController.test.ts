@@ -123,6 +123,42 @@ describe('createRoleRecoveryController', () => {
     expect(log.warn).toHaveBeenCalledWith('message-resync:recover:start', { chatId: chat.id, roleId: role.id, messageId: message.id })
     expect(settled).toBe(true)
   })
+
+  it('manual refresh reloads current site role iframes even when roles are already online', async () => {
+    const chat = makeChat('chat-1', ['role-1'])
+    const role = makeRole(chat.id, 'role-1', '工程师', 'ready')
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      rolesById: { [role.id]: role },
+    }
+    const refreshStore = vi.fn(async () => {
+      store.rolesById[role.id] = { ...store.rolesById[role.id], status: 'ready' }
+    })
+    const iframeHost = {
+      focusRoleFrame: vi.fn(() => false),
+      recoverRole: vi.fn(),
+    }
+    const controller = createRoleRecoveryController({
+      state: { ...createTeamPageState(), selectedChatId: chat.id },
+      getStore: () => store,
+      getCurrentRoles: () => [store.rolesById[role.id]],
+      refreshStore,
+      switchChat: vi.fn(),
+      renderComposerState: vi.fn(),
+      setWindowMinimized: vi.fn(),
+      iframeHost,
+      runCommand: vi.fn(async () => undefined),
+      showError: vi.fn(),
+      log: { info: vi.fn(), warn: vi.fn() },
+    })
+
+    await controller.refreshCurrentChat()
+
+    expect(iframeHost.recoverRole).toHaveBeenCalledWith(role)
+  })
 })
 
 function makeChat(id: string, roleIds: string[]): GroupChat {
