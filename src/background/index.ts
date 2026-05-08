@@ -14,6 +14,7 @@ import { createExternalModelHandlers } from './externalModelHandlers'
 import { createExternalModelClient } from './externalModelClient'
 import { createPromptSender } from './promptDelivery'
 import { createRoleHandlers } from './roleHandlers'
+import { createOrchestrationHandlers } from './orchestrationHandlers'
 import { createRuntimeFrameRegistry } from './runtimeFrames'
 import { getChatRoles, mutateStore } from './storeAccess'
 import { createLogger } from '../shared/logger'
@@ -77,6 +78,7 @@ const routeMessage = createMessageRouter([
   { type: 'GROUP_SETTINGS_UPDATE', handler: handleSettingsUpdate },
   ...createExternalModelHandlers({ broadcastStoreUpdated, newId, now }),
   ...createRoleHandlers({ broadcastStoreUpdated, log, newId, now, runtimeFrames, sendPrompt }),
+  ...createOrchestrationHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendPrompt }),
   ...createMessageHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendError, sendPrompt, sendRoleMessage }),
 ])
 

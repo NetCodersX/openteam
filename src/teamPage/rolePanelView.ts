@@ -342,6 +342,3 @@ function roleStatusLabel(status: RoleStatus): string {
   return labels[status]
 }
 
-function textNode(content: string): Text {
-  return document.createTextNode(content)
-}

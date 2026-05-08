@@ -133,6 +133,24 @@ describe('team.html chat creation UI', () => {
     expect(html).toMatch(/\.all-note-target\.deleted-chat\s*{[^}]*border-color:\s*rgba\(248,\s*184,\s*78,\s*0\.22\);/s)
   })
 
+  it('adds a stage orchestration modal and left-rail entry', () => {
+    const html = readTeamDocument()
+
+    expect(html).toContain('id="open-orchestration"')
+    expect(html).toContain('data-tooltip="编排任务"')
+    expect(html).toContain('id="orchestration-modal"')
+    expect(html).toContain('id="orchestration-task"')
+    expect(html).toContain('id="orchestration-people-list"')
+    expect(html).toContain('id="orchestration-stage-canvas"')
+    expect(html).toContain('id="orchestration-stage-settings"')
+    expect(html).toContain('id="orchestration-review-settings"')
+    expect(html).toContain('id="orchestration-max-rounds" type="number" min="1" max="50" value="1"')
+    expect(html).toContain('一个画布节点代表一个可执行阶段')
+    expect(html).toContain('不需要 @ 人员')
+    expect(html).toMatch(/\.orchestration-layout\s*{[^}]*grid-template-columns:\s*250px minmax\(420px, 1fr\) 280px;/s)
+    expect(html).toMatch(/\.orchestration-stage-canvas\s*{[^}]*min-height:\s*620px;/s)
+  })
+
   it('promotes people library and external models from settings into the left rail', () => {
     const html = readTeamDocument()
     const railActions = html.match(/<div class="rail-actions">(?<body>[\s\S]*?)<\/div>/)?.groups?.body ?? ''
@@ -578,7 +596,7 @@ describe('team.html chat creation UI', () => {
     expect(source).toContain("message.contentFormat === 'markdown' || message.type === 'assistant'")
     expect(source).toContain('renderMarkdownMessageBody(body, message.content)')
     expect(source).toContain('renderPlainMessageBody(body, message.content)')
-    expect(source).toContain('pill.textContent = message.content')
+    expect(source).toContain('pill.append(document.createTextNode(message.content))')
     expect(source).toContain('MarkdownIt')
     expect(source).toContain('body.innerHTML = markdownRenderer.render(content)')
     expect(html).toMatch(/\.message-body\s*{[^}]*white-space:\s*pre-wrap;/s)

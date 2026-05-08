@@ -57,6 +57,10 @@ describe('group store', () => {
       messagesById: {},
       roleTemplateOrder: DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id),
       roleTemplatesById: Object.fromEntries(DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => [template.id, template])),
+      orchestrationFlowsById: {},
+      orchestrationFlowOrderByChatId: {},
+      orchestrationRunsById: {},
+      activeOrchestrationRunIdByChatId: {},
       globalNote: undefined,
       chatNotesById: {},
       messageHighlightsById: {},
@@ -404,6 +408,173 @@ describe('group store', () => {
       chatNotesById: store.chatNotesById,
       messageHighlightsById: store.messageHighlightsById,
     })
+  })
+
+  it('normalizes missing orchestration records on older stores', async () => {
+    stored[STORE_KEY] = {
+      version: 4,
+      chatOrder: [],
+      settings: {
+        defaultMode: 'independent',
+        defaultChatSite: 'gemini',
+      },
+    }
+
+    await expect(loadStore()).resolves.toMatchObject({
+      version: CURRENT_STORE_VERSION,
+      orchestrationFlowsById: {},
+      orchestrationFlowOrderByChatId: {},
+      orchestrationRunsById: {},
+      activeOrchestrationRunIdByChatId: {},
+    })
+  })
+
+  it('persists orchestration flows, runs, and active run metadata', async () => {
+    const store = createDefaultStore()
+    store.orchestrationFlowsById['flow-1'] = {
+      id: 'flow-1',
+      chatId: 'chat-1',
+      name: 'Launch review',
+      stages: [
+        { id: 'stage-1', kind: 'roles', name: 'Draft', roleIds: ['role-1', 'role-2'] },
+        { id: 'stage-2', kind: 'review', name: 'Review', roleIds: ['role-reviewer'], review: { reviewerRoleIds: ['role-reviewer'] } },
+      ],
+      graph: {
+        stageNodes: [
+          { id: 'stage-node-1', kind: 'roles', name: 'Draft node', roleIds: ['role-1', 'role-2'] },
+          { id: 'stage-node-2', kind: 'review', name: 'Review node', roleIds: ['role-reviewer'], review: { reviewerRoleIds: ['role-reviewer'] } },
+        ],
+        edges: [{ sourceStageId: 'stage-node-1', targetStageId: 'stage-node-2' }],
+      },
+      maxRounds: 99,
+      createdAt: 1,
+      updatedAt: 2,
+    }
+    store.orchestrationFlowOrderByChatId['chat-1'] = ['flow-1']
+    store.orchestrationRunsById['run-1'] = {
+      id: 'run-1',
+      chatId: 'chat-1',
+      flowId: 'flow-1',
+      status: 'running',
+      currentRound: 1,
+      maxRounds: 99,
+      stageRuns: [
+        {
+          stageId: 'stage-1',
+          stageIndex: 0,
+          kind: 'roles',
+          round: 1,
+          status: 'completed',
+          roleRuns: {
+            'role-1': { roleId: 'role-1', status: 'completed', messageId: 'msg-1' },
+          },
+          reviewResults: [
+            {
+              round: 1,
+              stageRunId: 'stage-run-1',
+              reviewerRoleId: 'role-reviewer',
+              messageId: 'msg-review-1',
+              decision: 'continue',
+              reason: 'Needs another draft pass',
+              failedCriteria: ['specificity'],
+              nextRoundInstruction: 'Add launch risks',
+              rawJson: '{"decision":"continue"}',
+              createdAt: 5,
+            },
+          ],
+        },
+      ],
+      createdAt: 3,
+      updatedAt: 4,
+    }
+    store.activeOrchestrationRunIdByChatId['chat-1'] = 'run-1'
+
+    await saveStore(store)
+
+    expect(stored[META_STORE_KEY]).toMatchObject({
+      orchestrationFlowOrderByChatId: { 'chat-1': ['flow-1'] },
+      activeOrchestrationRunIdByChatId: { 'chat-1': 'run-1' },
+    })
+    await expect(loadStore()).resolves.toMatchObject({
+      orchestrationFlowsById: {
+        'flow-1': {
+          stages: [
+            { id: 'stage-1', kind: 'roles', roleIds: ['role-1', 'role-2'] },
+            { id: 'stage-2', kind: 'review', roleIds: ['role-reviewer'] },
+          ],
+          graph: {
+            stageNodes: [
+              { id: 'stage-node-1', kind: 'roles', roleIds: ['role-1', 'role-2'] },
+              { id: 'stage-node-2', kind: 'review', roleIds: ['role-reviewer'] },
+            ],
+          },
+          maxRounds: 50,
+        },
+      },
+      orchestrationFlowOrderByChatId: { 'chat-1': ['flow-1'] },
+      orchestrationRunsById: {
+        'run-1': {
+          status: 'running',
+          maxRounds: 50,
+          stageRuns: [
+            {
+              stageId: 'stage-1',
+              kind: 'roles',
+              roleRuns: {
+                'role-1': { roleId: 'role-1', status: 'completed', messageId: 'msg-1' },
+              },
+              reviewResults: [
+                {
+                  round: 1,
+                  stageRunId: 'stage-run-1',
+                  reviewerRoleId: 'role-reviewer',
+                  messageId: 'msg-review-1',
+                  decision: 'continue',
+                  reason: 'Needs another draft pass',
+                  failedCriteria: ['specificity'],
+                  nextRoundInstruction: 'Add launch risks',
+                  rawJson: '{"decision":"continue"}',
+                  createdAt: 5,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      activeOrchestrationRunIdByChatId: { 'chat-1': 'run-1' },
+    })
+  })
+
+  it('persists executable orchestration stages without a graph snapshot', async () => {
+    const store = createDefaultStore()
+    store.orchestrationFlowsById['flow-no-graph'] = {
+      id: 'flow-no-graph',
+      chatId: 'chat-1',
+      name: 'Stage-only flow',
+      stages: [
+        { id: 'stage-1', kind: 'roles', name: 'Draft', roleIds: ['role-1'] },
+        { id: 'stage-2', kind: 'review', name: 'Review', roleIds: ['role-reviewer'], review: { reviewerRoleIds: ['role-reviewer'] } },
+      ],
+      maxRounds: 1,
+      createdAt: 1,
+      updatedAt: 2,
+    }
+    store.orchestrationFlowOrderByChatId['chat-1'] = ['flow-no-graph']
+
+    await saveStore(store)
+
+    const loaded = await loadStore()
+    expect(loaded.orchestrationFlowsById['flow-no-graph']).toMatchObject({
+      id: 'flow-no-graph',
+      chatId: 'chat-1',
+      stages: [
+        { id: 'stage-1', kind: 'roles', roleIds: ['role-1'] },
+        { id: 'stage-2', kind: 'review', roleIds: ['role-reviewer'] },
+      ],
+      maxRounds: 1,
+    })
+    expect(loaded.orchestrationFlowsById['flow-no-graph'].graph).toBeUndefined()
+    expect(loaded.orchestrationFlowOrderByChatId['chat-1']).toEqual(['flow-no-graph'])
   })
 
   it('removes stale split-storage keys after a chat is deleted', async () => {

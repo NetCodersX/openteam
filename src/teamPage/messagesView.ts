@@ -1,7 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import { DEFAULT_MESSAGE_HIGHLIGHT_COLOR, MESSAGE_HIGHLIGHT_COLORS, messageHighlightColorRgb, type MessageHighlightColor } from '../group/highlightColors'
 import { roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
-import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, MessageReference, OpenTeamStore } from '../group/types'
+import type { GroupChat, GroupMessage, GroupRole, MessageHighlight, MessageReference, OpenTeamStore, OrchestrationReviewResult } from '../group/types'
 import type { TeamPageState } from './appState'
 import { buildChatRenderItems, getChatStartupNotice, getStoppedReplyRoles, getVisibleThinkingRoles, THINKING_TIMEOUT_MS } from './chatExperience'
 
@@ -38,6 +38,7 @@ export interface MessagesViewDependencies {
   render(): void
   showError(message: string): void
   showSuccess(message: string): void
+  renderOrchestrationStatus?(): HTMLElement | undefined
   log: {
     warn(event: string, details?: Record<string, unknown>): void
   }
@@ -67,6 +68,9 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       deps.messagesEl.append(deps.emptyCard('选择一个群聊', '左侧群聊列表会显示最近摘要、状态和更新时间。'))
       return
     }
+
+    const orchestrationStatus = deps.renderOrchestrationStatus?.()
+    if (orchestrationStatus) deps.messagesEl.append(orchestrationStatus)
 
     if (messages.length === 0) {
       const roles = deps.getCurrentRoles()
@@ -128,7 +132,9 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     if (message.type === 'system') {
       const pill = document.createElement('div')
       pill.className = 'message-system-pill'
-      pill.textContent = message.content
+      const orchestrationLabel = renderOrchestrationMessageLabel(message)
+      if (orchestrationLabel) pill.append(orchestrationLabel)
+      pill.append(document.createTextNode(message.content))
       article.append(pill)
       cacheMessageNode(message.id, signature, article, streamingSignature)
       return article
@@ -165,6 +171,8 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
 
     const bubble = document.createElement('div')
     bubble.className = 'message-bubble'
+    const orchestrationLabel = renderOrchestrationMessageLabel(message)
+    if (orchestrationLabel) bubble.append(orchestrationLabel)
     const body = document.createElement('div')
     body.className = 'message-body'
     if (message.type === 'assistant' && message.status === 'pending') body.classList.add('thinking-dots')
@@ -181,6 +189,8 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     }
     renderSavedHighlights(body, message)
     bubble.append(body)
+    const reviewSummary = renderOrchestrationReviewSummary(message)
+    if (reviewSummary) bubble.append(reviewSummary)
     if (message.references?.length) bubble.append(referenceBox(message.references[0]))
 
     if (message.type === 'assistant') {
@@ -364,6 +374,69 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
     await navigator.clipboard.writeText(message.content)
   }
 
+  function renderOrchestrationMessageLabel(message: GroupMessage): HTMLElement | undefined {
+    if (!message.orchestrationKind) return undefined
+    const label = document.createElement('div')
+    label.className = `orchestration-message-label orchestration-message-${message.orchestrationKind}`
+    label.textContent = orchestrationMessageLabelText(message)
+    return label
+  }
+
+  function orchestrationMessageLabelText(message: GroupMessage): string {
+    const parts = ['编排']
+    if (message.orchestrationRound) parts.push(`第 ${message.orchestrationRound} 轮`)
+    if (message.orchestrationStageIndex !== undefined) parts.push(`第 ${message.orchestrationStageIndex + 1} 步`)
+    parts.push(orchestrationKindLabel(message.orchestrationKind))
+    return parts.join(' · ')
+  }
+
+  function orchestrationKindLabel(kind: GroupMessage['orchestrationKind']): string {
+    if (kind === 'task') return '任务'
+    if (kind === 'role') return '人员'
+    if (kind === 'review') return '复核'
+    return '状态'
+  }
+
+  function renderOrchestrationReviewSummary(message: GroupMessage): HTMLElement | undefined {
+    if (message.orchestrationKind !== 'review') return undefined
+    const result = findReviewResultForMessage(message)
+    if (!result) return undefined
+    const summary = document.createElement('div')
+    summary.className = 'orchestration-review-summary'
+    summary.append(reviewSummaryLine('决策', reviewDecisionLabel(result.decision)))
+    if (result.reason) summary.append(reviewSummaryLine('原因', result.reason))
+    if (result.failedCriteria.length > 0) summary.append(reviewSummaryLine('未通过', result.failedCriteria.join('、')))
+    if (result.nextRoundInstruction) summary.append(reviewSummaryLine('下一轮', result.nextRoundInstruction))
+    return summary
+  }
+
+  function findReviewResultForMessage(message: GroupMessage): OrchestrationReviewResult | undefined {
+    if (!message.orchestrationRunId) return undefined
+    const run = deps.getStore().orchestrationRunsById[message.orchestrationRunId]
+    for (const stageRun of run?.stageRuns ?? []) {
+      const result = stageRun.reviewResults?.find(result => result.messageId === message.id)
+      if (result) return result
+    }
+    return undefined
+  }
+
+  function reviewSummaryLine(label: string, value: string): HTMLElement {
+    const line = document.createElement('div')
+    line.className = 'orchestration-review-line'
+    const labelEl = document.createElement('span')
+    labelEl.textContent = `${label}：`
+    const valueEl = document.createElement('span')
+    valueEl.textContent = value
+    line.append(labelEl, valueEl)
+    return line
+  }
+
+  function reviewDecisionLabel(decision: OrchestrationReviewResult['decision']): string {
+    if (decision === 'pass') return '通过'
+    if (decision === 'continue') return '继续'
+    return '停止'
+  }
+
   function messageSignature(message: GroupMessage, showName = true, showAvatar = true): string {
     return JSON.stringify({
       type: message.type,
@@ -375,6 +448,12 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       createdAt: message.createdAt,
       status: message.status,
       references: message.references,
+      orchestrationRunId: message.orchestrationRunId,
+      orchestrationRound: message.orchestrationRound,
+      orchestrationStageId: message.orchestrationStageId,
+      orchestrationStageIndex: message.orchestrationStageIndex,
+      orchestrationKind: message.orchestrationKind,
+      orchestrationReviewResult: findReviewResultForMessage(message),
       highlights: deps.getStore().messageHighlightsById?.[message.id],
       targetRoleIds: message.targetRoleIds,
       mentionedRoleIds: message.mentionedRoleIds,
@@ -395,6 +474,12 @@ export function createMessagesView(deps: MessagesViewDependencies): MessagesView
       createdAt: message.createdAt,
       status: message.status,
       references: message.references,
+      orchestrationRunId: message.orchestrationRunId,
+      orchestrationRound: message.orchestrationRound,
+      orchestrationStageId: message.orchestrationStageId,
+      orchestrationStageIndex: message.orchestrationStageIndex,
+      orchestrationKind: message.orchestrationKind,
+      orchestrationReviewResult: findReviewResultForMessage(message),
       highlights: deps.getStore().messageHighlightsById?.[message.id],
       showName,
       showAvatar,

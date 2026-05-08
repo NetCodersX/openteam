@@ -58,6 +58,13 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     {
+      name: 'safe-lodash-global-root',
+      transform(source, id) {
+        if (!id.endsWith('/lodash-es/_root.js')) return undefined
+        return source.replace("Function('return this')()", 'globalThis')
+      },
+    },
+    {
       name: 'extension-files',
       apply: 'build',
       async closeBundle() {

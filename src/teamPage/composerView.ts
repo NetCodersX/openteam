@@ -64,13 +64,13 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
       deps.targetPreviewEl.textContent = '当前群聊还没有人员'
       deps.sendButtonEl.disabled = true
     } else if (!raw) {
-      deps.targetPreviewEl.textContent = '输入消息；@ 人员后触发回复'
+      deps.targetPreviewEl.textContent = '输入消息；不 @ 仅记录，@ 人员触发回复'
       deps.sendButtonEl.disabled = true
     } else if (!parsed.ok) {
       deps.targetPreviewEl.textContent = parsed.error
       deps.sendButtonEl.disabled = true
     } else if (targets.length === 0) {
-      deps.targetPreviewEl.textContent = '将作为群消息记录，不触发 AI'
+      deps.targetPreviewEl.textContent = '将作为群消息记录，不触发 AI；@ 人员可触发回复'
       deps.sendButtonEl.disabled = false
     } else if (reconnecting.length > 0) {
       const readyTargets = targets.filter(role => !reconnecting.includes(role) && role.status === 'ready')

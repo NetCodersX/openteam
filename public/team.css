@@ -1225,6 +1225,100 @@ select:focus {
   filter: brightness(1.08);
 }
 
+.orchestration-status {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(87, 216, 221, 0.24);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(8, 19, 29, 0.78);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.orchestration-status-header,
+.orchestration-status-actions,
+.orchestration-status-details {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.orchestration-status-header {
+  justify-content: space-between;
+}
+
+.orchestration-status-title {
+  color: #eaffff;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.orchestration-status-detail {
+  display: inline-flex;
+  gap: 5px;
+  border: 1px solid rgba(132, 153, 171, 0.16);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.orchestration-status-detail-label {
+  color: var(--subtle);
+  font-weight: 760;
+}
+
+.orchestration-status-error {
+  border-color: rgba(255, 138, 165, 0.34);
+  background: rgba(44, 12, 22, 0.68);
+}
+
+.orchestration-status-stopped {
+  border-color: rgba(248, 184, 78, 0.28);
+  background: rgba(41, 32, 16, 0.62);
+}
+
+.orchestration-status-completed {
+  border-color: rgba(83, 230, 166, 0.3);
+  background: rgba(7, 35, 27, 0.58);
+}
+
+.orchestration-status-detail.error {
+  color: #ffd6df;
+}
+
+.orchestration-message-label {
+  padding: 7px 12px 0;
+  color: #8ff5ed;
+  font-size: 11px;
+  font-weight: 780;
+  line-height: 1.35;
+}
+
+.message-system-pill .orchestration-message-label {
+  padding: 0 0 3px;
+}
+
+.orchestration-review-summary {
+  display: grid;
+  gap: 4px;
+  margin: 0 10px 10px;
+  border: 1px solid rgba(87, 216, 221, 0.18);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: currentColor;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.orchestration-review-line span:first-child {
+  color: rgba(243, 245, 246, 0.62);
+  font-weight: 760;
+}
+
 .message-time-divider {
   align-self: center;
   width: fit-content;
@@ -2796,6 +2890,144 @@ select:focus {
   min-height: 0;
   border: 0;
   background: white;
+}
+
+.orchestration-modal {
+  width: min(1180px, calc(100vw - 42px));
+  max-height: calc(100vh - 42px);
+  overflow: hidden;
+}
+
+.orchestration-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(420px, 1fr) 280px;
+  gap: 16px;
+  min-height: 620px;
+}
+
+.orchestration-sidebar,
+.orchestration-settings {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid rgba(132, 153, 171, 0.16);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(8, 17, 26, 0.62);
+}
+
+.orchestration-sidebar .field,
+.orchestration-settings .field {
+  gap: 8px;
+}
+
+#orchestration-task {
+  min-height: 106px;
+}
+
+.orchestration-people-list {
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+}
+
+.orchestration-person {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(132, 153, 171, 0.18);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(11, 24, 36, 0.72);
+  cursor: grab;
+}
+
+.orchestration-person:active {
+  cursor: grabbing;
+}
+
+.orchestration-workspace {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(87, 216, 221, 0.22);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(87, 216, 221, 0.11), transparent 34%),
+    rgba(4, 10, 17, 0.82);
+}
+
+.orchestration-stage-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 620px;
+}
+
+.orchestration-empty-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: 430px;
+  margin: 0;
+  border: 1px dashed rgba(87, 216, 221, 0.42);
+  border-radius: 16px;
+  padding: 18px;
+  background: rgba(7, 14, 22, 0.82);
+  color: var(--muted);
+  line-height: 1.65;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.orchestration-empty-hint[hidden] {
+  display: none;
+}
+
+.orchestration-stage-settings,
+.orchestration-review-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.orchestration-stage-settings h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.orchestration-note {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.stage-role-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stage-role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(87, 216, 221, 0.28);
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(87, 216, 221, 0.1);
+  color: #eaffff;
+  font-size: 12px;
+}
+
+.stage-role-chip button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 138, 165, 0.18);
+  color: var(--danger);
+  cursor: pointer;
 }
 
 @media (max-width: 1120px) {

@@ -14,6 +14,8 @@ import { createIframeHost } from './iframeHost'
 import { createMessagesView } from './messagesView'
 import { createNotesView } from './notesView'
 import { createPeopleLibraryView } from './peopleLibraryView'
+import { createOrchestrationModalView } from './orchestrationModalView'
+import { createOrchestrationStatusView } from './orchestrationStatusView'
 import { createRoleRecoveryController } from './roleRecoveryController'
 import { createRolePanelView } from './rolePanelView'
 import { createTeamPageRuntimeClient, type StorePushMessage } from './runtimeClient'
@@ -33,7 +35,7 @@ const { messageInputEl, referenceDraftEl, mentionPanelEl, errorEl, newChatNameEl
 const { templateNameEl, templateDescriptionEl, templatePromptEl, templateFormTitleEl, settingsButtonEl, settingsMenuEl } = teamDomRefs
 const { openAllNotesEl, closeAllNotesEl, allNotesModalEl, allNotesListEl, allNotesActiveTitleEl, allNotesActiveMetaEl, allNotesEditorEl } = teamDomRefs
 const { allNoteBoldEl, allNoteItalicEl, allNoteStrikeEl, allNoteBulletListEl, allNoteOrderedListEl, allNoteUndoEl, allNoteRedoEl } = teamDomRefs
-const { openPeopleLibraryEl, openExternalModelsEl, closeExternalModelsEl, externalModelsModalEl, externalModelsListEl, externalModelFormEl, externalModelIdEl, externalModelNameEl, externalModelFormatEl, externalModelBaseUrlEl, externalModelApiKeyEl, externalModelModelNameEl, resetExternalModelFormEl, closePeopleLibraryEl, peopleLibraryModalEl, personTemplateModalEl, addPersonModalEl, temporaryPersonModalEl } = teamDomRefs
+const { openPeopleLibraryEl, openExternalModelsEl, openOrchestrationEl, closeOrchestrationEl, orchestrationModalEl, orchestrationTaskEl, orchestrationPeopleListEl, orchestrationCanvasEl, orchestrationHintEl, orchestrationStageSettingsEl, orchestrationReviewSettingsEl, orchestrationMaxRoundsEl, saveOrchestrationEl, runOrchestrationEl, closeExternalModelsEl, externalModelsModalEl, externalModelsListEl, externalModelFormEl, externalModelIdEl, externalModelNameEl, externalModelFormatEl, externalModelBaseUrlEl, externalModelApiKeyEl, externalModelModelNameEl, resetExternalModelFormEl, closePeopleLibraryEl, peopleLibraryModalEl, personTemplateModalEl, addPersonModalEl, temporaryPersonModalEl } = teamDomRefs
 const { notesPanelEl, notesDragHandleEl, notesResizeHandleEl, toggleNotesPanelEl, closeNotesPanelEl, globalNoteTabEl, chatNoteTabEl, notesEditorEl } = teamDomRefs
 const { noteBoldEl, noteItalicEl, noteStrikeEl, noteBulletListEl, noteOrderedListEl, noteUndoEl, noteRedoEl } = teamDomRefs
 const { peopleLibrarySummaryEl, peopleLibraryListEl, peopleLibraryPaginationEl, peopleLibrarySearchEl, peopleLibraryBuiltinTabEl, peopleLibraryCustomTabEl, addLibraryPeopleListEl, addPersonSearchEl, addPersonBuiltinTabEl, addPersonCustomTabEl } = teamDomRefs
@@ -305,6 +307,35 @@ const externalModelsView = createExternalModelsView({
 const renderExternalModels = externalModelsView.renderExternalModels
 const closeExternalModels = externalModelsView.closeExternalModels
 const registerExternalModelsEvents = externalModelsView.registerExternalModelsEvents
+const orchestrationModalView = createOrchestrationModalView({
+  openOrchestrationEl,
+  orchestrationModalEl,
+  closeOrchestrationEl,
+  orchestrationTaskEl,
+  orchestrationPeopleListEl,
+  orchestrationCanvasEl,
+  orchestrationHintEl,
+  orchestrationStageSettingsEl,
+  orchestrationReviewSettingsEl,
+  orchestrationMaxRoundsEl,
+  saveOrchestrationEl,
+  runOrchestrationEl,
+  getStore: () => store,
+  getCurrentChat,
+  getCurrentRoles,
+  runCommand,
+  showError,
+  showSuccess,
+})
+const registerOrchestrationEvents = orchestrationModalView.registerOrchestrationEvents
+const renderOrchestrationModal = orchestrationModalView.render
+const orchestrationStatusView = createOrchestrationStatusView({
+  getStore: () => store,
+  getCurrentChat,
+  getCurrentRoles,
+  runCommand,
+  showError,
+})
 const renderTemplates = peopleLibraryView.renderTemplates
 const renderAddPersonDialog = peopleLibraryView.renderAddPersonDialog
 const openAddPersonDialog = peopleLibraryView.openAddPersonDialog
@@ -333,6 +364,7 @@ const messagesView = createMessagesView({
   render,
   showError,
   showSuccess,
+  renderOrchestrationStatus: orchestrationStatusView.renderOrchestrationStatus,
   log,
 })
 const renderMessages = messagesView.renderMessages
@@ -452,6 +484,7 @@ function render(): void {
   renderSelectedChat()
   renderTemplates()
   if (!externalModelsModalEl.hidden) renderExternalModels()
+  if (!orchestrationModalEl.hidden) renderOrchestrationModal()
   renderAddPersonDialog()
   if (!allNotesModalEl.hidden) renderAllNotes()
 }
@@ -491,6 +524,7 @@ async function boot(): Promise<void> {
   registerFloatingWindowControls()
   registerAllNotesEvents()
   registerUi()
+  registerOrchestrationEvents()
   registerNotesEvents()
   render()
   await refreshStore(false)

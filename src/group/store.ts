@@ -1,4 +1,5 @@
-import type { ExternalModelConfig, GroupChat, GroupMessage, GroupRole, MessageHighlight, OpenTeamSettings, OpenTeamStore, OpenTeamViewState, RichNoteDocument, RoleTemplate } from './types'
+import { DEFAULT_ORCHESTRATION_MAX_ROUNDS, MAX_ORCHESTRATION_MAX_ROUNDS } from './types'
+import type { ExternalModelConfig, GroupChat, GroupMessage, GroupRole, MessageHighlight, OpenTeamSettings, OpenTeamStore, OpenTeamViewState, OrchestrationFlow, OrchestrationRun, RichNoteDocument, RoleTemplate } from './types'
 import { normalizeMessageHighlightColor } from './highlightColors'
 import { DEFAULT_CUSTOM_ROLE_TEMPLATES } from './defaultCustomRoleTemplates'
 
@@ -6,7 +7,7 @@ export const STORE_KEY = 'openteam.groupStore'
 export const META_STORE_KEY = 'openteam.meta.v2'
 export const CHAT_KEY_PREFIX = 'openteam.chat.'
 export const MESSAGE_CHUNK_KEY_PREFIX = 'openteam.messages.'
-export const CURRENT_STORE_VERSION = 4
+export const CURRENT_STORE_VERSION = 5
 export const MESSAGE_CHUNK_SIZE = 100
 
 interface OpenTeamMetaStore {
@@ -15,6 +16,10 @@ interface OpenTeamMetaStore {
   chatOrder: string[]
   roleTemplateOrder: string[]
   roleTemplatesById: Record<string, RoleTemplate>
+  orchestrationFlowsById?: Record<string, OrchestrationFlow>
+  orchestrationFlowOrderByChatId?: Record<string, string[]>
+  orchestrationRunsById?: Record<string, OrchestrationRun>
+  activeOrchestrationRunIdByChatId?: Record<string, string>
   globalNote?: RichNoteDocument
   chatNotesById?: Record<string, RichNoteDocument>
   messageHighlightsById?: Record<string, MessageHighlight[]>
@@ -60,6 +65,10 @@ export function createDefaultStore(): OpenTeamStore {
     messagesById: {},
     roleTemplateOrder: defaultCustomRoleTemplateOrder(),
     roleTemplatesById: defaultCustomRoleTemplatesById(),
+    orchestrationFlowsById: {},
+    orchestrationFlowOrderByChatId: {},
+    orchestrationRunsById: {},
+    activeOrchestrationRunIdByChatId: {},
     globalNote: undefined,
     chatNotesById: {},
     messageHighlightsById: {},
@@ -126,6 +135,10 @@ function normalizeStore(raw: unknown): OpenTeamStore {
     messagesById: readRecord(raw.messagesById),
     roleTemplateOrder: normalizeRoleTemplateOrder(raw.roleTemplateOrder, raw.roleTemplatesById, defaults.roleTemplateOrder),
     roleTemplatesById: normalizeRoleTemplateRecord(raw.roleTemplatesById),
+    orchestrationFlowsById: normalizeOrchestrationFlowRecord(raw.orchestrationFlowsById),
+    orchestrationFlowOrderByChatId: readStringArrayRecord(raw.orchestrationFlowOrderByChatId),
+    orchestrationRunsById: normalizeOrchestrationRunRecord(raw.orchestrationRunsById),
+    activeOrchestrationRunIdByChatId: readStringRecord(raw.activeOrchestrationRunIdByChatId),
     globalNote: normalizeNoteDocument(raw.globalNote),
     chatNotesById: readNoteRecord(raw.chatNotesById),
     messageHighlightsById: readHighlightsRecord(raw.messageHighlightsById),
@@ -163,6 +176,10 @@ async function loadV2Store(rawMeta: unknown): Promise<OpenTeamStore> {
   store.chatOrder = chatDocuments.map(document => document.chat.id)
   store.roleTemplateOrder = [...meta.roleTemplateOrder]
   store.roleTemplatesById = normalizeRoleTemplateRecord(meta.roleTemplatesById)
+  store.orchestrationFlowsById = { ...(meta.orchestrationFlowsById ?? {}) }
+  store.orchestrationFlowOrderByChatId = { ...(meta.orchestrationFlowOrderByChatId ?? {}) }
+  store.orchestrationRunsById = { ...(meta.orchestrationRunsById ?? {}) }
+  store.activeOrchestrationRunIdByChatId = { ...(meta.activeOrchestrationRunIdByChatId ?? {}) }
   store.globalNote = meta.globalNote
   store.chatNotesById = { ...(meta.chatNotesById ?? {}) }
   store.messageHighlightsById = { ...(meta.messageHighlightsById ?? {}) }
@@ -201,6 +218,10 @@ function buildStorageItems(store: OpenTeamStore): Record<string, unknown> {
     chatOrder: chatIds,
     roleTemplateOrder: customRoleTemplateOrder(store),
     roleTemplatesById: customRoleTemplatesById(store),
+    orchestrationFlowsById: normalizeOrchestrationFlowRecord(store.orchestrationFlowsById),
+    orchestrationFlowOrderByChatId: readStringArrayRecord(store.orchestrationFlowOrderByChatId),
+    orchestrationRunsById: normalizeOrchestrationRunRecord(store.orchestrationRunsById),
+    activeOrchestrationRunIdByChatId: readStringRecord(store.activeOrchestrationRunIdByChatId),
     globalNote: normalizeNoteDocument(store.globalNote),
     chatNotesById: readNoteRecord(store.chatNotesById),
     messageHighlightsById: readHighlightsRecord(store.messageHighlightsById),
@@ -271,6 +292,10 @@ function normalizeMetaStore(raw: unknown): OpenTeamMetaStore {
       chatOrder: [],
     roleTemplateOrder: [],
     roleTemplatesById: {},
+    orchestrationFlowsById: {},
+    orchestrationFlowOrderByChatId: {},
+    orchestrationRunsById: {},
+    activeOrchestrationRunIdByChatId: {},
     chatNotesById: {},
     messageHighlightsById: {},
     externalRoleMemoriesById: {},
@@ -285,6 +310,10 @@ function normalizeMetaStore(raw: unknown): OpenTeamMetaStore {
     chatOrder: readStringArray(raw.chatOrder, []),
     roleTemplateOrder: normalizeRoleTemplateOrder(raw.roleTemplateOrder, raw.roleTemplatesById, []),
     roleTemplatesById: normalizeRoleTemplateRecord(raw.roleTemplatesById),
+    orchestrationFlowsById: normalizeOrchestrationFlowRecord(raw.orchestrationFlowsById),
+    orchestrationFlowOrderByChatId: readStringArrayRecord(raw.orchestrationFlowOrderByChatId),
+    orchestrationRunsById: normalizeOrchestrationRunRecord(raw.orchestrationRunsById),
+    activeOrchestrationRunIdByChatId: readStringRecord(raw.activeOrchestrationRunIdByChatId),
     globalNote: normalizeNoteDocument(raw.globalNote),
     chatNotesById: readNoteRecord(raw.chatNotesById),
     messageHighlightsById: readHighlightsRecord(raw.messageHighlightsById),
@@ -371,6 +400,72 @@ function normalizeRoleTemplateOrder(rawOrder: unknown, rawTemplates: unknown, fa
   const templates = normalizeRoleTemplateRecord(rawTemplates)
   const ids = new Set(Object.keys(templates))
   return readStringArray(rawOrder, fallback).filter(id => ids.has(id))
+}
+
+function normalizeOrchestrationFlowRecord(raw: unknown): Record<string, OrchestrationFlow> {
+  const record = readRecord(raw)
+  const normalized: Record<string, OrchestrationFlow> = {}
+  for (const [key, value] of Object.entries(record)) {
+    if (!isRecord(value) || typeof value.id !== 'string' || typeof value.chatId !== 'string' || typeof value.name !== 'string') continue
+    const stages = normalizeOrchestrationStages(value.stages)
+    const legacyGraphStages = isRecord(value.graph) ? normalizeOrchestrationStages(value.graph.stageNodes) : []
+    const executableStages = stages.length > 0 ? stages : legacyGraphStages
+    normalized[value.id || key] = {
+      ...(value as unknown as OrchestrationFlow),
+      stages: executableStages,
+      graph: normalizeOrchestrationGraphSnapshot(value.graph),
+      maxRounds: normalizeOrchestrationMaxRounds(value.maxRounds),
+      createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0,
+      updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
+    }
+  }
+  return normalized
+}
+
+function normalizeOrchestrationStages(raw: unknown): OrchestrationFlow['stages'] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((stage): stage is OrchestrationFlow['stages'][number] => (
+    isRecord(stage)
+    && typeof stage.id === 'string'
+    && (stage.kind === 'roles' || stage.kind === 'review')
+    && typeof stage.name === 'string'
+    && Array.isArray(stage.roleIds)
+  ))
+}
+
+function normalizeOrchestrationGraphSnapshot(raw: unknown): OrchestrationFlow['graph'] {
+  if (!isRecord(raw)) return undefined
+  return {
+    stageNodes: normalizeOrchestrationStages(raw.stageNodes),
+    edges: Array.isArray(raw.edges) ? raw.edges as NonNullable<OrchestrationFlow['graph']>['edges'] : [],
+  }
+}
+
+function normalizeOrchestrationRunRecord(raw: unknown): Record<string, OrchestrationRun> {
+  const record = readRecord(raw)
+  const normalized: Record<string, OrchestrationRun> = {}
+  for (const [key, value] of Object.entries(record)) {
+    if (!isRecord(value) || typeof value.id !== 'string' || typeof value.chatId !== 'string' || typeof value.flowId !== 'string') continue
+    normalized[value.id || key] = {
+      ...(value as unknown as OrchestrationRun),
+      status: normalizeOrchestrationRunStatus(value.status),
+      currentRound: typeof value.currentRound === 'number' ? value.currentRound : 1,
+      maxRounds: normalizeOrchestrationMaxRounds(value.maxRounds),
+      stageRuns: Array.isArray(value.stageRuns) ? value.stageRuns as OrchestrationRun['stageRuns'] : [],
+      createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0,
+      updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
+    }
+  }
+  return normalized
+}
+
+function normalizeOrchestrationRunStatus(raw: unknown): OrchestrationRun['status'] {
+  return raw === 'running' || raw === 'completed' || raw === 'stopped' || raw === 'error' ? raw : 'pending'
+}
+
+function normalizeOrchestrationMaxRounds(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return DEFAULT_ORCHESTRATION_MAX_ROUNDS
+  return Math.min(MAX_ORCHESTRATION_MAX_ROUNDS, Math.max(1, Math.floor(raw)))
 }
 
 function shouldSeedDefaultCustomTemplates(storedVersion: number, store: OpenTeamStore): boolean {
@@ -495,6 +590,16 @@ function readStringArray(raw: unknown, fallback: string[]): string[] {
   }
 
   return raw.filter((item): item is string => typeof item === 'string')
+}
+
+function readStringArrayRecord(raw: unknown): Record<string, string[]> {
+  if (!isRecord(raw)) return {}
+  return Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, readStringArray(value, [])]))
+}
+
+function readStringRecord(raw: unknown): Record<string, string> {
+  if (!isRecord(raw)) return {}
+  return Object.fromEntries(Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
 function readRecord<T>(raw: unknown): Record<string, T> {

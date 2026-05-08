@@ -45,6 +45,18 @@ export interface TeamPageDomRefs {
   allNoteRedoEl: HTMLButtonElement
   openPeopleLibraryEl: HTMLButtonElement
   openExternalModelsEl: HTMLButtonElement
+  openOrchestrationEl: HTMLButtonElement
+  closeOrchestrationEl: HTMLButtonElement
+  orchestrationModalEl: HTMLElement
+  orchestrationTaskEl: HTMLTextAreaElement
+  orchestrationPeopleListEl: HTMLElement
+  orchestrationCanvasEl: HTMLElement
+  orchestrationHintEl: HTMLElement
+  orchestrationStageSettingsEl: HTMLElement
+  orchestrationReviewSettingsEl: HTMLElement
+  orchestrationMaxRoundsEl: HTMLInputElement
+  saveOrchestrationEl: HTMLButtonElement
+  runOrchestrationEl: HTMLButtonElement
   closeExternalModelsEl: HTMLButtonElement
   externalModelsModalEl: HTMLElement
   externalModelsListEl: HTMLElement
@@ -175,6 +187,18 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     allNoteRedoEl: requireElement<HTMLButtonElement>('#all-note-redo'),
     openPeopleLibraryEl: requireElement<HTMLButtonElement>('#open-people-library'),
     openExternalModelsEl: requireElement<HTMLButtonElement>('#open-external-models'),
+    openOrchestrationEl: requireElement<HTMLButtonElement>('#open-orchestration'),
+    closeOrchestrationEl: requireElement<HTMLButtonElement>('#close-orchestration'),
+    orchestrationModalEl: requireElement<HTMLElement>('#orchestration-modal'),
+    orchestrationTaskEl: requireElement<HTMLTextAreaElement>('#orchestration-task'),
+    orchestrationPeopleListEl: requireElement<HTMLElement>('#orchestration-people-list'),
+    orchestrationCanvasEl: requireElement<HTMLElement>('#orchestration-stage-canvas'),
+    orchestrationHintEl: requireElement<HTMLElement>('#orchestration-empty-hint'),
+    orchestrationStageSettingsEl: requireElement<HTMLElement>('#orchestration-stage-settings'),
+    orchestrationReviewSettingsEl: requireElement<HTMLElement>('#orchestration-review-settings'),
+    orchestrationMaxRoundsEl: requireElement<HTMLInputElement>('#orchestration-max-rounds'),
+    saveOrchestrationEl: requireElement<HTMLButtonElement>('#save-orchestration'),
+    runOrchestrationEl: requireElement<HTMLButtonElement>('#run-orchestration'),
     closeExternalModelsEl: requireElement<HTMLButtonElement>('#close-external-models'),
     externalModelsModalEl: requireElement<HTMLElement>('#external-models-modal'),
     externalModelsListEl: requireElement<HTMLElement>('#external-models-list'),

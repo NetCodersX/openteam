@@ -13,6 +13,7 @@ import type { PromptDelivery, PromptSender } from './promptDelivery'
 import { messageTabId, rememberHost, senderFrameId, senderTabId, type RuntimeMessage } from './runtimeClient'
 import type { RuntimeFrameRegistry } from './runtimeFrames'
 import { getChatMessages, getChatRoles, mutateStore, requireChat, requireRole } from './storeAccess'
+import { markOrchestrationRoleError, maybeAdvanceOrchestrationRun } from './orchestrationRuntime'
 
 const STALE_THINKING_MS = 120_000
 const DEFAULT_DELIVERY_RETRY_DELAYS_MS = [2_000, 2_000, 4_000, 8_000, 15_000] as const
@@ -137,7 +138,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         type: 'user',
         content: parsed.content,
         targetRoleIds: parsed.targetRoleIds,
-        mentionedRoleIds: parsed.mentionedRoleIds.length > 0 ? parsed.mentionedRoleIds : undefined,
+        mentionedRoleIds: parsed.mentionedRoleIds,
         mentionsAll: parsed.mentionsAll,
         references: reference ? [reference] : undefined,
         createdAt: timestamp,
@@ -641,6 +642,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     await deps.broadcastStoreUpdated(store)
     if (promptMessageId) clearRoleErrorRetryCount(roleErrorRetryCounts, identity.chatId, identity.roleId, promptMessageId)
     if (promptMessageId) await deepSeekPromptBatcher.complete(identity.chatId, promptMessageId, identity.roleId)
+    if (promptMessageId) await maybeAdvanceOrchestrationRun(deps, { chatId: identity.chatId, roleId: identity.roleId, promptMessageId, replyMessage: result.reply })
     return { ok: true, message: result.reply, store }
   }
 
@@ -696,7 +698,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         const responseStore = await sendExternalModelDelivery(deps, externalModelClient, externalModelRuns, retry.externalDelivery) ?? retry.store
         return { ok: true, retried: true, store: responseStore }
       }
-      await sendPromptDelivery(deps, identity.chatId, promptMessageId, retry.delivery)
+      await sendPromptDelivery(deps, identity.chatId, promptMessageId!, retry.delivery)
       return { ok: true, retried: true, store: retry.store }
     }
 
@@ -727,6 +729,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     await deps.sendError(reason)
     if (promptMessageId) clearRoleErrorRetryCount(roleErrorRetryCounts, identity.chatId, identity.roleId, promptMessageId)
     if (promptMessageId) await deepSeekPromptBatcher.complete(identity.chatId, promptMessageId, identity.roleId)
+    if (promptMessageId) await markOrchestrationRoleError(deps, { chatId: identity.chatId, roleId: identity.roleId, promptMessageId, error: reason })
     return { ok: true, store }
   }
 
@@ -974,7 +977,6 @@ function withLatestPromptBinding(deps: MessageHandlersDependencies, chatId: stri
 }
 
 async function isPromptDeliveryStillActive(
-  deps: MessageHandlersDependencies,
   chatId: string,
   roleId: string,
   messageId: string,
@@ -1091,7 +1093,7 @@ async function sendPromptDelivery(deps: MessageHandlersDependencies, chatId: str
       return true
     } catch (error) {
       lastReason = error instanceof Error ? error.message : String(error)
-      const canRetry = attemptIndex < retryDelays.length && await isPromptDeliveryStillActive(deps, chatId, delivery.roleId, messageId, delivery.message.replyAttemptId)
+      const canRetry = attemptIndex < retryDelays.length && await isPromptDeliveryStillActive(chatId, delivery.roleId, messageId, delivery.message.replyAttemptId)
       if (!canRetry) break
 
       const delayMs = retryDelays[attemptIndex] ?? 0
@@ -1159,7 +1161,7 @@ async function sendExternalModelDelivery(deps: MessageHandlersDependencies, clie
         if (isAbortError(error) || controller.signal.aborted) throw error
         if (content.trim()) throw error
         const reason = error instanceof Error ? error.message : String(error)
-        const canRetry = attemptIndex < retryDelays.length && await isPromptDeliveryStillActive(deps, delivery.chatId, delivery.roleId, delivery.messageId, delivery.replyAttemptId)
+        const canRetry = attemptIndex < retryDelays.length && await isPromptDeliveryStillActive(delivery.chatId, delivery.roleId, delivery.messageId, delivery.replyAttemptId)
         if (!canRetry) throw error
 
         const delayMs = retryDelays[attemptIndex] ?? 0

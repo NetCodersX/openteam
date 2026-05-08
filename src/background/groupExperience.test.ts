@@ -571,6 +571,33 @@ describe('background group chat experience handlers', () => {
     })
   })
 
+  it('records no-mention ordinary chat messages without triggering AI', async () => {
+    const store = makeStore()
+    store.currentChatId = 'chat-1'
+    store.chatsById['chat-1'] = makeChat('chat-1', ['role-1'])
+    store.chatOrder = ['chat-1']
+    store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '工程师')
+    const harness = await setupBackground(store)
+
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1', hostTabId: 900 }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7, url: 'https://gemini.google.com/app/test' })
+    harness.tabsSendMessage.mockClear()
+    const response = await harness.invoke({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '先记录这个背景' }) as { ok: boolean; store: OpenTeamStore }
+
+    expect(response.ok).toBe(true)
+    expect(response.store.chatsById['chat-1'].messageIds).toHaveLength(1)
+    const messageId = response.store.chatsById['chat-1'].messageIds[0]
+    expect(response.store.messagesById[messageId]).toMatchObject({
+      type: 'user',
+      content: '先记录这个背景',
+      targetRoleIds: [],
+      mentionedRoleIds: [],
+      deliveryStatus: {},
+      status: 'received',
+    })
+    expect(harness.tabsSendMessage.mock.calls.some(call => call[1]?.type === 'TEAM_SEND_PROMPT')).toBe(false)
+    expect(response.store.rolesById['role-1'].status).not.toBe('thinking')
+  })
+
   it('renames chats, marks background replies as new, and clears new-message state when read', async () => {
     const store = makeStore()
     store.currentChatId = 'chat-1'
@@ -1188,6 +1215,10 @@ function makeStore(): OpenTeamStore {
     messagesById: {},
     roleTemplateOrder: [],
     roleTemplatesById: {},
+    orchestrationFlowsById: {},
+    orchestrationFlowOrderByChatId: {},
+    orchestrationRunsById: {},
+    activeOrchestrationRunIdByChatId: {},
     globalNote: undefined,
     chatNotesById: {},
     messageHighlightsById: {},

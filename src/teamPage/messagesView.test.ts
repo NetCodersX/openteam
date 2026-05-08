@@ -1715,4 +1715,188 @@ describe('team page messages view boundary', () => {
 
     expect(document.querySelector<HTMLElement>('.mark-menu')?.style.top).toBe('20px')
   })
+
+  it('renders orchestration metadata labels and review summaries', () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: ['role-1'],
+      messageIds: ['msg-review'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const role: GroupRole = {
+      id: 'role-1',
+      chatId: chat.id,
+      name: '复核员',
+      status: 'ready',
+      contextCursor: 0,
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-review',
+      chatId: chat.id,
+      seq: 1,
+      type: 'assistant',
+      content: '复核结果',
+      roleId: role.id,
+      roleName: role.name,
+      orchestrationRunId: 'run-1',
+      orchestrationRound: 1,
+      orchestrationStageId: 'stage-2',
+      orchestrationStageIndex: 1,
+      orchestrationKind: 'review',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      rolesById: { [role.id]: role },
+      messagesById: { [message.id]: message },
+      orchestrationRunsById: {
+        'run-1': {
+          id: 'run-1',
+          chatId: chat.id,
+          flowId: 'flow-1',
+          status: 'completed',
+          currentRound: 1,
+          maxRounds: 2,
+          stageRuns: [
+            {
+              stageId: 'stage-2',
+              stageIndex: 1,
+              kind: 'review',
+              round: 1,
+              status: 'completed',
+              roleRuns: { [role.id]: { roleId: role.id, status: 'completed', messageId: message.id } },
+              reviewResults: [
+                {
+                  round: 1,
+                  stageRunId: 'stage-2',
+                  reviewerRoleId: role.id,
+                  messageId: message.id,
+                  decision: 'continue',
+                  reason: '还需要补充测试',
+                  failedCriteria: ['测试不足'],
+                  nextRoundInstruction: '下一轮补齐测试',
+                  rawJson: '{}',
+                  createdAt: now,
+                },
+              ],
+            },
+          ],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    }
+    const messagesEl = document.createElement('section')
+
+    createMessagesView({
+      state: createTeamPageState(),
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [role],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '复',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    }).renderMessages()
+
+    expect(messagesEl.querySelector('.orchestration-message-label')?.textContent).toBe('编排 · 第 1 轮 · 第 2 步 · 复核')
+    expect(messagesEl.querySelector('.orchestration-review-summary')?.textContent).toContain('决策：继续')
+    expect(messagesEl.querySelector('.orchestration-review-summary')?.textContent).toContain('原因：还需要补充测试')
+    expect(messagesEl.querySelector('.orchestration-review-summary')?.textContent).toContain('未通过：测试不足')
+    expect(messagesEl.querySelector('.orchestration-review-summary')?.textContent).toContain('下一轮：下一轮补齐测试')
+  })
+
+  it('invalidates cached message nodes when orchestration metadata changes', () => {
+    const now = Date.now()
+    const chat: GroupChat = {
+      id: 'chat-1',
+      name: '群聊',
+      mode: 'independent',
+      roleIds: [],
+      messageIds: ['msg-status'],
+      nextMessageSeq: 2,
+      status: 'ready',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const message: GroupMessage = {
+      id: 'msg-status',
+      chatId: chat.id,
+      seq: 1,
+      type: 'system',
+      content: '状态更新',
+      orchestrationRunId: 'run-1',
+      orchestrationRound: 1,
+      orchestrationStageIndex: 0,
+      orchestrationKind: 'status',
+      createdAt: now,
+      status: 'received',
+    }
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      messagesById: { [message.id]: message },
+    }
+    const state = createTeamPageState()
+    const messagesEl = document.createElement('section')
+    const view = createMessagesView({
+      state,
+      getStore: () => store,
+      messagesEl,
+      getCurrentChat: () => chat,
+      getCurrentRoles: () => [],
+      getCurrentMessages: () => [message],
+      emptyCard: () => document.createElement('div'),
+      openAddPersonDialog: vi.fn(),
+      roleToneClass: () => 'role-tone-1',
+      roleAvatarLabel: () => '工',
+      messageTitle: message => message.roleName ?? 'AI 人员',
+      focusRoleFrame: vi.fn(),
+      insertMention: vi.fn(),
+      setReference: vi.fn(),
+      resyncMessageReply: vi.fn(async () => undefined),
+      retryRoleReply: vi.fn(async () => undefined),
+      stopRoleReply: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      render: vi.fn(),
+      showError: vi.fn(),
+      showSuccess: vi.fn(),
+      log: { warn: vi.fn() },
+    })
+
+    view.renderMessages()
+    expect(messagesEl.querySelector('.orchestration-message-label')?.textContent).toBe('编排 · 第 1 轮 · 第 1 步 · 状态')
+    message.orchestrationStageIndex = 1
+    view.renderMessages()
+
+    expect(messagesEl.querySelector('.orchestration-message-label')?.textContent).toBe('编排 · 第 1 轮 · 第 2 步 · 状态')
+  })
 })

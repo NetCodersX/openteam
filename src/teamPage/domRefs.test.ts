@@ -37,6 +37,18 @@ describe('team page dom refs', () => {
       <div id="settings-menu"></div>
       <button id="open-all-notes"></button>
       <button id="open-external-models"></button>
+      <button id="open-orchestration"></button>
+      <button id="close-orchestration"></button>
+      <div id="orchestration-modal"></div>
+      <textarea id="orchestration-task"></textarea>
+      <div id="orchestration-people-list"></div>
+      <div id="orchestration-stage-canvas"></div>
+      <p id="orchestration-empty-hint"></p>
+      <div id="orchestration-stage-settings"></div>
+      <div id="orchestration-review-settings"></div>
+      <input id="orchestration-max-rounds" />
+      <button id="save-orchestration"></button>
+      <button id="run-orchestration"></button>
       <button id="close-external-models"></button>
       <div id="external-models-modal"></div>
       <div id="external-models-list"></div>
@@ -131,6 +143,8 @@ describe('team page dom refs', () => {
 
     expect(refs.appShellEl.id).toBe('app')
     expect(refs.toggleFullscreenEl.id).toBe('toggle-fullscreen')
+    expect(refs.openOrchestrationEl.id).toBe('open-orchestration')
+    expect(refs.orchestrationMaxRoundsEl.id).toBe('orchestration-max-rounds')
     expect(refs.windowResizeHandleEl.id).toBe('window-resize-handle')
     expect(refs.messageInputEl.tagName).toBe('TEXTAREA')
     expect(refs.rolePanelEl.className).toBe('role-panel')

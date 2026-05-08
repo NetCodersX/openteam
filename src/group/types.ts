@@ -23,6 +23,10 @@ export interface OpenTeamStore {
   messagesById: Record<string, GroupMessage>
   roleTemplateOrder: string[]
   roleTemplatesById: Record<string, RoleTemplate>
+  orchestrationFlowsById: Record<string, OrchestrationFlow>
+  orchestrationFlowOrderByChatId: Record<string, string[]>
+  orchestrationRunsById: Record<string, OrchestrationRun>
+  activeOrchestrationRunIdByChatId: Record<string, string>
   globalNote?: RichNoteDocument
   chatNotesById?: Record<string, RichNoteDocument>
   messageHighlightsById?: Record<string, MessageHighlight[]>
@@ -68,6 +72,93 @@ export interface ExternalChatMemory {
   summary?: string
   summarizedThroughSeq: number
   updatedAt: number
+}
+
+export const DEFAULT_ORCHESTRATION_MAX_ROUNDS = 1
+export const MAX_ORCHESTRATION_MAX_ROUNDS = 50
+
+export type OrchestrationStageKind = 'roles' | 'review'
+export type OrchestrationRunStatus = 'pending' | 'running' | 'completed' | 'stopped' | 'error'
+export type OrchestrationStepStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'error'
+export type ReviewDecision = 'pass' | 'continue' | 'stop'
+
+export interface OrchestrationReviewConfig {
+  reviewerRoleIds: string[]
+  approvalThreshold?: number
+  instructions?: string
+}
+
+export interface OrchestrationStage {
+  id: string
+  kind: OrchestrationStageKind
+  name: string
+  roleIds: string[]
+  review?: OrchestrationReviewConfig
+}
+
+export interface OrchestrationGraphSnapshot {
+  stageNodes: OrchestrationStage[]
+  edges: Array<{ sourceStageId: string; targetStageId: string }>
+}
+
+export interface OrchestrationFlow {
+  id: string
+  chatId: string
+  name: string
+  description?: string
+  stages: OrchestrationStage[]
+  graph?: OrchestrationGraphSnapshot
+  maxRounds: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface OrchestrationReviewResult {
+  round: number
+  stageRunId: string
+  reviewerRoleId?: string
+  messageId: string
+  decision: ReviewDecision
+  reason: string
+  failedCriteria: string[]
+  nextRoundInstruction: string
+  rawJson: string
+  createdAt: number
+}
+
+export interface OrchestrationRoleRun {
+  roleId: string
+  status: OrchestrationStepStatus
+  messageId?: string
+  error?: string
+  startedAt?: number
+  completedAt?: number
+}
+
+export interface OrchestrationStageRun {
+  stageId: string
+  stageIndex: number
+  kind: OrchestrationStageKind
+  round: number
+  status: OrchestrationStepStatus
+  roleRuns: Record<string, OrchestrationRoleRun>
+  reviewResults?: OrchestrationReviewResult[]
+  startedAt?: number
+  completedAt?: number
+}
+
+export interface OrchestrationRun {
+  id: string
+  chatId: string
+  flowId: string
+  status: OrchestrationRunStatus
+  currentRound: number
+  maxRounds: number
+  stageRuns: OrchestrationStageRun[]
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
+  error?: string
 }
 
 export interface GroupChat {
@@ -133,6 +224,11 @@ export interface GroupMessage {
   mentionedRoleIds?: string[]
   mentionsAll?: boolean
   references?: MessageReference[]
+  orchestrationRunId?: string
+  orchestrationRound?: number
+  orchestrationStageId?: string
+  orchestrationStageIndex?: number
+  orchestrationKind?: 'task' | 'role' | 'review' | 'status'
   createdAt: number
   status: DeliveryStatus
   deliveryStatus?: Record<string, DeliveryStatus>
