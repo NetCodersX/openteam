@@ -44,6 +44,8 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
   let draft: FlowDraft = emptyDraft()
   let canvas: OrchestrationCanvas | undefined
   let mounted = false
+  let saving = false
+  let running = false
 
   function emptyDraft(): FlowDraft {
     return { task: '', stages: [], graphEdges: [], maxRounds: DEFAULT_ORCHESTRATION_MAX_ROUNDS }
@@ -297,15 +299,24 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
   }
 
   async function save(): Promise<void> {
+    if (saving || running) return
     const chat = deps.getCurrentChat()
     if (!chat || !validateDraft(false)) return
-    const flow = buildFlow(chat)
-    await deps.runCommand('GROUP_ORCHESTRATION_FLOW_SAVE', { chatId: chat.id, flow })
-    draft.flowId = flow.id
-    deps.showSuccess('编排流程已保存')
+    saving = true
+    updateActionButtons()
+    try {
+      const flow = buildFlow(chat)
+      await deps.runCommand('GROUP_ORCHESTRATION_FLOW_SAVE', { chatId: chat.id, flow })
+      draft.flowId = flow.id
+      deps.showSuccess('编排流程已保存')
+    } finally {
+      saving = false
+      updateActionButtons()
+    }
   }
 
   async function run(): Promise<void> {
+    if (running || saving) return
     const chat = deps.getCurrentChat()
     const task = deps.orchestrationTaskEl.value.trim()
     if (!chat || !validateDraft(true)) return
@@ -313,12 +324,24 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
       deps.showError('请输入编排任务')
       return
     }
-    const flow = buildFlow(chat)
-    await deps.reconnectRolesForSend(chat, getDraftRoles())
-    await deps.runCommand('GROUP_ORCHESTRATION_RUN', { chatId: chat.id, task, flow })
-    draft.flowId = flow.id
-    deps.showSuccess('编排任务已开始')
-    close()
+    running = true
+    updateActionButtons()
+    try {
+      const flow = buildFlow(chat)
+      await deps.reconnectRolesForSend(chat, getDraftRoles())
+      await deps.runCommand('GROUP_ORCHESTRATION_RUN', { chatId: chat.id, task, flow })
+      draft.flowId = flow.id
+      deps.showSuccess('编排任务已开始')
+      close()
+    } finally {
+      running = false
+      updateActionButtons()
+    }
+  }
+
+  function updateActionButtons(): void {
+    deps.saveOrchestrationEl.disabled = saving || running
+    deps.runOrchestrationEl.disabled = saving || running
   }
 
   function buildFlow(chat: GroupChat): OrchestrationFlow {

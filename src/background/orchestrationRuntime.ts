@@ -59,7 +59,11 @@ export async function startOrchestrationRun(deps: OrchestrationRuntimeDependenci
     validateExecutableFlow(store, chat, flow)
     const activeRunId = store.activeOrchestrationRunIdByChatId[chat.id]
     const activeRun = activeRunId ? store.orchestrationRunsById[activeRunId] : undefined
-    if (activeRun && (activeRun.status === 'pending' || activeRun.status === 'running')) throw new Error('该群聊已有运行中的编排')
+    if (activeRun && activeRun.status === 'pending') throw new Error('该群聊已有运行中的编排')
+    if (activeRun && activeRun.status === 'running') {
+      if (hasLiveRunningRolePrompt(store, chat, activeRun)) throw new Error('该群聊已有运行中的编排')
+      stopStaleActiveRun(store, chat, activeRun, timestamp)
+    }
     if (activeRunId && !activeRun) delete store.activeOrchestrationRunIdByChatId[chat.id]
 
     const maxRounds = normalizeMaxRounds(input.maxRounds ?? flow.maxRounds)
@@ -82,7 +86,7 @@ export async function startOrchestrationRun(deps: OrchestrationRuntimeDependenci
       id: deps.newId('run'),
       chatId: chat.id,
       flowId: flow.id,
-      status: 'running',
+      status: 'pending',
       currentRound: 1,
       maxRounds,
       stageRuns: [],
@@ -300,7 +304,7 @@ async function startStage(deps: OrchestrationRuntimeDependencies, runId: string,
   const timestamp = deps.now()
   const prepared = await mutateStore(store => {
     const run = store.orchestrationRunsById[runId]
-    if (!run || run.status !== 'running') return { deliveries: [], externalDeliveries: [] }
+    if (!run || (run.status !== 'pending' && run.status !== 'running')) return { deliveries: [], externalDeliveries: [] }
     const chat = requireChat(store, run.chatId)
     if (store.activeOrchestrationRunIdByChatId[chat.id] !== run.id) return { deliveries: [], externalDeliveries: [] }
     const flow = requireFlow(store, chat.id, run.flowId)
@@ -331,6 +335,7 @@ async function startStage(deps: OrchestrationRuntimeDependencies, runId: string,
       startedAt: timestamp,
     }
     run.stageRuns.push(stageRun)
+    run.status = 'running'
     run.updatedAt = timestamp
     chat.status = 'running'
     chat.updatedAt = timestamp
@@ -592,6 +597,37 @@ function allRoleRunsFinished(stageRun: OrchestrationStageRun): boolean {
 
 function hasRunningStageRuns(run: OrchestrationRun): boolean {
   return run.stageRuns.some(stageRun => stageRun.round === run.currentRound && stageRun.status === 'running')
+}
+
+function hasLiveRunningRolePrompt(store: OpenTeamStore, chat: GroupChat, run: OrchestrationRun): boolean {
+  return run.stageRuns.some(stageRun => {
+    if (stageRun.round !== run.currentRound || stageRun.status !== 'running') return false
+    return Object.values(stageRun.roleRuns).some(roleRun => {
+      if (roleRun.status !== 'running' || !roleRun.messageId) return false
+      const role = store.rolesById[roleRun.roleId]
+      return role?.chatId === chat.id && role.status === 'thinking' && role.lastPromptMessageId === roleRun.messageId
+    })
+  })
+}
+
+function stopStaleActiveRun(store: OpenTeamStore, chat: GroupChat, run: OrchestrationRun, timestamp: number): void {
+  run.status = 'stopped'
+  run.completedAt = timestamp
+  run.updatedAt = timestamp
+  run.error = run.error ?? '运行状态已失效，已自动释放'
+  for (const stageRun of run.stageRuns) {
+    if (stageRun.status === 'running' || stageRun.status === 'pending') {
+      stageRun.status = 'skipped'
+      stageRun.completedAt = timestamp
+    }
+    for (const roleRun of Object.values(stageRun.roleRuns)) {
+      if (roleRun.status === 'running' || roleRun.status === 'pending') {
+        roleRun.status = 'skipped'
+        roleRun.completedAt = timestamp
+      }
+    }
+  }
+  delete store.activeOrchestrationRunIdByChatId[chat.id]
 }
 
 function findReadyStageIndices(flow: OrchestrationFlow, run: OrchestrationRun): number[] {

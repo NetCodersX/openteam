@@ -213,6 +213,42 @@ describe('orchestration runtime', () => {
     expect(promptCalls(harness.tabsSendMessage)).toHaveLength(1)
   })
 
+  it('clears a stale running run with no live role prompt before starting a new run', async () => {
+    const store = makeStore(['role-1'])
+    store.rolesById['role-1'].status = 'ready'
+    store.orchestrationFlowsById['flow-1'] = makeFlow('chat-1', [{ id: 'stage-1', kind: 'roles', name: 'Build', roleIds: ['role-1'] }])
+    store.orchestrationRunsById['run-stale'] = {
+      id: 'run-stale',
+      chatId: 'chat-1',
+      flowId: 'flow-1',
+      status: 'running',
+      currentRound: 1,
+      maxRounds: 1,
+      stageRuns: [{
+        stageId: 'stage-old',
+        stageIndex: 0,
+        kind: 'roles',
+        round: 1,
+        status: 'running',
+        roleRuns: { 'role-1': { roleId: 'role-1', status: 'running', messageId: 'msg-old', startedAt: 1 } },
+        startedAt: 1,
+      }],
+      createdAt: 1,
+      updatedAt: 2,
+    }
+    store.activeOrchestrationRunIdByChatId['chat-1'] = 'run-stale'
+    const harness = await setupBackground(store)
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-1' }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 1, url: 'https://gemini.google.com/app/one' })
+
+    const started = await harness.invoke({ type: 'GROUP_ORCHESTRATION_RUN', chatId: 'chat-1', flowId: 'flow-1', task: 'Ship the plan again' }) as { ok: boolean; run: { id: string } }
+
+    expect(started.ok).toBe(true)
+    const finalStore = await harness.getStore()
+    expect(finalStore.orchestrationRunsById['run-stale'].status).toBe('stopped')
+    expect(finalStore.activeOrchestrationRunIdByChatId['chat-1']).toBe(started.run.id)
+    expect(promptCalls(harness.tabsSendMessage)).toHaveLength(1)
+  })
+
   it('stops active runs and ignores late replies', async () => {
     const store = makeStore(['role-1'])
     store.orchestrationFlowsById['flow-1'] = makeFlow('chat-1', [{ id: 'stage-1', kind: 'roles', name: 'Build', roleIds: ['role-1'] }])

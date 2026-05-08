@@ -296,6 +296,31 @@ describe('orchestration modal view', () => {
     expect(harness.runCommand.mock.invocationCallOrder[0]).toBeGreaterThan(harness.reconnectRolesForSend.mock.invocationCallOrder[0])
   })
 
+  it('ignores repeated run clicks while the first run is still starting', async () => {
+    const harness = createHarness()
+    let finishRun: (() => void) | undefined
+    harness.runCommand.mockImplementation(async type => {
+      if (type !== 'GROUP_ORCHESTRATION_RUN') return
+      await new Promise<void>(resolve => {
+        finishRun = resolve
+      })
+    })
+    const view = createView(harness)
+    view.registerOrchestrationEvents()
+    harness.refs.openOrchestrationEl.click()
+    dropRole(harness, 'role-1')
+    harness.refs.orchestrationTaskEl.value = '完成方案评审'
+
+    harness.refs.runOrchestrationEl.click()
+    harness.refs.runOrchestrationEl.click()
+    await flushAsync()
+
+    expect(harness.runCommand.mock.calls.filter(call => call[0] === 'GROUP_ORCHESTRATION_RUN')).toHaveLength(1)
+    expect(harness.refs.runOrchestrationEl.disabled).toBe(true)
+    finishRun?.()
+    await flushAsync()
+  })
+
   it('orders stages by graph edges when saving the draft', () => {
     const unorderedStages = [
       { id: 'stage-2', kind: 'roles' as const, name: '工程判断', roleIds: ['role-2'] },
