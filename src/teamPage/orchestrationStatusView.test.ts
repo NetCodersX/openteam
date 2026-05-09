@@ -7,6 +7,7 @@ import { createOrchestrationStatusView } from './orchestrationStatusView'
 
 afterEach(() => {
   document.body.replaceChildren()
+  window.localStorage.clear()
 })
 
 function baseFixture(status: OrchestrationRun['status'] = 'running') {
@@ -33,8 +34,20 @@ function baseFixture(status: OrchestrationRun['status'] = 'running') {
     stages: [
       { id: 'stage-1', kind: 'roles', name: '分析', roleIds: ['role-1'] },
       { id: 'stage-2', kind: 'roles', name: '实现', roleIds: ['role-2'] },
-      { id: 'stage-3', kind: 'review', name: '复核', roleIds: [], review: { reviewerRoleIds: ['role-1'] } },
+      { id: 'stage-3', kind: 'review', name: '复核', roleIds: [], review: { reviewerRoleIds: ['role-1'], maxAttempts: 3, onMaxAttempts: 'continue' } },
     ],
+    graph: {
+      stageNodes: [
+        { id: 'stage-1', kind: 'roles', name: '分析', roleIds: ['role-1'], position: { x: 40, y: 70 } },
+        { id: 'stage-2', kind: 'roles', name: '实现', roleIds: ['role-2'], position: { x: 220, y: 70 } },
+        { id: 'stage-3', kind: 'review', name: '复核', roleIds: [], review: { reviewerRoleIds: ['role-1'], maxAttempts: 3, onMaxAttempts: 'continue' }, position: { x: 400, y: 60 } },
+      ],
+      edges: [
+        { sourceStageId: 'stage-1', targetStageId: 'stage-2' },
+        { sourceStageId: 'stage-2', targetStageId: 'stage-3' },
+        { sourceStageId: 'stage-3', targetStageId: 'stage-2', sourcePort: 'fail', vertices: [{ x: 440, y: 180 }, { x: 220, y: 180 }] },
+      ],
+    },
     maxRounds: 2,
     createdAt: now,
     updatedAt: now,
@@ -73,11 +86,27 @@ function baseFixture(status: OrchestrationRun['status'] = 'running') {
     orchestrationRunsById: { [run.id]: run },
     activeOrchestrationRunIdByChatId: { [chat.id]: run.id },
   }
+  store.messagesById['msg-task'] = {
+    id: 'msg-task',
+    chatId: chat.id,
+    seq: 1,
+    type: 'user',
+    content: 'Use draft',
+    targetRoleIds: [],
+    mentionedRoleIds: [],
+    mentionsAll: false,
+    orchestrationRunId: run.id,
+    orchestrationKind: 'task',
+    createdAt: now,
+    status: 'received',
+  }
+  chat.messageIds.push('msg-task')
+  chat.nextMessageSeq = 2
   return { chat, roles, flow, run, store }
 }
 
 describe('orchestration status view', () => {
-  it('renders active run round, step, running roles, and waiting nodes without stage wording', () => {
+  it('renders active run as a floating card with progress, site labels, and a mini graph', () => {
     const fixture = baseFixture('running')
     const view = createOrchestrationStatusView({
       getStore: () => fixture.store,
@@ -90,10 +119,45 @@ describe('orchestration status view', () => {
 
     const node = view.renderOrchestrationStatus()
 
-    expect(node?.textContent).toContain('编排运行中 · 已执行 1 / 50 个节点 · 第 1 / 3 个节点')
+    expect(node?.classList.contains('orchestration-status-floating')).toBe(true)
+    expect(node?.textContent).toContain('编排运行中')
+    expect(node?.textContent).toContain('1 / 50')
+    expect(node?.textContent).toContain('节点 1 / 3')
     expect(node?.textContent).toContain('产品（ChatGPT）')
-    expect(node?.textContent).toContain('产品（DeepSeek）、产品（ChatGPT）')
+    expect(node?.textContent).toContain('等待')
+    expect(node?.textContent).toContain('产品（DeepSeek）')
+    expect(node?.querySelector('svg.orchestration-mini-flow')).toBeTruthy()
+    expect(node?.querySelector('[data-node-id="stage-1"]')?.classList.contains('current')).toBe(true)
     expect(node?.textContent).not.toContain('阶段')
+  })
+
+  it('renders review attempts and max-attempt behavior for the current review node', () => {
+    const fixture = baseFixture('running')
+    fixture.run.stageRuns = [
+      { stageId: 'stage-1', stageIndex: 0, kind: 'roles', round: 1, status: 'completed', roleRuns: {} },
+      { stageId: 'stage-2', stageIndex: 1, kind: 'roles', round: 1, status: 'completed', roleRuns: {} },
+      {
+        stageId: 'stage-3',
+        stageIndex: 2,
+        kind: 'review',
+        round: 1,
+        status: 'running',
+        roleRuns: { 'role-1': { roleId: 'role-1', status: 'running', messageId: 'msg-review' } },
+      },
+    ]
+    const node = createOrchestrationStatusView({
+      getStore: () => fixture.store,
+      getCurrentChat: () => fixture.chat,
+      getCurrentRoles: () => fixture.roles,
+      reconnectRolesForSend: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      showError: vi.fn(),
+    }).renderOrchestrationStatus()
+
+    expect(node?.textContent).toContain('审核次数 1 / 3')
+    expect(node?.textContent).toContain('上限后：继续往下走')
+    expect(node?.querySelector('polygon[data-node-id="stage-3"]')).toBeTruthy()
+    expect(node?.querySelector('[data-node-id="stage-3"]')?.classList.contains('current')).toBe(true)
   })
 
   it('renders terminal states with distinct classes', () => {
@@ -151,12 +215,14 @@ describe('orchestration status view', () => {
       showError: vi.fn(),
     }).renderOrchestrationStatus()
 
-    expect(node?.textContent).toContain('编排出错 · 已执行 6 / 50 个节点 · 第 3 / 3 个节点')
+    expect(node?.textContent).toContain('编排出错')
+    expect(node?.textContent).toContain('6 / 50')
+    expect(node?.textContent).toContain('节点 3 / 3')
     expect(node?.textContent).not.toContain('6 / 3 步')
     expect(node?.textContent).not.toContain('第 2 轮')
   })
 
-  it('dispatches stop, retry node, skip node, and retry review actions when applicable', async () => {
+  it('dispatches stop, retry node, skip node, retry review, resume, and rerun actions when applicable', async () => {
     const running = baseFixture('running')
     const runCommand = vi.fn(async () => undefined)
     const runningNode = createOrchestrationStatusView({
@@ -168,7 +234,7 @@ describe('orchestration status view', () => {
       showError: vi.fn(),
     }).renderOrchestrationStatus()
 
-    runningNode?.querySelector<HTMLButtonElement>('button')?.click()
+    findButton(runningNode, '停止')?.click()
     expect(runCommand).toHaveBeenCalledWith('GROUP_ORCHESTRATION_STOP', { chatId: running.chat.id })
 
     const failed = baseFixture('error')
@@ -182,12 +248,12 @@ describe('orchestration status view', () => {
       runCommand: failedRunCommand,
       showError: vi.fn(),
     }).renderOrchestrationStatus()
-    failedNode?.querySelector<HTMLButtonElement>('button:nth-of-type(1)')?.click()
-    failedNode?.querySelector<HTMLButtonElement>('button:nth-of-type(2)')?.click()
+    findButton(failedNode, '重发')?.click()
+    findButton(failedNode, '跳过节点')?.click()
     await flushAsync()
     expect(failedReconnectRolesForSend).toHaveBeenCalledWith(failed.chat, [failed.roles[0]])
     expect(failedNode?.textContent).toContain('失败节点')
-    expect(failedNode?.textContent).toContain('分析')
+    expect(failedNode?.textContent).toContain('产品（ChatGPT）')
     expect(failedNode?.textContent).toContain('重发')
     expect(failedNode?.textContent).toContain('跳过节点')
     expect(failedNode?.textContent).not.toContain('阶段')
@@ -204,13 +270,56 @@ describe('orchestration status view', () => {
       runCommand: reviewRunCommand,
       showError: vi.fn(),
     }).renderOrchestrationStatus()
-    reviewNode?.querySelector<HTMLButtonElement>('button:nth-of-type(1)')?.click()
+    findButton(reviewNode, '重发')?.click()
     await flushAsync()
     expect(reviewNode?.textContent).toContain('重发')
     expect(reviewRunCommand).toHaveBeenCalledWith('GROUP_ORCHESTRATION_RETRY_REVIEW', { chatId: failed.chat.id })
+
+    const stopped = baseFixture('stopped')
+    stopped.run.stageRuns[0].status = 'skipped'
+    const stoppedRunCommand = vi.fn(async () => undefined)
+    const stoppedNode = createOrchestrationStatusView({
+      getStore: () => stopped.store,
+      getCurrentChat: () => stopped.chat,
+      getCurrentRoles: () => stopped.roles,
+      reconnectRolesForSend: vi.fn(async () => undefined),
+      runCommand: stoppedRunCommand,
+      showError: vi.fn(),
+    }).renderOrchestrationStatus()
+    findButton(stoppedNode, '继续')?.click()
+    findButton(stoppedNode, '重新运行')?.click()
+    expect(stoppedNode?.textContent).toContain('继续')
+    expect(stoppedNode?.textContent).toContain('重新运行')
+    expect(stoppedRunCommand).toHaveBeenCalledWith('GROUP_ORCHESTRATION_RESUME', { chatId: stopped.chat.id, runId: stopped.run.id })
+    expect(stoppedRunCommand).toHaveBeenCalledWith('GROUP_ORCHESTRATION_RUN', { chatId: stopped.chat.id, flowId: stopped.flow.id, task: 'Use draft' })
+  })
+
+  it('collapses into a compact floating pill and persists the local preference', () => {
+    const fixture = baseFixture('running')
+    const view = createOrchestrationStatusView({
+      getStore: () => fixture.store,
+      getCurrentChat: () => fixture.chat,
+      getCurrentRoles: () => fixture.roles,
+      reconnectRolesForSend: vi.fn(async () => undefined),
+      runCommand: vi.fn(async () => undefined),
+      showError: vi.fn(),
+    })
+
+    const expanded = view.renderOrchestrationStatus()
+    expanded?.querySelector<HTMLButtonElement>('.orchestration-status-collapse')?.click()
+    const collapsed = view.renderOrchestrationStatus()
+
+    expect(collapsed?.classList.contains('orchestration-status-collapsed')).toBe(true)
+    expect(collapsed?.textContent).toContain('编排运行中')
+    expect(collapsed?.textContent).toContain('1 / 50')
+    expect(window.localStorage.getItem('openteam.orchestrationFloatingStatus.chat-1')).toContain('"collapsed":true')
   })
 })
 
 function flushAsync(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+function findButton(root: HTMLElement | undefined, text: string): HTMLButtonElement | undefined {
+  return [...root?.querySelectorAll<HTMLButtonElement>('button') ?? []].find(button => button.textContent === text)
 }

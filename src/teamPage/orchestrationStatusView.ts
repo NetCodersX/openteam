@@ -1,4 +1,16 @@
-import type { ChatSite, ExternalModelConfig, GroupChat, GroupRole, OpenTeamStore, OrchestrationFlow, OrchestrationRun, OrchestrationStage, OrchestrationStageRun } from '../group/types'
+import {
+  DEFAULT_ORCHESTRATION_REVIEW_MAX_ATTEMPTS,
+  type ChatSite,
+  type ExternalModelConfig,
+  type GroupChat,
+  type GroupRole,
+  type OpenTeamStore,
+  type OrchestrationFlow,
+  type OrchestrationGraphEdge,
+  type OrchestrationRun,
+  type OrchestrationStage,
+  type OrchestrationStageRun,
+} from '../group/types'
 
 export interface OrchestrationStatusViewDependencies {
   getStore(): OpenTeamStore
@@ -13,6 +25,26 @@ export interface OrchestrationStatusView {
   renderOrchestrationStatus(): HTMLElement | undefined
 }
 
+interface FloatingPrefs {
+  collapsed?: boolean
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+}
+
+interface VisibleRun {
+  run: OrchestrationRun
+}
+
+interface DiagramNode {
+  stage: OrchestrationStage
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 const STATUS_LABELS: Record<OrchestrationRun['status'], string> = {
   pending: '编排等待中',
   running: '编排运行中',
@@ -20,84 +52,169 @@ const STATUS_LABELS: Record<OrchestrationRun['status'], string> = {
   stopped: '编排已停止',
   error: '编排出错',
 }
+const FLOATING_PREFS_KEY_PREFIX = 'openteam.orchestrationFloatingStatus.'
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const DEFAULT_CARD_WIDTH = 390
+const DEFAULT_CARD_HEIGHT = 376
+const MIN_CARD_WIDTH = 300
+const MIN_CARD_HEIGHT = 220
+const MAX_CARD_WIDTH = 720
+const MAX_CARD_HEIGHT = 620
 
 export function createOrchestrationStatusView(deps: OrchestrationStatusViewDependencies): OrchestrationStatusView {
   function renderOrchestrationStatus(): HTMLElement | undefined {
     const chat = deps.getCurrentChat()
     if (!chat) return undefined
     const store = deps.getStore()
-    const runId = store.activeOrchestrationRunIdByChatId[chat.id]
-    const run = runId ? store.orchestrationRunsById[runId] : undefined
-    if (!run) return undefined
-    const flow = store.orchestrationFlowsById[run.flowId]
+    const visible = getVisibleRun(store, chat.id)
+    if (!visible) return undefined
+    const flow = store.orchestrationFlowsById[visible.run.flowId]
     if (!flow) return undefined
+    const prefs = readPrefs(chat.id)
+    if (prefs.collapsed) return renderCollapsed(chat, visible.run, flow, prefs)
+    return renderExpanded(chat, visible.run, flow, prefs)
+  }
 
+  function renderCollapsed(chat: GroupChat, run: OrchestrationRun, flow: OrchestrationFlow, prefs: FloatingPrefs): HTMLElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `orchestration-status orchestration-status-floating orchestration-status-collapsed orchestration-status-${run.status}`
+    button.textContent = `${STATUS_LABELS[run.status]} · ${currentNodeText(run, flow)} · ${run.stageRuns.length} / ${maxExecutions(run)}`
+    applyFloatingPosition(button, prefs, { width: 260, height: 44 })
+    button.addEventListener('click', () => {
+      const nextPrefs = { ...readPrefs(chat.id), collapsed: false }
+      writePrefs(chat.id, nextPrefs)
+      button.replaceWith(renderExpanded(chat, run, flow, nextPrefs))
+    })
+    return button
+  }
+
+  function renderExpanded(chat: GroupChat, run: OrchestrationRun, flow: OrchestrationFlow, prefs: FloatingPrefs): HTMLElement {
     const current = currentStageRun(run)
     const card = document.createElement('section')
-    card.className = `orchestration-status orchestration-status-${run.status}`
+    card.className = `orchestration-status orchestration-status-floating orchestration-status-${run.status}`
     card.dataset.runId = run.id
+    card.setAttribute('aria-label', '编排运行状态')
+    applyFloatingPosition(card, prefs, { width: DEFAULT_CARD_WIDTH, height: DEFAULT_CARD_HEIGHT })
 
     const header = document.createElement('div')
     header.className = 'orchestration-status-header'
     const title = document.createElement('div')
     title.className = 'orchestration-status-title'
-    title.textContent = statusTitle(run, flow, current)
+    const dragGrip = document.createElement('span')
+    dragGrip.className = 'orchestration-status-drag-grip'
+    dragGrip.textContent = '⋮⋮'
+    const titleText = document.createElement('span')
+    titleText.textContent = STATUS_LABELS[run.status]
+    title.append(dragGrip, titleText)
     header.append(title)
 
-    const actions = renderActions(chat, run, current)
-    if (actions) header.append(actions)
+    const headerActions = document.createElement('div')
+    headerActions.className = 'orchestration-status-window-actions'
+    const collapse = actionButton('－', 'orchestration-status-collapse', () => {
+      const nextPrefs = { ...readPrefs(chat.id), collapsed: true }
+      writePrefs(chat.id, nextPrefs)
+      card.replaceWith(renderCollapsed(chat, run, flow, nextPrefs))
+    })
+    collapse.setAttribute('aria-label', '收起编排状态')
+    headerActions.append(collapse)
+    if (run.status === 'running' || run.status === 'pending') {
+      headerActions.append(actionButton('停止', 'btn-danger', () => runAction('GROUP_ORCHESTRATION_STOP', { chatId: chat.id })))
+    }
+    header.append(headerActions)
     card.append(header)
+    makeDraggable(card, header, chat.id)
 
-    const details = document.createElement('div')
-    details.className = 'orchestration-status-details'
-    const failedStage = run.status === 'error' || current?.status === 'error' ? currentStageName(flow, current) : undefined
-    if (failedStage) details.append(detail('失败节点', failedStage, 'error'))
-    const roleText = currentRoleText(current)
-    if (roleText) details.append(detail('当前', roleText))
-    const waitingText = waitingStageText(run, flow)
-    if (waitingText) details.append(detail('等待', waitingText))
-    if (run.status === 'error' && run.error) details.append(detail('错误', run.error, 'error'))
-    if (details.childElementCount > 0) card.append(details)
-
+    const body = document.createElement('div')
+    body.className = 'orchestration-status-body'
+    body.append(renderProgress(run, flow, current))
+    const currentPanel = renderCurrentPanel(run, flow, current)
+    if (currentPanel) body.append(currentPanel)
+    const waiting = renderWaitingPanel(run, flow)
+    if (waiting) body.append(waiting)
+    body.append(renderMiniFlow(run, flow, deps.getStore(), rolesById()))
+    const actions = renderActions(chat, run, flow, current)
+    if (actions) body.append(actions)
+    const resizeHandle = document.createElement('button')
+    resizeHandle.type = 'button'
+    resizeHandle.className = 'orchestration-status-resize'
+    resizeHandle.setAttribute('aria-label', '调整编排状态大小')
+    makeResizable(card, resizeHandle, chat.id)
+    card.append(body, resizeHandle)
     return card
   }
 
-  function statusTitle(run: OrchestrationRun, flow: OrchestrationFlow, current: OrchestrationStageRun | undefined): string {
-    const stageCount = flow.stages.length
-    const step = current ? current.stageIndex + 1 : Math.min(run.stageRuns.length, stageCount)
-    const executed = run.stageRuns.length
-    const maxExecutions = run.maxNodeExecutions ?? run.maxRounds
-    return `${STATUS_LABELS[run.status]} · 已执行 ${executed} / ${maxExecutions} 个节点 · 第 ${Math.max(1, step)} / ${stageCount} 个节点`
+  function renderProgress(run: OrchestrationRun, flow: OrchestrationFlow, current: OrchestrationStageRun | undefined): HTMLElement {
+    const row = document.createElement('div')
+    row.className = 'orchestration-status-progress'
+    const count = document.createElement('div')
+    count.className = 'orchestration-status-count'
+    const value = document.createElement('strong')
+    value.textContent = `${run.stageRuns.length} / ${maxExecutions(run)}`
+    const label = document.createElement('span')
+    label.textContent = '已执行节点数'
+    count.append(value, label)
+    const node = document.createElement('div')
+    node.className = 'orchestration-status-node-index'
+    node.textContent = `节点 ${current ? current.stageIndex + 1 : Math.min(run.stageRuns.length + 1, flow.stages.length)} / ${Math.max(1, flow.stages.length)}`
+    row.append(count, node)
+    return row
   }
 
-  function currentRoleText(current: OrchestrationStageRun | undefined): string | undefined {
+  function renderCurrentPanel(run: OrchestrationRun, flow: OrchestrationFlow, current: OrchestrationStageRun | undefined): HTMLElement | undefined {
     if (!current) return undefined
-    const store = deps.getStore()
-    const rolesById = new Map(deps.getCurrentRoles().map(role => [role.id, role]))
-    const running = Object.values(current.roleRuns)
-      .filter(roleRun => roleRun.status === 'running')
-      .map(roleRun => roleStatusLabel(rolesById.get(roleRun.roleId), roleRun.roleId, store))
-    if (running.length > 0) return running.join('、')
-    if (current.status === 'running') return current.kind === 'review' ? '复核中' : '节点执行中'
-    if (current.status === 'error') return current.kind === 'review' ? '复核失败' : '节点失败'
-    return undefined
+    const stage = flow.stages[current.stageIndex]
+    if (!stage) return undefined
+    const panel = document.createElement('div')
+    panel.className = 'orchestration-status-current'
+    const eyebrow = document.createElement('div')
+    eyebrow.className = 'orchestration-status-current-label'
+    eyebrow.textContent = current.status === 'error' ? '失败节点' : '当前节点'
+    const main = document.createElement('div')
+    main.className = 'orchestration-status-current-main'
+    main.textContent = stage.kind === 'review' ? `审核 · ${stageStatusLabel(stage, rolesById(), deps.getStore())}` : stageStatusLabel(stage, rolesById(), deps.getStore())
+    const sub = document.createElement('div')
+    sub.className = 'orchestration-status-current-sub'
+    sub.textContent = stage.description?.trim() || currentStatusText(current)
+    panel.append(eyebrow, main, sub)
+    if (stage.kind === 'review') {
+      const meta = document.createElement('div')
+      meta.className = 'orchestration-status-review-meta'
+      const attempts = document.createElement('span')
+      attempts.textContent = `审核次数 ${reviewAttemptCount(run, stage.id)} / ${reviewMaxAttempts(stage)}`
+      const action = document.createElement('span')
+      action.textContent = stage.review?.onMaxAttempts === 'continue' ? '上限后：继续往下走' : '上限后：停止流程'
+      meta.append(attempts, action)
+      panel.append(meta)
+    }
+    return panel
   }
 
-  function waitingStageText(run: OrchestrationRun, flow: OrchestrationFlow): string | undefined {
+  function renderWaitingPanel(run: OrchestrationRun, flow: OrchestrationFlow): HTMLElement | undefined {
     if (run.status !== 'running' && run.status !== 'pending') return undefined
     const current = currentStageRun(run)
     const nextIndex = current ? current.stageIndex + 1 : run.stageRuns.length
-    const store = deps.getStore()
-    const rolesById = new Map(deps.getCurrentRoles().map(role => [role.id, role]))
-    const waiting = flow.stages.slice(nextIndex).map(stage => stageStatusLabel(stage, rolesById, store))
-    return waiting.length > 0 ? waiting.join('、') : undefined
+    const waiting = flow.stages.slice(nextIndex).map(stage => stageStatusLabel(stage, rolesById(), deps.getStore()))
+    if (waiting.length === 0) return undefined
+    const panel = document.createElement('div')
+    panel.className = 'orchestration-status-waiting'
+    const label = document.createElement('span')
+    label.textContent = '等待'
+    const value = document.createElement('strong')
+    value.textContent = waiting.join('、')
+    panel.append(label, value)
+    return panel
   }
 
-  function renderActions(chat: GroupChat, run: OrchestrationRun, current: OrchestrationStageRun | undefined): HTMLElement | undefined {
+  function renderActions(chat: GroupChat, run: OrchestrationRun, flow: OrchestrationFlow, current: OrchestrationStageRun | undefined): HTMLElement | undefined {
     const actions = document.createElement('div')
     actions.className = 'orchestration-status-actions'
-    if (run.status === 'running' || run.status === 'pending') {
-      actions.append(actionButton('停止', 'btn-danger', () => runAction('GROUP_ORCHESTRATION_STOP', { chatId: chat.id })))
+    if (run.status === 'stopped') {
+      actions.append(actionButton('继续', 'btn-primary', () => runAction('GROUP_ORCHESTRATION_RESUME', { chatId: chat.id, runId: run.id })))
+      actions.append(actionButton('重新运行', 'btn-ghost', () => rerunAction(chat, run, flow)))
+    }
+    if (run.status === 'completed') {
+      actions.append(actionButton('重新运行', 'btn-primary', () => rerunAction(chat, run, flow)))
     }
     if ((run.status === 'error' || current?.status === 'error') && current) {
       if (current.kind === 'review') {
@@ -106,6 +223,7 @@ export function createOrchestrationStatusView(deps: OrchestrationStatusViewDepen
         actions.append(actionButton('重发', 'btn-primary', () => retryAction(chat, current, 'GROUP_ORCHESTRATION_RETRY_STAGE', { chatId: chat.id, stageId: current.stageId })))
       }
       actions.append(actionButton('跳过节点', 'btn-ghost', () => runAction('GROUP_ORCHESTRATION_SKIP_STAGE', { chatId: chat.id, stageId: current.stageId })))
+      actions.append(actionButton('重新运行', 'btn-ghost', () => rerunAction(chat, run, flow)))
     }
     return actions.childElementCount > 0 ? actions : undefined
   }
@@ -115,12 +233,20 @@ export function createOrchestrationStatusView(deps: OrchestrationStatusViewDepen
     button.type = 'button'
     button.className = `btn ${extraClass}`
     button.textContent = label
-    button.addEventListener('click', onClick)
+    button.addEventListener('click', event => {
+      event.stopPropagation()
+      onClick()
+    })
     return button
   }
 
   function runAction(type: string, payload: Record<string, unknown>): void {
     deps.runCommand(type, payload).catch(error => deps.showError(error instanceof Error ? error.message : String(error)))
+  }
+
+  function rerunAction(chat: GroupChat, run: OrchestrationRun, flow: OrchestrationFlow): void {
+    const task = runTaskText(run) || flow.description || flow.name
+    runAction('GROUP_ORCHESTRATION_RUN', { chatId: chat.id, flowId: flow.id, task })
   }
 
   function retryAction(chat: GroupChat, current: OrchestrationStageRun, type: string, payload: Record<string, unknown>): void {
@@ -130,38 +256,234 @@ export function createOrchestrationStatusView(deps: OrchestrationStatusViewDepen
   }
 
   function getStageRoles(current: OrchestrationStageRun): GroupRole[] {
-    const rolesById = new Map(deps.getCurrentRoles().map(role => [role.id, role]))
-    return Object.keys(current.roleRuns).map(roleId => rolesById.get(roleId)).filter((role): role is GroupRole => Boolean(role))
+    const map = rolesById()
+    return Object.keys(current.roleRuns).map(roleId => map.get(roleId)).filter((role): role is GroupRole => Boolean(role))
   }
 
-  function detail(label: string, value: string, tone?: 'error'): HTMLElement {
-    const item = document.createElement('div')
-    item.className = `orchestration-status-detail${tone ? ` ${tone}` : ''}`
-    const labelEl = document.createElement('span')
-    labelEl.className = 'orchestration-status-detail-label'
-    labelEl.textContent = label
-    const valueEl = document.createElement('span')
-    valueEl.textContent = value
-    item.append(labelEl, valueEl)
-    return item
+  function rolesById(): Map<string, GroupRole> {
+    return new Map(deps.getCurrentRoles().map(role => [role.id, role]))
+  }
+
+  function runTaskText(run: OrchestrationRun): string | undefined {
+    const store = deps.getStore()
+    const chat = store.chatsById[run.chatId]
+    return chat?.messageIds
+      .map(messageId => store.messagesById[messageId])
+      .find(message => message?.orchestrationRunId === run.id && message.orchestrationKind === 'task')
+      ?.content
+      ?.trim()
   }
 
   return { renderOrchestrationStatus }
 }
 
-function currentStageName(flow: OrchestrationFlow, current: OrchestrationStageRun | undefined): string | undefined {
-  if (!current) return undefined
-  return flow.stages.find(stage => stage.id === current.stageId)?.name ?? current.stageId
+function renderMiniFlow(run: OrchestrationRun, flow: OrchestrationFlow, store: OpenTeamStore, rolesById: Map<string, GroupRole>): SVGSVGElement {
+  const svg = svgEl('svg')
+  svg.classList.add('orchestration-mini-flow')
+  svg.setAttribute('role', 'img')
+  svg.setAttribute('aria-label', '编排流程示意图')
+  const nodes = diagramNodes(flow)
+  const edges = graphEdges(flow)
+  const bounds = diagramBounds(nodes, edges)
+  svg.setAttribute('viewBox', `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`)
+
+  const defs = svgEl('defs')
+  const marker = svgEl('marker')
+  marker.setAttribute('id', `orchestration-mini-arrow-${run.id}`)
+  marker.setAttribute('viewBox', '0 0 10 10')
+  marker.setAttribute('refX', '8')
+  marker.setAttribute('refY', '5')
+  marker.setAttribute('markerWidth', '5')
+  marker.setAttribute('markerHeight', '5')
+  marker.setAttribute('orient', 'auto-start-reverse')
+  const arrow = svgEl('path')
+  arrow.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z')
+  marker.append(arrow)
+  defs.append(marker)
+  svg.append(defs)
+
+  const nodeById = new Map(nodes.map(node => [node.stage.id, node]))
+  for (const edge of edges) {
+    const source = nodeById.get(edge.sourceStageId)
+    const target = nodeById.get(edge.targetStageId)
+    if (!source || !target) continue
+    const path = svgEl('path')
+    path.classList.add('orchestration-mini-edge')
+    const branch = reviewEdgeBranch(edge, flow.stages)
+    if (branch) path.classList.add(`branch-${branch}`)
+    path.setAttribute('d', edgePath(source, target, edge))
+    path.setAttribute('marker-end', `url(#orchestration-mini-arrow-${run.id})`)
+    svg.append(path)
+    if (branch) svg.append(edgeLabel(source, target, edge, branch))
+  }
+
+  const current = currentStageRun(run)
+  const completedIds = new Set(run.stageRuns.filter(stageRun => stageRun.status === 'completed' || stageRun.status === 'skipped').map(stageRun => stageRun.stageId))
+  const errorId = run.status === 'error' ? current?.stageId : undefined
+  for (const node of nodes) {
+    const shape = node.stage.kind === 'review' ? reviewNodeShape(node) : roleNodeShape(node)
+    shape.dataset.nodeId = node.stage.id
+    shape.classList.add('orchestration-mini-node')
+    if (node.stage.id === current?.stageId) shape.classList.add('current')
+    if (completedIds.has(node.stage.id)) shape.classList.add('completed')
+    if (node.stage.id === errorId) shape.classList.add('error')
+    svg.append(shape)
+    svg.append(nodeLabel(node, miniNodeLines(node.stage, store, rolesById, run)))
+  }
+  return svg
+}
+
+function roleNodeShape(node: DiagramNode): SVGRectElement {
+  const rect = svgEl('rect')
+  rect.setAttribute('x', String(node.x))
+  rect.setAttribute('y', String(node.y))
+  rect.setAttribute('width', String(node.width))
+  rect.setAttribute('height', String(node.height))
+  rect.setAttribute('rx', '14')
+  return rect
+}
+
+function reviewNodeShape(node: DiagramNode): SVGPolygonElement {
+  const polygon = svgEl('polygon')
+  const cx = node.x + node.width / 2
+  const cy = node.y + node.height / 2
+  polygon.setAttribute('points', `${cx},${node.y} ${node.x + node.width},${cy} ${cx},${node.y + node.height} ${node.x},${cy}`)
+  return polygon
+}
+
+function nodeLabel(node: DiagramNode, lines: string[]): SVGGElement {
+  const group = svgEl('g')
+  group.classList.add('orchestration-mini-label')
+  const startY = node.y + node.height / 2 - (lines.length - 1) * 8
+  for (const [index, line] of lines.entries()) {
+    const text = svgEl('text')
+    text.setAttribute('x', String(node.x + node.width / 2))
+    text.setAttribute('y', String(startY + index * 17))
+    text.setAttribute('text-anchor', 'middle')
+    text.textContent = line
+    group.append(text)
+  }
+  return group
+}
+
+function edgeLabel(source: DiagramNode, target: DiagramNode, edge: OrchestrationGraphEdge, branch: 'pass' | 'fail'): SVGGElement {
+  const points = edgePoints(source, target, edge)
+  const middle = points[Math.floor(points.length / 2)]
+  const group = svgEl('g')
+  group.classList.add('orchestration-mini-edge-label')
+  const rect = svgEl('rect')
+  rect.setAttribute('x', String(middle.x - 24))
+  rect.setAttribute('y', String(middle.y - 12))
+  rect.setAttribute('width', '48')
+  rect.setAttribute('height', '20')
+  rect.setAttribute('rx', '8')
+  const text = svgEl('text')
+  text.setAttribute('x', String(middle.x))
+  text.setAttribute('y', String(middle.y + 3))
+  text.setAttribute('text-anchor', 'middle')
+  text.textContent = branch === 'pass' ? '通过' : '不通过'
+  group.append(rect, text)
+  return group
+}
+
+function diagramNodes(flow: OrchestrationFlow): DiagramNode[] {
+  const stages = flow.graph?.stageNodes?.length ? flow.graph.stageNodes : flow.stages
+  return stages.map((stage, index) => ({
+    stage,
+    x: stage.position?.x ?? 40 + index * 170,
+    y: stage.position?.y ?? (stage.kind === 'review' ? 52 : 64),
+    width: stage.kind === 'review' ? 116 : 128,
+    height: stage.kind === 'review' ? 90 : 64,
+  }))
+}
+
+function diagramBounds(nodes: DiagramNode[], edges: OrchestrationGraphEdge[]): { x: number; y: number; width: number; height: number } {
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const node of nodes) {
+    xs.push(node.x, node.x + node.width)
+    ys.push(node.y, node.y + node.height)
+  }
+  for (const edge of edges) {
+    for (const vertex of edge.vertices ?? []) {
+      xs.push(vertex.x)
+      ys.push(vertex.y)
+    }
+  }
+  const minX = Math.min(...xs, 0) - 36
+  const minY = Math.min(...ys, 0) - 36
+  const maxX = Math.max(...xs, 360) + 36
+  const maxY = Math.max(...ys, 180) + 36
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+function graphEdges(flow: OrchestrationFlow): OrchestrationGraphEdge[] {
+  if (flow.graph?.edges?.length) return flow.graph.edges
+  return flow.stages.slice(0, -1).map((stage, index) => ({ sourceStageId: stage.id, targetStageId: flow.stages[index + 1].id }))
+}
+
+function edgePath(source: DiagramNode, target: DiagramNode, edge: OrchestrationGraphEdge): string {
+  return edgePoints(source, target, edge).map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
+}
+
+function edgePoints(source: DiagramNode, target: DiagramNode, edge: OrchestrationGraphEdge): Array<{ x: number; y: number }> {
+  const fail = edge.sourcePort === 'fail'
+  const start = fail
+    ? { x: source.x + source.width / 2, y: source.y + source.height }
+    : { x: source.x + source.width, y: source.y + source.height / 2 }
+  const end = { x: target.x, y: target.y + target.height / 2 }
+  if (edge.vertices?.length) return [start, ...edge.vertices, end]
+  if (fail) {
+    const laneY = Math.max(source.y + source.height, target.y + target.height) + 58
+    return [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end]
+  }
+  if (Math.abs(start.y - end.y) < 8) return [start, end]
+  const midX = start.x + Math.max(34, (end.x - start.x) / 2)
+  return [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end]
 }
 
 function currentStageRun(run: OrchestrationRun): OrchestrationStageRun | undefined {
   return [...run.stageRuns].reverse().find(stageRun => stageRun.status === 'running' || stageRun.status === 'error') ?? run.stageRuns[run.stageRuns.length - 1]
 }
 
+function currentNodeText(run: OrchestrationRun, flow: OrchestrationFlow): string {
+  const current = currentStageRun(run)
+  const stage = current ? flow.stages[current.stageIndex] : undefined
+  return stage?.kind === 'review' ? '审核' : stage?.name ?? '未开始'
+}
+
+function currentStatusText(current: OrchestrationStageRun): string {
+  if (current.status === 'running') return current.kind === 'review' ? '正在判断流程走向' : '正在执行'
+  if (current.status === 'error') return current.kind === 'review' ? '审核失败' : '节点失败'
+  if (current.status === 'skipped') return '已停止，等待继续'
+  if (current.status === 'completed') return '已完成'
+  return '等待执行'
+}
+
+function getVisibleRun(store: OpenTeamStore, chatId: string): VisibleRun | undefined {
+  const activeRunId = store.activeOrchestrationRunIdByChatId[chatId]
+  const activeRun = activeRunId ? store.orchestrationRunsById[activeRunId] : undefined
+  if (activeRun) return { run: activeRun }
+  const latest = Object.values(store.orchestrationRunsById)
+    .filter(run => run.chatId === chatId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  return latest ? { run: latest } : undefined
+}
+
 function stageStatusLabel(stage: OrchestrationStage, rolesById: Map<string, GroupRole>, store: OpenTeamStore): string {
   const roleIds = stage.kind === 'review' ? stage.review?.reviewerRoleIds ?? stage.roleIds : stage.roleIds
   const roleLabels = roleIds.map(roleId => roleStatusLabel(rolesById.get(roleId), roleId, store))
   return roleLabels.length > 0 ? roleLabels.join('、') : stage.name
+}
+
+function miniNodeLines(stage: OrchestrationStage, store: OpenTeamStore, rolesById: Map<string, GroupRole>, run: OrchestrationRun): string[] {
+  const roleIds = stage.kind === 'review' ? stage.review?.reviewerRoleIds ?? stage.roleIds : stage.roleIds
+  const firstRole = roleIds[0] ? rolesById.get(roleIds[0]) : undefined
+  const name = firstRole?.name ?? stage.name
+  const site = firstRole ? roleModelLabel(firstRole, store) : ''
+  if (stage.kind === 'review') return [name, site, reviewAttemptText(run, stage)].filter(Boolean)
+  if (roleIds.length > 1) return [name, `${roleIds.length} 人 · ${site}`].filter(Boolean)
+  return [name, site].filter(Boolean)
 }
 
 function roleStatusLabel(role: GroupRole | undefined, fallbackId: string, store: OpenTeamStore): string {
@@ -185,4 +507,121 @@ function siteLabel(site: ChatSite): string {
   if (site === 'kimi') return 'Kimi'
   if (site === 'qwen') return '千问'
   return 'Gemini'
+}
+
+function maxExecutions(run: OrchestrationRun): number {
+  return run.maxNodeExecutions ?? run.maxRounds
+}
+
+function reviewMaxAttempts(stage: OrchestrationStage): number {
+  const value = stage.review?.maxAttempts
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_ORCHESTRATION_REVIEW_MAX_ATTEMPTS
+  return Math.max(1, Math.floor(value))
+}
+
+function reviewAttemptCount(run: OrchestrationRun, stageId: string): number {
+  return run.stageRuns.filter(stageRun => stageRun.stageId === stageId && stageRun.kind === 'review').length
+}
+
+function reviewAttemptText(run: OrchestrationRun, stage: OrchestrationStage): string {
+  return `${reviewAttemptCount(run, stage.id)}/${reviewMaxAttempts(stage)}`
+}
+
+function reviewEdgeBranch(edge: OrchestrationGraphEdge, stages: OrchestrationStage[]): 'pass' | 'fail' | undefined {
+  const sourceStage = stages.find(stage => stage.id === edge.sourceStageId)
+  if (sourceStage?.kind !== 'review') return undefined
+  if (edge.sourcePort === 'fail') return 'fail'
+  return 'pass'
+}
+
+function applyFloatingPosition(element: HTMLElement, prefs: FloatingPrefs, defaults: { width: number; height: number }): void {
+  const width = clampNumber(prefs.width ?? defaults.width, MIN_CARD_WIDTH, MAX_CARD_WIDTH)
+  const height = clampNumber(prefs.height ?? defaults.height, MIN_CARD_HEIGHT, MAX_CARD_HEIGHT)
+  element.style.width = `${width}px`
+  if (!element.classList.contains('orchestration-status-collapsed')) element.style.height = `${height}px`
+  if (typeof prefs.x === 'number' && typeof prefs.y === 'number') {
+    element.style.left = `${Math.max(8, prefs.x)}px`
+    element.style.top = `${Math.max(8, prefs.y)}px`
+  }
+}
+
+function makeDraggable(card: HTMLElement, handle: HTMLElement, chatId: string): void {
+  handle.addEventListener('mousedown', event => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const rect = card.getBoundingClientRect()
+    const startX = event.clientX
+    const startY = event.clientY
+    const startLeft = rect.left
+    const startTop = rect.top
+    const onMove = (moveEvent: MouseEvent) => {
+      const width = card.offsetWidth || rect.width
+      const height = card.offsetHeight || rect.height
+      const nextX = clampNumber(startLeft + moveEvent.clientX - startX, 8, window.innerWidth - width - 8)
+      const nextY = clampNumber(startTop + moveEvent.clientY - startY, 8, window.innerHeight - height - 8)
+      card.style.left = `${nextX}px`
+      card.style.top = `${nextY}px`
+      card.style.right = 'auto'
+      card.style.bottom = 'auto'
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      const rect = card.getBoundingClientRect()
+      writePrefs(chatId, { ...readPrefs(chatId), x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  })
+}
+
+function makeResizable(card: HTMLElement, handle: HTMLElement, chatId: string): void {
+  handle.addEventListener('mousedown', event => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const startX = event.clientX
+    const startY = event.clientY
+    const startWidth = card.offsetWidth || DEFAULT_CARD_WIDTH
+    const startHeight = card.offsetHeight || DEFAULT_CARD_HEIGHT
+    const onMove = (moveEvent: MouseEvent) => {
+      const width = clampNumber(startWidth + moveEvent.clientX - startX, MIN_CARD_WIDTH, MAX_CARD_WIDTH)
+      const height = clampNumber(startHeight + moveEvent.clientY - startY, MIN_CARD_HEIGHT, MAX_CARD_HEIGHT)
+      card.style.width = `${width}px`
+      card.style.height = `${height}px`
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      const rect = card.getBoundingClientRect()
+      writePrefs(chatId, { ...readPrefs(chatId), x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  })
+}
+
+function readPrefs(chatId: string): FloatingPrefs {
+  try {
+    const raw = window.localStorage.getItem(`${FLOATING_PREFS_KEY_PREFIX}${chatId}`)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as FloatingPrefs
+    return typeof parsed === 'object' && parsed !== null ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writePrefs(chatId: string, prefs: FloatingPrefs): void {
+  window.localStorage.setItem(`${FLOATING_PREFS_KEY_PREFIX}${chatId}`, JSON.stringify(prefs))
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  const safeMax = Math.max(min, max)
+  return Math.min(safeMax, Math.max(min, value))
+}
+
+function svgEl<K extends keyof SVGElementTagNameMap>(tagName: K): SVGElementTagNameMap[K] {
+  return document.createElementNS(SVG_NS, tagName)
 }

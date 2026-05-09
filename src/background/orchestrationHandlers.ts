@@ -11,6 +11,7 @@ import { type RuntimeMessage } from './runtimeClient'
 import { mutateStore, requireChat } from './storeAccess'
 import {
   type OrchestrationRuntimeDependencies,
+  resumeOrchestrationRun,
   retryOrchestrationReview,
   retryOrchestrationStage,
   skipOrchestrationStage,
@@ -65,6 +66,10 @@ export function createOrchestrationHandlers(deps: OrchestrationHandlersDependenc
     {
       type: 'GROUP_ORCHESTRATION_STOP',
       handler: async message => ({ ok: true, ...(await stopOrchestrationRun(deps, requireString(message.chatId, '缺少群聊 ID'))) }),
+    },
+    {
+      type: 'GROUP_ORCHESTRATION_RESUME',
+      handler: async message => ({ ok: true, ...(await resumeOrchestrationRun(deps, { chatId: requireString(message.chatId, '缺少群聊 ID'), runId: readOptionalString(message.runId) })) }),
     },
     {
       type: 'GROUP_ORCHESTRATION_RETRY_STAGE',

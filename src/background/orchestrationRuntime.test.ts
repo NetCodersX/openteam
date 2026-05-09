@@ -606,6 +606,35 @@ describe('orchestration runtime', () => {
     expect(finalStore.orchestrationRunsById[started.run.id].status).toBe('stopped')
     expect(finalStore.activeOrchestrationRunIdByChatId['chat-1']).toBeUndefined()
   })
+
+  it('resumes a stopped run from the stopped node without rerunning completed previous nodes', async () => {
+    const store = makeStore(['role-a', 'role-b'])
+    store.orchestrationFlowsById['flow-1'] = makeFlow('chat-1', [
+      { id: 'stage-a', kind: 'roles', name: 'A', roleIds: ['role-a'] },
+      { id: 'stage-b', kind: 'roles', name: 'B', roleIds: ['role-b'] },
+    ])
+    const harness = await setupBackground(store)
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-a' }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 1, url: 'https://gemini.google.com/app/a' })
+    await harness.invoke({ type: 'TEAM_FRAME_ROLE_READY', chatId: 'chat-1', roleId: 'role-b' }, { tab: { id: 102 } as chrome.tabs.Tab, frameId: 2, url: 'https://gemini.google.com/app/b' })
+
+    const started = await harness.invoke({ type: 'GROUP_ORCHESTRATION_RUN', chatId: 'chat-1', flowId: 'flow-1', task: 'Ship the plan' }) as { run: { id: string } }
+    await harness.invoke({ type: 'TEAM_ROLE_REPLY', chatId: 'chat-1', roleId: 'role-a', messageId: firstPromptMessageId(harness.tabsSendMessage), content: 'a done' })
+    expect(promptCalls(harness.tabsSendMessage)).toHaveLength(2)
+
+    await harness.invoke({ type: 'GROUP_ORCHESTRATION_STOP', chatId: 'chat-1' })
+    await harness.invoke({ type: 'GROUP_ORCHESTRATION_RESUME', chatId: 'chat-1', runId: started.run.id })
+
+    const calls = promptCalls(harness.tabsSendMessage)
+    expect(calls).toHaveLength(3)
+    expect(calls[0][0]).toBe(101)
+    expect(calls[1][0]).toBe(102)
+    expect(calls[2][0]).toBe(102)
+    const resumedStore = await harness.getStore()
+    const run = resumedStore.orchestrationRunsById[started.run.id]
+    expect(resumedStore.activeOrchestrationRunIdByChatId['chat-1']).toBe(started.run.id)
+    expect(run.status).toBe('running')
+    expect(run.stageRuns.map(stageRun => `${stageRun.status}:${stageRun.stageId}`)).toEqual(['completed:stage-a', 'running:stage-b'])
+  })
 })
 
 type PromptCall = [number, { type?: string; messageId: string; content: string }, { frameId: number }]

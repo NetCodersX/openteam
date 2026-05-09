@@ -156,6 +156,37 @@ export async function stopOrchestrationRun(deps: OrchestrationRuntimeDependencie
   return { store: active.store, run: active.result }
 }
 
+export async function resumeOrchestrationRun(deps: OrchestrationRuntimeDependencies, input: { chatId: string; runId?: string }): Promise<{ store: OpenTeamStore; run: OrchestrationRun }> {
+  const timestamp = deps.now()
+  const prepared = await mutateStore(store => {
+    const chat = requireChat(store, input.chatId)
+    const run = findResumableRun(store, chat, input.runId)
+    if (!run) throw new Error('找不到可继续的编排')
+    if (run.status !== 'stopped') throw new Error('只有已停止的编排可以继续')
+    const flow = requireFlow(store, chat.id, run.flowId)
+    validateExecutableFlow(store, chat, flow)
+    const last = currentStageRun(run)
+    run.status = 'running'
+    delete run.completedAt
+    delete run.error
+    run.updatedAt = timestamp
+    store.activeOrchestrationRunIdByChatId[chat.id] = run.id
+    chat.status = 'running'
+    chat.updatedAt = timestamp
+    if (!last) return { run, stageIndices: rootStageIndices(flow) }
+    if (last.status === 'skipped' || last.status === 'error' || last.status === 'pending' || last.status === 'running') {
+      removeStageRunAndFollowing(run, last)
+      return { run, stageIndices: [last.stageIndex] }
+    }
+    const next = nextStageDecision(store, chat, run, last, timestamp)
+    return { run, stageIndices: next.next ? next.stageIndices : [] }
+  })
+  await deps.broadcastStoreUpdated(prepared.store)
+  if (prepared.result.stageIndices.length > 0) await startStages(deps, prepared.result.run.id, prepared.result.stageIndices)
+  const latest = await mutateStore(store => store.orchestrationRunsById[prepared.result.run.id])
+  return { store: latest.store, run: latest.result }
+}
+
 export async function maybeAdvanceOrchestrationRun(deps: OrchestrationRuntimeDependencies, input: { chatId: string; roleId: string; promptMessageId?: string; replyMessage?: GroupMessage }): Promise<OpenTeamStore | undefined> {
   if (!input.promptMessageId) return undefined
   const promptMessageId = input.promptMessageId
@@ -582,6 +613,19 @@ function requireFlow(store: OpenTeamStore, chatId: string, flowId: string): Orch
   const flow = store.orchestrationFlowsById[flowId]
   if (!flow || flow.chatId !== chatId) throw new Error(`找不到编排流程：${flowId}`)
   return flow
+}
+
+function findResumableRun(store: OpenTeamStore, chat: GroupChat, runId: string | undefined): OrchestrationRun | undefined {
+  if (runId) {
+    const run = store.orchestrationRunsById[runId]
+    return run?.chatId === chat.id ? run : undefined
+  }
+  const activeRunId = store.activeOrchestrationRunIdByChatId[chat.id]
+  const activeRun = activeRunId ? store.orchestrationRunsById[activeRunId] : undefined
+  if (activeRun?.status === 'stopped') return activeRun
+  return Object.values(store.orchestrationRunsById)
+    .filter(run => run.chatId === chat.id && run.status === 'stopped')
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
 }
 
 function validateExecutableFlow(store: OpenTeamStore, chat: GroupChat, flow: OrchestrationFlow): void {
