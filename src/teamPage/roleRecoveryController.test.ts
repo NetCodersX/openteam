@@ -124,6 +124,51 @@ describe('createRoleRecoveryController', () => {
     expect(settled).toBe(true)
   })
 
+  it('recovers the role iframe and retries when reply retry finds no ready iframe', async () => {
+    const chat = makeChat('chat-1', ['role-1'])
+    const role = makeRole(chat.id, 'role-1', '工程师', 'ready')
+    role.lastPromptMessageId = 'msg-timeout'
+    const store: OpenTeamStore = {
+      ...createDefaultStore(),
+      currentChatId: chat.id,
+      chatOrder: [chat.id],
+      chatsById: { [chat.id]: chat },
+      rolesById: { [role.id]: role },
+    }
+    const runCommand = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('人员 iframe 尚未就绪，请先恢复人员'))
+      .mockResolvedValue(undefined)
+    const refreshStore = vi.fn(async () => {
+      store.rolesById[role.id] = { ...store.rolesById[role.id], status: 'ready' }
+    })
+    const iframeHost = {
+      focusRoleFrame: vi.fn(() => false),
+      recoverRole: vi.fn(),
+    }
+    const controller = createRoleRecoveryController({
+      state: createTeamPageState(),
+      getStore: () => store,
+      getCurrentRoles: () => [store.rolesById[role.id]],
+      refreshStore,
+      switchChat: vi.fn(),
+      renderComposerState: vi.fn(),
+      setWindowMinimized: vi.fn(),
+      iframeHost,
+      runCommand,
+      showError: vi.fn(),
+      log: { info: vi.fn(), warn: vi.fn() },
+    })
+
+    await controller.retryRoleReply(role, 'msg-timeout')
+
+    expect(runCommand).toHaveBeenNthCalledWith(1, 'GROUP_ROLE_RETRY_REPLY', { chatId: chat.id, roleId: role.id, messageId: 'msg-timeout' })
+    expect(runCommand).toHaveBeenNthCalledWith(2, 'GROUP_ROLE_RECOVER', { chatId: chat.id, roleId: role.id })
+    expect(iframeHost.recoverRole).toHaveBeenCalledWith(role)
+    expect(runCommand).toHaveBeenNthCalledWith(3, 'GROUP_ROLE_RETRY_REPLY', { chatId: chat.id, roleId: role.id, messageId: 'msg-timeout' })
+    expect(refreshStore).toHaveBeenCalledWith(false)
+  })
+
   it('manual refresh reloads current site role iframes even when roles are already online', async () => {
     const chat = makeChat('chat-1', ['role-1'])
     const role = makeRole(chat.id, 'role-1', '工程师', 'ready')

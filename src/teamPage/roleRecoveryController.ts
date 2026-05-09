@@ -1,6 +1,7 @@
 import type { GroupChat, GroupMessage, GroupRole, OpenTeamStore } from '../group/types'
 import type { RoleReadyWaiter, TeamPageState } from './appState'
 import { shouldAutoReconnectRole } from './chatExperience'
+import { runCommandWithReconnect } from './sendWithReconnect'
 
 const AUTO_RECONNECT_TIMEOUT_MS = 90_000
 const ROLE_READY_POLL_MS = 1_000
@@ -152,7 +153,16 @@ export function createRoleRecoveryController(deps: RoleRecoveryDependencies): Ro
   async function retryRoleReply(role: GroupRole, messageId = role.lastPromptMessageId): Promise<void> {
     const chat = deps.getStore().chatsById[role.chatId]
     if (!chat) return
-    await deps.runCommand('GROUP_ROLE_RETRY_REPLY', { chatId: chat.id, roleId: role.id, messageId })
+    await runCommandWithReconnect({
+      reconnectRolesForSend,
+      runCommand: deps.runCommand,
+      showError: deps.showError,
+    }, {
+      chat,
+      roles: [role],
+      type: 'GROUP_ROLE_RETRY_REPLY',
+      payload: { chatId: chat.id, roleId: role.id, messageId },
+    })
     await deps.refreshStore(false)
   }
 

@@ -16,6 +16,7 @@ export interface PromptDeliveryRetryDependencies {
   getLatestBinding(chatId: string, roleId: string): LatestPromptBinding | undefined
   isDeliveryStillActive(chatId: string, roleId: string, messageId: string, replyAttemptId: string | undefined): Promise<boolean>
   markDeliveryError(chatId: string, roleId: string, messageId: string, reason: string): Promise<void>
+  requestRoleRecovery?(chatId: string, roleId: string, reason: string): Promise<boolean>
   waitForRetry?(ms: number): Promise<void>
 }
 
@@ -32,8 +33,26 @@ export async function sendPromptDeliveryWithRetry(
   let lastReason = '发送失败'
 
   for (let attemptIndex = 0; attemptIndex <= retryDelays.length; attemptIndex += 1) {
+    const latestBinding = deps.getLatestBinding(input.chatId, input.delivery.roleId)
+    const promptDelivery = latestBinding?.ready
+      ? { ...input.delivery, tabId: latestBinding.tabId, frameId: latestBinding.frameId }
+      : input.delivery
+    deps.log.warn('orchestration-diagnostic:delivery-attempt', {
+      chatId: input.chatId,
+      roleId: input.delivery.roleId,
+      chatSite: input.delivery.chatSite,
+      messageId: input.messageId,
+      attempt: attemptIndex + 1,
+      maxAttempts: retryDelays.length + 1,
+      deliveryTabId: promptDelivery.tabId,
+      deliveryFrameId: promptDelivery.frameId,
+      latestBinding,
+      payloadChatId: promptDelivery.message.chatId,
+      payloadRoleId: promptDelivery.message.roleId,
+      payloadReplyAttemptId: promptDelivery.message.replyAttemptId,
+    })
     try {
-      await deps.sendPrompt(withLatestPromptBinding(deps, input.chatId, input.delivery))
+      await deps.sendPrompt(promptDelivery)
       return true
     } catch (error) {
       lastReason = error instanceof Error ? error.message : String(error)
@@ -54,10 +73,34 @@ export async function sendPromptDeliveryWithRetry(
         delayMs,
         reason: lastReason,
       })
+      const recovered = await deps.requestRoleRecovery?.(input.chatId, input.delivery.roleId, lastReason).catch(error => {
+        deps.log.warn('orchestration-diagnostic:delivery-recovery-request-failed', {
+          chatId: input.chatId,
+          roleId: input.delivery.roleId,
+          messageId: input.messageId,
+          reason: lastReason,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return false
+      })
+      deps.log.warn('orchestration-diagnostic:delivery-recovery-requested', {
+        chatId: input.chatId,
+        roleId: input.delivery.roleId,
+        messageId: input.messageId,
+        recovered: recovered ?? false,
+        reason: lastReason,
+      })
       await waitForRetryDelay(deps, delayMs)
     }
   }
 
+  deps.log.warn('orchestration-diagnostic:delivery-final-failure', {
+    chatId: input.chatId,
+    roleId: input.delivery.roleId,
+    chatSite: input.delivery.chatSite,
+    messageId: input.messageId,
+    reason: lastReason,
+  })
   await deps.markDeliveryError(input.chatId, input.delivery.roleId, input.messageId, lastReason)
   return false
 }

@@ -162,14 +162,17 @@ describe('orchestration runtime', () => {
         ? { chatId: 'chat-1', roleId: 'role-1', tabId: 101, frameId: 1, ready: true, lastSeenAt: 1 }
         : undefined),
     }
-    const waitForRetry = vi.fn(async () => {
+    const waitForRetry = vi.fn(async () => undefined)
+    const requestRoleRecovery = vi.fn(async () => {
       frameReady = true
+      return true
     })
-    const harness = await setupRuntime(store, { runtimeFrames, waitForRetry, deliveryRetryDelaysMs: [1] })
+    const harness = await setupRuntime(store, { requestRoleRecovery, runtimeFrames, waitForRetry, deliveryRetryDelaysMs: [1] })
 
     const started = await harness.startOrchestrationRun(harness.deps, { chatId: 'chat-1', flowId: 'flow-1', task: 'Ship the plan' })
 
-    expect(waitForRetry).toHaveBeenCalledWith(1)
+    expect(requestRoleRecovery).toHaveBeenCalledWith('chat-1', 'role-1', '人员 iframe 尚未就绪，请先恢复人员')
+    expect(waitForRetry).not.toHaveBeenCalled()
     expect(harness.sendPrompt).toHaveBeenCalledTimes(1)
     const finalStore = await harness.getStore()
     const run = finalStore.orchestrationRunsById[started.run.id]
@@ -177,6 +180,37 @@ describe('orchestration runtime', () => {
     expect(run.stageRuns).toHaveLength(1)
     expect(run.stageRuns[0]).toMatchObject({ stageId: 'stage-1', status: 'running' })
     expect(finalStore.chatsById['chat-1'].messageIds).toHaveLength(2)
+  })
+
+  it('keeps retrying stage preparation after the retry delay list is exhausted', async () => {
+    const store = makeStore(['role-1'])
+    store.orchestrationFlowsById['flow-1'] = makeFlow('chat-1', [
+      { id: 'stage-1', kind: 'roles', name: 'Build', roleIds: ['role-1'] },
+    ])
+    let frameReady = false
+    const runtimeFrames = {
+      getByRole: vi.fn(() => frameReady
+        ? { chatId: 'chat-1', roleId: 'role-1', tabId: 101, frameId: 1, ready: true, lastSeenAt: 1 }
+        : undefined),
+    }
+    const waitForRetry = vi.fn(async () => {
+      if (waitForRetry.mock.calls.length >= 2) frameReady = true
+    })
+    const requestRoleRecovery = vi.fn(async () => false)
+    const harness = await setupRuntime(store, { requestRoleRecovery, runtimeFrames, waitForRetry, deliveryRetryDelaysMs: [1] })
+
+    const started = await harness.startOrchestrationRun(harness.deps, { chatId: 'chat-1', flowId: 'flow-1', task: 'Ship the plan' })
+
+    expect(requestRoleRecovery).toHaveBeenCalledTimes(2)
+    expect(waitForRetry).toHaveBeenCalledTimes(2)
+    expect(waitForRetry).toHaveBeenNthCalledWith(1, 1)
+    expect(waitForRetry).toHaveBeenNthCalledWith(2, 1)
+    expect(harness.sendPrompt).toHaveBeenCalledTimes(1)
+    const finalStore = await harness.getStore()
+    const run = finalStore.orchestrationRunsById[started.run.id]
+    expect(run.status).toBe('running')
+    expect(run.stageRuns).toHaveLength(1)
+    expect(run.stageRuns[0]).toMatchObject({ stageId: 'stage-1', status: 'running' })
   })
 
   it('starts fan-out stages in parallel after their shared source completes', async () => {

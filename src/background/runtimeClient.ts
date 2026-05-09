@@ -78,3 +78,24 @@ export async function sendError(message: string): Promise<void> {
     // no active receiver
   }
 }
+
+export async function requestRoleRecovery(chatId: string, roleId: string, reason?: string): Promise<boolean> {
+  const payload = { type: 'GROUP_ROLE_RECOVERY_REQUEST', chatId, roleId, reason }
+  log.warn('orchestration-diagnostic:role-recovery-request:start', { chatId, roleId, reason, hostTabIds: listHostTabIds() })
+  for (const tabId of listHostTabIds()) {
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, payload)
+      log.warn('orchestration-diagnostic:role-recovery-request:response', { chatId, roleId, tabId, response })
+      if (isRecord(response) && response.ok === true) return true
+    } catch (error) {
+      log.warn('orchestration-diagnostic:role-recovery-request:tab-failed', { tabId, chatId, roleId, error: error instanceof Error ? error.message : String(error) })
+      forgetHostTab(tabId)
+    }
+  }
+  log.warn('orchestration-diagnostic:role-recovery-request:not-recovered', { chatId, roleId, reason })
+  return false
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

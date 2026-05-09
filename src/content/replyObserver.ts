@@ -48,10 +48,12 @@ export function createReplyObserver(options: {
     if (!siteAdapter.isGenerating() && tryReportLatestReply(messageId, 'timeout-compensation')) return
 
     roleSession.clearActivePrompt(messageId)
+    const statusIdentity = statusIdentityPayload()
     options
       .sendRuntimeMessage({
         type: 'TEAM_ROLE_STATUS',
         status: 'error',
+        ...statusIdentity,
         error: `等待 ${siteAdapter.id} 回复超时（${Math.round(REPLY_TIMEOUT_MS / 1000)} 秒）`,
       })
       .catch(error => log.warn('reply-timeout:status-failed', { error: error instanceof Error ? error.message : String(error) }))
@@ -263,9 +265,19 @@ export function createReplyObserver(options: {
           log.info('reply:skip-idle-active-prompt', { completedMessageId: messageId, activeMessageId: activePrompt.messageId })
           return undefined
         }
-        return options.sendRuntimeMessage({ type: 'TEAM_ROLE_STATUS', status: 'idle' })
+        return options.sendRuntimeMessage({ type: 'TEAM_ROLE_STATUS', status: 'idle', ...statusIdentityPayload() })
       })
       .catch(error => log.warn('reply:report-failed', { error: error instanceof Error ? error.message : String(error) }))
+  }
+
+  function statusIdentityPayload(): { chatId?: string; roleId?: string } {
+    const assignedRole = roleSession.getAssignedRole()
+    const chatId = roleSession.getAssignedChatId(assignedRole)
+    const roleId = assignedRole?.roleId
+    return {
+      ...(chatId ? { chatId } : {}),
+      ...(roleId ? { roleId } : {}),
+    }
   }
 
   function tryReportLatestReply(messageId: string, source: 'timeout-compensation'): boolean {

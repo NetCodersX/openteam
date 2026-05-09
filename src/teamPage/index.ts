@@ -502,8 +502,12 @@ function renderSelectedChat(): void {
 }
 
 function registerRuntimePush(): void {
-  chrome.runtime.onMessage.addListener((message: StorePushMessage) => {
+  chrome.runtime.onMessage.addListener((message: StorePushMessage, _sender, sendResponse) => {
     if (!message || typeof message.type !== 'string') return false
+    if (message.type === 'GROUP_ROLE_RECOVERY_REQUEST') {
+      handleRoleRecoveryRequest(message, sendResponse)
+      return true
+    }
     if (message.type === 'TEAM_FRAME_ROLE_READY') iframeHost.markRoleReady(message.chatId, message.roleId)
     if (message.store) {
       applyStore(message.store)
@@ -516,6 +520,45 @@ function registerRuntimePush(): void {
     }
     return false
   })
+}
+
+function handleRoleRecoveryRequest(message: Extract<StorePushMessage, { type: 'GROUP_ROLE_RECOVERY_REQUEST' }>, sendResponse: (response?: unknown) => void): void {
+  const chat = store.chatsById[message.chatId]
+  const role = store.rolesById[message.roleId]
+  if (!chat || !role || role.chatId !== chat.id) {
+    log.warn('orchestration-diagnostic:role-recovery:missing-role', {
+      chatId: message.chatId,
+      roleId: message.roleId,
+      reason: message.reason,
+      hasChat: Boolean(chat),
+      hasRole: Boolean(role),
+      roleChatId: role?.chatId,
+    })
+    sendResponse({ ok: false, error: '找不到要恢复的人员' })
+    return
+  }
+  log.warn('orchestration-diagnostic:role-recovery:start', {
+    chatId: chat.id,
+    roleId: role.id,
+    roleName: role.name,
+    chatSite: role.chatSite,
+    reason: message.reason,
+  })
+  reconnectRolesForSend(chat, [role])
+    .then(() => {
+      log.warn('orchestration-diagnostic:role-recovery:ready', {
+        chatId: chat.id,
+        roleId: role.id,
+        roleName: role.name,
+        chatSite: role.chatSite,
+      })
+      sendResponse({ ok: true })
+    })
+    .catch(error => {
+      const reason = error instanceof Error ? error.message : String(error)
+      log.warn('orchestration-diagnostic:role-recovery:failed', { chatId: chat.id, roleId: role.id, roleName: role.name, chatSite: role.chatSite, reason: message.reason, error: reason })
+      sendResponse({ ok: false, error: reason })
+    })
 }
 
 async function boot(): Promise<void> {

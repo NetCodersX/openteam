@@ -6,6 +6,7 @@ import {
   broadcastStoreUpdated as broadcastRuntimeStoreUpdated,
   forgetHostTab,
   rememberHost,
+  requestRoleRecovery,
   sendError,
   type RuntimeMessage,
 } from './runtimeClient'
@@ -78,8 +79,8 @@ const routeMessage = createMessageRouter([
   { type: 'GROUP_SETTINGS_UPDATE', handler: handleSettingsUpdate },
   ...createExternalModelHandlers({ broadcastStoreUpdated, newId, now }),
   ...createRoleHandlers({ broadcastStoreUpdated, log, newId, now, runtimeFrames, sendPrompt }),
-  ...createOrchestrationHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendPrompt }),
-  ...createMessageHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, runtimeFrames, sendError, sendPrompt, sendRoleMessage }),
+  ...createOrchestrationHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, requestRoleRecovery, runtimeFrames, sendPrompt }),
+  ...createMessageHandlers({ broadcastStoreUpdated, externalModelClient, getChatStatusFromRoles, log, newId, now, requestRoleRecovery, runtimeFrames, sendError, sendPrompt, sendRoleMessage }),
 ])
 
 chrome.runtime.onInstalled.addListener(() => {

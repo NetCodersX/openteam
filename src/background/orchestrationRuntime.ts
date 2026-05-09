@@ -34,6 +34,7 @@ export interface OrchestrationRuntimeDependencies {
   sendPrompt: PromptSender
   externalModelClient?: ExternalModelClient
   deliveryRetryDelaysMs?: readonly number[]
+  requestRoleRecovery?(chatId: string, roleId: string, reason?: string): Promise<boolean>
   waitForRetry?(ms: number): Promise<void>
 }
 
@@ -255,7 +256,10 @@ export async function maybeAdvanceOrchestrationRun(deps: OrchestrationRuntimeDep
 }
 
 export async function markOrchestrationRoleError(deps: OrchestrationRuntimeDependencies, input: { chatId: string; roleId: string; promptMessageId?: string; error: string }): Promise<OpenTeamStore | undefined> {
-  if (!input.promptMessageId) return undefined
+  if (!input.promptMessageId) {
+    deps.log.warn('orchestration-diagnostic:role-error:missing-message-id', input)
+    return undefined
+  }
   const promptMessageId = input.promptMessageId
   const timestamp = deps.now()
   const { store, result } = await mutateStore(store => {
@@ -276,6 +280,13 @@ export async function markOrchestrationRoleError(deps: OrchestrationRuntimeDepen
     chat.status = 'error'
     chat.updatedAt = timestamp
     return true
+  })
+  deps.log.warn('orchestration-diagnostic:role-error:mark-result', {
+    chatId: input.chatId,
+    roleId: input.roleId,
+    promptMessageId,
+    error: input.error,
+    marked: result,
   })
   if (result) await deps.broadcastStoreUpdated(store)
   return result ? store : undefined
@@ -358,8 +369,8 @@ async function startStage(deps: OrchestrationRuntimeDependencies, runId: string,
     const taskMessage = getRunTaskMessage(store, chat, run)
     if (!taskMessage) throw new Error('找不到编排任务消息')
     const targetRoleIds = targetRoleIdsForStage(stage)
-    const frameBlocker = preparationRetryDelayMs === undefined ? undefined : findLocalRoleFrameBlocker(store, chat, targetRoleIds, deps)
-    if (frameBlocker && preparationRetryDelayMs !== undefined) {
+    const frameBlocker = findLocalRoleFrameBlocker(store, chat, targetRoleIds, deps)
+    if (frameBlocker) {
       return {
         deliveries: [],
         externalDeliveries: [],
@@ -452,17 +463,49 @@ async function startStage(deps: OrchestrationRuntimeDependencies, runId: string,
       delayMs: prepared.result.retry.delayMs,
       reason: prepared.result.retry.reason,
     })
-    await waitForStagePreparationRetry(deps, prepared.result.retry.delayMs)
+    const recovered = await deps.requestRoleRecovery?.(prepared.result.retry.chatId, prepared.result.retry.roleId, prepared.result.retry.reason).catch(() => false)
+    deps.log.warn('orchestration-diagnostic:stage-preparation-recovery-result', {
+      chatId: prepared.result.retry.chatId,
+      roleId: prepared.result.retry.roleId,
+      roleName: prepared.result.retry.roleName,
+      runId,
+      stageIndex,
+      recovered: recovered ?? false,
+      reason: prepared.result.retry.reason,
+    })
+    if (!recovered) await waitForStagePreparationRetry(deps, prepared.result.retry.delayMs)
     return startStage(deps, runId, stageIndex, preparationAttempt + 1)
   }
 
   await deps.broadcastStoreUpdated(prepared.store)
+  deps.log.warn('orchestration-diagnostic:stage-deliveries-start', {
+    runId,
+    stageIndex,
+    localDeliveries: prepared.result.deliveries.map(delivery => ({
+      chatId: delivery.message.chatId,
+      roleId: delivery.roleId,
+      chatSite: delivery.chatSite,
+      messageId: delivery.message.messageId,
+      replyAttemptId: delivery.message.replyAttemptId,
+      tabId: delivery.tabId,
+      frameId: delivery.frameId,
+      payloadChatId: delivery.message.chatId,
+      payloadRoleId: delivery.message.roleId,
+    })),
+    externalDeliveries: prepared.result.externalDeliveries.map(delivery => ({
+      chatId: delivery.chatId,
+      roleId: delivery.roleId,
+      model: delivery.model,
+      messageId: delivery.messageId,
+    })),
+  })
   await Promise.all(prepared.result.deliveries.map(delivery => sendPromptDeliveryWithRetry({
     log: deps.log,
     sendPrompt: deps.sendPrompt,
     getLatestBinding: (chatId, roleId) => deps.runtimeFrames.getByRole(chatId, roleId),
     isDeliveryStillActive: isOrchestrationPromptDeliveryStillActive,
     markDeliveryError: (chatId, roleId, messageId, reason) => markOrchestrationRoleError(deps, { chatId, roleId, promptMessageId: messageId, error: reason }).then(() => undefined),
+    requestRoleRecovery: deps.requestRoleRecovery,
     waitForRetry: deps.waitForRetry,
   }, {
     chatId: delivery.message.chatId,
@@ -659,9 +702,9 @@ function findLocalRoleFrameBlocker(
   return undefined
 }
 
-function preparationRetryDelay(deps: Pick<OrchestrationRuntimeDependencies, 'deliveryRetryDelaysMs'>, attempt: number): number | undefined {
-  const delays = deps.deliveryRetryDelaysMs ?? DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS
-  return attempt < delays.length ? delays[attempt] : undefined
+function preparationRetryDelay(deps: Pick<OrchestrationRuntimeDependencies, 'deliveryRetryDelaysMs'>, attempt: number): number {
+  const delays = deps.deliveryRetryDelaysMs?.length ? deps.deliveryRetryDelaysMs : DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS
+  return delays[Math.min(attempt, delays.length - 1)] ?? DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS[DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS.length - 1]
 }
 
 async function waitForStagePreparationRetry(deps: Pick<OrchestrationRuntimeDependencies, 'waitForRetry'>, delayMs: number): Promise<void> {

@@ -32,6 +32,19 @@ describe('runCommandWithReconnect', () => {
     expect(runCommand).toHaveBeenCalledTimes(2)
   })
 
+  it('reconnects and retries when a command reports an unready iframe', async () => {
+    const roles = [role('role-1', 'ready')]
+    const reconnectRolesForSend = vi.fn(async () => undefined)
+    const runCommand = vi.fn()
+      .mockRejectedValueOnce(new Error('人员 iframe 尚未就绪，请先恢复人员'))
+      .mockResolvedValueOnce(undefined)
+
+    await runCommandWithReconnect({ reconnectRolesForSend, runCommand }, { chat, roles, type: 'GROUP_ROLE_RETRY_REPLY', payload: { chatId: chat.id, roleId: 'role-1' } })
+
+    expect(reconnectRolesForSend).toHaveBeenCalledWith(chat, roles)
+    expect(runCommand).toHaveBeenCalledTimes(2)
+  })
+
   it('can preconnect every target role before orchestration commands', async () => {
     const roles = [role('role-1', 'ready'), role('role-2', 'thinking')]
     const reconnectRolesForSend = vi.fn(async () => undefined)

@@ -59,6 +59,7 @@ export interface MessageHandlersDependencies {
   deliveryRetryDelaysMs?: readonly number[]
   externalModelRetryDelaysMs?: readonly number[]
   roleErrorRetryDelaysMs?: readonly number[]
+  requestRoleRecovery?(chatId: string, roleId: string, reason?: string): Promise<boolean>
   waitForRetry?(ms: number): Promise<void>
 }
 
@@ -482,7 +483,19 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
     const mappedStatus = mapRuntimeRoleStatus(message.status)
     if (!mappedStatus) return { ok: false, error: '未知人员状态' }
 
-    const identity = readIdentity(deps, message, sender)
+    const identity = readIdentityOptional(deps, message, sender)
+    if (!identity) {
+      deps.log.warn('role-status:missing-identity', {
+        runtimeStatus: message.status,
+        mappedStatus,
+        error: message.error,
+        senderUrl: sender.url,
+        tabId: messageTabId(message, sender),
+        frameId: senderFrameId(sender),
+      })
+      return { ok: false, error: '缺少 chatId/roleId，已忽略状态更新' }
+    }
+
     const timestamp = deps.now()
     deps.log.info('role-status:received', {
       ...identity,
@@ -715,6 +728,12 @@ function markChatHasNewMessage(store: OpenTeamStore, chat: GroupChat): void {
 }
 
 function readIdentity(deps: MessageHandlersDependencies, message: RuntimeMessage, sender: chrome.runtime.MessageSender): { chatId: string; roleId: string } {
+  const identity = readIdentityOptional(deps, message, sender)
+  if (identity) return identity
+  throw new Error('缺少 chatId/roleId')
+}
+
+function readIdentityOptional(deps: MessageHandlersDependencies, message: RuntimeMessage, sender: chrome.runtime.MessageSender): { chatId: string; roleId: string } | undefined {
   const chatId = readOptionalString(message.chatId)
   const roleId = readOptionalString(message.roleId)
   if (chatId && roleId) return { chatId, roleId }
@@ -725,7 +744,7 @@ function readIdentity(deps: MessageHandlersDependencies, message: RuntimeMessage
     if (binding) return { chatId: binding.chatId, roleId: binding.roleId }
   }
 
-  throw new Error('缺少 chatId/roleId')
+  return undefined
 }
 
 function updateConversation(role: GroupRole, conversationUrl: string | undefined, conversationId: string | undefined): void {
@@ -990,6 +1009,7 @@ async function sendPromptDelivery(deps: MessageHandlersDependencies, chatId: str
     getLatestBinding: (targetChatId, roleId) => deps.runtimeFrames.getByRole(targetChatId, roleId),
     isDeliveryStillActive: isPromptDeliveryStillActive,
     markDeliveryError: (targetChatId, roleId, targetMessageId, reason) => markDeliveryError(deps, targetChatId, roleId, targetMessageId, reason),
+    requestRoleRecovery: deps.requestRoleRecovery,
     waitForRetry: deps.waitForRetry,
   }, {
     chatId,

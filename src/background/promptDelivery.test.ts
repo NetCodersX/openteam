@@ -64,6 +64,7 @@ describe('background prompt delivery', () => {
       .mockReturnValueOnce({ ready: true, tabId: 101, frameId: 1 })
       .mockReturnValueOnce({ ready: true, tabId: 202, frameId: 2 })
     const markDeliveryError = vi.fn(async () => undefined)
+    const requestRoleRecovery = vi.fn(async () => true)
 
     await expect(sendPromptDeliveryWithRetry({
       log: { warn: vi.fn() },
@@ -71,6 +72,7 @@ describe('background prompt delivery', () => {
       getLatestBinding,
       isDeliveryStillActive: vi.fn(async () => true),
       markDeliveryError,
+      requestRoleRecovery,
       waitForRetry: vi.fn(async () => undefined),
     }, {
       chatId: 'chat-1',
@@ -81,6 +83,7 @@ describe('background prompt delivery', () => {
 
     expect(sendPrompt).toHaveBeenNthCalledWith(1, expect.objectContaining({ tabId: 101, frameId: 1 }))
     expect(sendPrompt).toHaveBeenNthCalledWith(2, expect.objectContaining({ tabId: 202, frameId: 2 }))
+    expect(requestRoleRecovery).toHaveBeenCalledWith('chat-1', 'role-1', '输入框繁忙')
     expect(markDeliveryError).not.toHaveBeenCalled()
   })
 })

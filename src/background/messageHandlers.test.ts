@@ -125,6 +125,93 @@ describe('background message handlers', () => {
     }))
   })
 
+  it('ignores role status messages without identity instead of surfacing a delivery error', async () => {
+    vi.resetModules()
+    vi.doMock('./storeAccess', async importOriginal => {
+      const actual = await importOriginal<typeof import('./storeAccess')>()
+      return {
+        ...actual,
+        mutateStore: vi.fn(async (mutator: (store: OpenTeamStore) => unknown) => {
+          const store = createStoreWithReadyRole()
+          const result = await mutator(store)
+          return { store, result }
+        }),
+      }
+    })
+
+    const { createMessageHandlers } = await import('./messageHandlers')
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() }
+    const routes = createMessageHandlers({
+      broadcastStoreUpdated: vi.fn(),
+      getChatStatusFromRoles: () => 'ready',
+      log,
+      newId: vi.fn((prefix: string) => `${prefix}-1`),
+      now: vi.fn(() => 100),
+      runtimeFrames: {
+        bind: vi.fn(),
+        getByAddress: vi.fn(() => undefined),
+        getByRole: vi.fn(),
+      },
+      sendRoleMessage: vi.fn(),
+      sendError: vi.fn(),
+      sendPrompt: vi.fn(),
+    })
+
+    const statusRoute = routes.find(route => route.type === 'TEAM_ROLE_STATUS')
+    const response = await statusRoute?.handler({ type: 'TEAM_ROLE_STATUS', status: 'idle' }, { tab: { id: 101 } as chrome.tabs.Tab, frameId: 7 }) as { ok: boolean; error: string }
+
+    expect(response).toMatchObject({ ok: false, error: '缺少 chatId/roleId，已忽略状态更新' })
+    expect(log.warn).toHaveBeenCalledWith('role-status:missing-identity', expect.objectContaining({ runtimeStatus: 'idle' }))
+  })
+
+  it('requests role recovery during ordinary message delivery retries', async () => {
+    vi.resetModules()
+    const testStore = createStoreWithReadyRole()
+    vi.doMock('./storeAccess', async importOriginal => {
+      const actual = await importOriginal<typeof import('./storeAccess')>()
+      return {
+        ...actual,
+        mutateStore: vi.fn(async (mutator: (store: OpenTeamStore) => unknown) => {
+          const result = await mutator(testStore)
+          return { store: testStore, result }
+        }),
+      }
+    })
+
+    const { createMessageHandlers } = await import('./messageHandlers')
+    const binding: RuntimeFrameBinding = { chatId: 'chat-1', roleId: 'role-1', tabId: 101, frameId: 7, ready: true, lastSeenAt: 0 }
+    const sendPrompt = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('人员 iframe 尚未就绪，请先恢复人员'))
+      .mockResolvedValueOnce(undefined)
+    const requestRoleRecovery = vi.fn(async () => true)
+    const routes = createMessageHandlers({
+      broadcastStoreUpdated: vi.fn(),
+      getChatStatusFromRoles: () => 'ready',
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      newId: vi.fn((prefix: string) => `${prefix}-1`),
+      now: vi.fn(() => 100),
+      runtimeFrames: {
+        bind: vi.fn(),
+        getByAddress: vi.fn(),
+        getByRole: vi.fn(() => binding),
+      },
+      sendRoleMessage: vi.fn(),
+      sendError: vi.fn(),
+      sendPrompt,
+      requestRoleRecovery,
+      waitForRetry: vi.fn(async () => undefined),
+      deliveryRetryDelaysMs: [1],
+    })
+
+    const sendRoute = routes.find(route => route.type === 'GROUP_MESSAGE_SEND')
+    const response = await sendRoute?.handler({ type: 'GROUP_MESSAGE_SEND', chatId: 'chat-1', raw: '@all 继续发送' }, {}) as { ok: boolean }
+
+    expect(response.ok).toBe(true)
+    expect(sendPrompt).toHaveBeenCalledTimes(2)
+    expect(requestRoleRecovery).toHaveBeenCalledWith('chat-1', 'role-1', '人员 iframe 尚未就绪，请先恢复人员')
+  })
+
   it('skips the OpenTeam persona when sending a first prompt to a ChatGPT GPTs role', async () => {
     vi.resetModules()
     vi.doMock('./storeAccess', async importOriginal => {

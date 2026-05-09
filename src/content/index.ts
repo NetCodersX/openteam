@@ -190,12 +190,18 @@ function handleStopGenerationMessage(message: Extract<BackgroundToRoleMessage, {
 function handleSendPromptMessage(message: Extract<BackgroundToRoleMessage, { type: 'TEAM_SEND_PROMPT' }>, sendResponse: (response?: unknown) => void): void {
   const promptChatId = message.chatId || roleSession.getAssignedChatId()
   const promptRoleId = message.roleId || roleSession.getAssignedRole()?.roleId || ''
-  log.info('message:send-prompt', {
+  log.warn('orchestration-diagnostic:content-send-prompt:received', {
     chatId: promptChatId,
     roleId: promptRoleId,
+    payloadChatId: message.chatId,
+    payloadRoleId: message.roleId,
     messageId: message.messageId,
+    replyAttemptId: message.replyAttemptId,
     contentLength: message.content.length,
     autoSend: message.autoSend,
+    assignedRole: roleSession.getAssignedRole(),
+    assignedChatId: roleSession.getAssignedChatId(),
+    diagnostics: collectPromptDiagnostics(),
   })
 
   replyObserver?.capturePromptReplyBaseline(message.messageId)
