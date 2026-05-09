@@ -387,7 +387,7 @@ describe('orchestration status view', () => {
     const source = readFileSync(resolve(process.cwd(), 'public/team.css'), 'utf8')
 
     expect(source).toMatch(/\.orchestration-status-collapsed\s*{[^}]*right:\s*22px;/s)
-    expect(source).toMatch(/\.orchestration-status-collapsed\s*{[^}]*bottom:\s*154px;/s)
+    expect(source).toMatch(/\.orchestration-status-collapsed\s*{[^}]*bottom:\s*206px;/s)
   })
 
   it('clamps saved expanded floating positions back into the viewport', () => {
