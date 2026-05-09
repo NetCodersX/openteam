@@ -507,6 +507,19 @@
       </section>
     </div>
 
+    <div id="orchestration-auto-modal" class="modal-backdrop modal-backdrop-secondary" hidden>
+      <section class="modal orchestration-auto-modal" role="dialog" aria-modal="true" aria-labelledby="orchestration-auto-title">
+        <div class="modal-header">
+          <div>
+            <h2 id="orchestration-auto-title">自动编排</h2>
+            <p class="tiny">根据任务和你的补充描述生成或修改流程。</p>
+          </div>
+          <button id="close-auto-orchestration" class="icon-btn modal-close" type="button" aria-label="关闭自动编排">×</button>
+        </div>
+        <div id="orchestration-auto-content" class="orchestration-auto-content"></div>
+      </section>
+    </div>
+
     <div id="iframe-host" class="iframe-host" aria-hidden="true"></div>
     <div id="error" class="toast" hidden></div>
     <script type="module" src="team.js"></script>

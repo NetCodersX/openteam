@@ -6,9 +6,12 @@ import { runCommandWithReconnect } from './sendWithReconnect'
 export interface OrchestrationModalDependencies {
   openOrchestrationEl: HTMLButtonElement
   orchestrationModalEl: HTMLElement
+  orchestrationAutoModalEl: HTMLElement
   closeOrchestrationEl: HTMLButtonElement
   orchestrationTaskEl: HTMLTextAreaElement
   autoOrchestrationEl: HTMLButtonElement
+  closeAutoOrchestrationEl: HTMLButtonElement
+  orchestrationAutoContentEl: HTMLElement
   orchestrationPeopleListEl: HTMLElement
   arrangeOrchestrationEl: HTMLButtonElement
   orchestrationCanvasEl: HTMLElement
@@ -439,7 +442,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
     autoPanelOpen = true
     renderAutoPanel()
     updateActionButtons()
-    deps.orchestrationModalEl.querySelector<HTMLTextAreaElement>('.orchestration-auto-instruction')?.focus()
+    deps.orchestrationAutoContentEl.querySelector<HTMLTextAreaElement>('.orchestration-auto-instruction')?.focus()
   }
 
   function closeAutoPanel(): void {
@@ -454,16 +457,12 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
       removeAutoPanel()
       return
     }
-    let panel = deps.orchestrationModalEl.querySelector<HTMLElement>('.orchestration-auto-panel')
+    deps.orchestrationAutoModalEl.hidden = false
+    let panel = deps.orchestrationAutoContentEl.querySelector<HTMLElement>('.orchestration-auto-panel')
     if (!panel) {
       panel = document.createElement('section')
       panel.className = 'orchestration-auto-panel'
-      const anchor = deps.orchestrationTaskEl.closest('.orchestration-task-strip')
-      if (anchor) {
-        anchor.insertAdjacentElement('afterend', panel)
-      } else {
-        deps.orchestrationModalEl.insertBefore(panel, deps.orchestrationModalEl.querySelector('.orchestration-layout') ?? deps.orchestrationModalEl.firstChild)
-      }
+      deps.orchestrationAutoContentEl.append(panel)
     }
     panel.replaceChildren()
 
@@ -540,7 +539,8 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
   }
 
   function removeAutoPanel(): void {
-    deps.orchestrationModalEl.querySelector('.orchestration-auto-panel')?.remove()
+    deps.orchestrationAutoContentEl.replaceChildren()
+    deps.orchestrationAutoModalEl.hidden = true
   }
 
   async function save(): Promise<void> {
@@ -617,6 +617,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
       if (!generatedFlow) throw new Error('自动编排没有返回流程')
       autoInstruction = ''
       applyGeneratedFlow(generatedFlow)
+      closeAutoPanel()
       deps.showSuccess(autoGenerateSuccessMessage(response.createdRoleIds?.length ?? 0, response.reusedRoleIds?.length ?? 0))
     } finally {
       autoGenerating = false
@@ -729,6 +730,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
   function registerOrchestrationEvents(): void {
     deps.openOrchestrationEl.addEventListener('click', open)
     deps.closeOrchestrationEl.addEventListener('click', close)
+    deps.closeAutoOrchestrationEl.addEventListener('click', closeAutoPanel)
     deps.arrangeOrchestrationEl.addEventListener('click', arrangeCanvas)
     deps.autoOrchestrationEl.addEventListener('click', openAutoPanel)
     deps.orchestrationMaxRoundsEl.addEventListener('input', render)

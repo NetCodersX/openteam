@@ -50,9 +50,12 @@ interface Harness {
   refs: {
     openOrchestrationEl: HTMLButtonElement
     orchestrationModalEl: HTMLElement
+    orchestrationAutoModalEl: HTMLElement
     closeOrchestrationEl: HTMLButtonElement
     orchestrationTaskEl: HTMLTextAreaElement
     autoOrchestrationEl: HTMLButtonElement
+    closeAutoOrchestrationEl: HTMLButtonElement
+    orchestrationAutoContentEl: HTMLElement
     orchestrationPeopleListEl: HTMLElement
     arrangeOrchestrationEl: HTMLButtonElement
     orchestrationCanvasEl: HTMLElement
@@ -92,6 +95,10 @@ function createHarness(): Harness {
       <button id="save-orchestration"></button>
       <button id="run-orchestration"></button>
     </div>
+    <div id="orchestration-auto-modal" hidden>
+      <button id="close-auto-orchestration"></button>
+      <div id="orchestration-auto-content"></div>
+    </div>
   `
   const store = createDefaultStore()
   const chat: GroupChat = { id: 'chat-1', name: '测试群聊', mode: 'collaborative', roleIds: ['role-1', 'role-2'], messageIds: [], nextMessageSeq: 1, status: 'ready', createdAt: 1, updatedAt: 1 }
@@ -110,9 +117,12 @@ function createHarness(): Harness {
     refs: {
       openOrchestrationEl: document.querySelector('#open-orchestration') as HTMLButtonElement,
       orchestrationModalEl: document.querySelector('#orchestration-modal') as HTMLElement,
+      orchestrationAutoModalEl: document.querySelector('#orchestration-auto-modal') as HTMLElement,
       closeOrchestrationEl: document.querySelector('#close-orchestration') as HTMLButtonElement,
       orchestrationTaskEl: document.querySelector('#orchestration-task') as HTMLTextAreaElement,
       autoOrchestrationEl: document.querySelector('#auto-orchestration') as HTMLButtonElement,
+      closeAutoOrchestrationEl: document.querySelector('#close-auto-orchestration') as HTMLButtonElement,
+      orchestrationAutoContentEl: document.querySelector('#orchestration-auto-content') as HTMLElement,
       orchestrationPeopleListEl: document.querySelector('#orchestration-people-list') as HTMLElement,
       arrangeOrchestrationEl: document.querySelector('#arrange-orchestration') as HTMLButtonElement,
       orchestrationCanvasEl: document.querySelector('#orchestration-stage-canvas') as HTMLElement,
@@ -482,7 +492,7 @@ describe('orchestration modal view', () => {
 
     harness.refs.autoOrchestrationEl.click()
     expect(harness.sendRuntimeMessage).not.toHaveBeenCalled()
-    const panel = harness.refs.orchestrationModalEl.querySelector<HTMLElement>('.orchestration-auto-panel')
+    const panel = harness.refs.orchestrationAutoContentEl.querySelector<HTMLElement>('.orchestration-auto-panel')
     expect(panel?.hidden).toBe(false)
     const instruction = panel?.querySelector<HTMLTextAreaElement>('.orchestration-auto-instruction')
     expect(instruction).not.toBeNull()
@@ -493,7 +503,8 @@ describe('orchestration modal view', () => {
 
     expect(harness.sendRuntimeMessage).toHaveBeenCalledWith('GROUP_ORCHESTRATION_AUTO_GENERATE', expect.objectContaining({ chatId: 'chat-1', task: '写一篇文章', instruction: '先规划，再写作，最后审核', flowId: undefined }))
     expect(harness.refs.orchestrationPeopleListEl.textContent).toContain('写手')
-    expect(panel?.textContent).toContain('已生成自动流程')
+    expect(harness.refs.orchestrationAutoModalEl.hidden).toBe(true)
+    expect(harness.refs.orchestrationAutoContentEl.querySelector('.orchestration-auto-panel')).toBeNull()
     expect(harness.successes[harness.successes.length - 1]).toContain('新增 1 个 DeepSeek 人员')
     MockGraph.latest().selectNode('stage-plan')
     expect(harness.refs.orchestrationStageSettingsEl.querySelector('.orchestration-auto-role-site-row')).toBeNull()
@@ -516,6 +527,19 @@ describe('orchestration modal view', () => {
     expect(savePayload.flow?.stages.map(stage => stage.id)).toEqual(['stage-plan', 'stage-write', 'stage-review'])
     expect(savePayload.flow?.graph?.edges).toContainEqual({ sourceStageId: 'stage-review', targetStageId: 'stage-write', sourcePort: 'fail', vertices: expect.any(Array) })
     expect(savePayload.flow?.autoPlanHistory?.map(entry => entry.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('opens automatic orchestration in a separate dialog instead of embedding it in the main editor', () => {
+    const harness = createHarness()
+    const view = createView(harness)
+    view.registerOrchestrationEvents()
+    harness.refs.openOrchestrationEl.click()
+
+    harness.refs.autoOrchestrationEl.click()
+
+    expect(harness.refs.orchestrationAutoModalEl.hidden).toBe(false)
+    expect(harness.refs.orchestrationAutoContentEl.querySelector('.orchestration-auto-panel')).not.toBeNull()
+    expect(harness.refs.orchestrationModalEl.querySelector('.orchestration-auto-panel')).toBeNull()
   })
 
   it('sends the current draft and auto history when modifying an existing orchestration from the panel', async () => {
@@ -544,7 +568,7 @@ describe('orchestration modal view', () => {
     harness.refs.openOrchestrationEl.click()
 
     harness.refs.autoOrchestrationEl.click()
-    const panel = harness.refs.orchestrationModalEl.querySelector<HTMLElement>('.orchestration-auto-panel')
+    const panel = harness.refs.orchestrationAutoContentEl.querySelector<HTMLElement>('.orchestration-auto-panel')
     expect(panel?.textContent).toContain('已生成写作节点')
     const instruction = panel?.querySelector<HTMLTextAreaElement>('.orchestration-auto-instruction')
     instruction!.value = '增加审核失败回写作'

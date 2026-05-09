@@ -48,8 +48,11 @@ export interface TeamPageDomRefs {
   openOrchestrationEl: HTMLButtonElement
   closeOrchestrationEl: HTMLButtonElement
   orchestrationModalEl: HTMLElement
+  orchestrationAutoModalEl: HTMLElement
   orchestrationTaskEl: HTMLTextAreaElement
   autoOrchestrationEl: HTMLButtonElement
+  closeAutoOrchestrationEl: HTMLButtonElement
+  orchestrationAutoContentEl: HTMLElement
   orchestrationPeopleListEl: HTMLElement
   arrangeOrchestrationEl: HTMLButtonElement
   orchestrationCanvasEl: HTMLElement
@@ -190,8 +193,11 @@ export function createTeamPageDomRefs(): TeamPageDomRefs {
     openOrchestrationEl: requireElement<HTMLButtonElement>('#open-orchestration'),
     closeOrchestrationEl: requireElement<HTMLButtonElement>('#close-orchestration'),
     orchestrationModalEl: requireElement<HTMLElement>('#orchestration-modal'),
+    orchestrationAutoModalEl: requireElement<HTMLElement>('#orchestration-auto-modal'),
     orchestrationTaskEl: requireElement<HTMLTextAreaElement>('#orchestration-task'),
     autoOrchestrationEl: requireElement<HTMLButtonElement>('#auto-orchestration'),
+    closeAutoOrchestrationEl: requireElement<HTMLButtonElement>('#close-auto-orchestration'),
+    orchestrationAutoContentEl: requireElement<HTMLElement>('#orchestration-auto-content'),
     orchestrationPeopleListEl: requireElement<HTMLElement>('#orchestration-people-list'),
     arrangeOrchestrationEl: requireElement<HTMLButtonElement>('#arrange-orchestration'),
     orchestrationCanvasEl: requireElement<HTMLElement>('#orchestration-stage-canvas'),
