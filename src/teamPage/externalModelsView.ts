@@ -22,6 +22,7 @@ export interface ExternalModelsViewDependencies {
 }
 
 export interface ExternalModelsView {
+  openExternalModels(): void
   closeExternalModels(): void
   registerExternalModelsEvents(): void
   renderExternalModels(): void
@@ -29,13 +30,7 @@ export interface ExternalModelsView {
 
 export function createExternalModelsView(deps: ExternalModelsViewDependencies): ExternalModelsView {
   function registerExternalModelsEvents(): void {
-    deps.openExternalModelsEl.addEventListener('click', () => {
-      deps.settingsMenuEl.hidden = true
-      deps.settingsButtonEl.setAttribute('aria-expanded', 'false')
-      deps.externalModelsModalEl.hidden = false
-      resetForm()
-      renderExternalModels()
-    })
+    deps.openExternalModelsEl.addEventListener('click', openExternalModels)
     deps.closeExternalModelsEl.addEventListener('click', closeExternalModels)
     deps.resetExternalModelFormEl.addEventListener('click', resetForm)
     deps.externalModelFormEl.addEventListener('submit', event => {
@@ -156,6 +151,15 @@ export function createExternalModelsView(deps: ExternalModelsViewDependencies): 
     deps.externalModelModelNameEl.value = ''
   }
 
+  function openExternalModels(): void {
+    deps.settingsMenuEl.hidden = true
+    deps.settingsButtonEl.setAttribute('aria-expanded', 'false')
+    deps.externalModelsModalEl.hidden = false
+    resetForm()
+    renderExternalModels()
+    deps.externalModelNameEl.focus()
+  }
+
   function closeExternalModels(): void {
     deps.externalModelsModalEl.hidden = true
   }
@@ -171,5 +175,5 @@ export function createExternalModelsView(deps: ExternalModelsViewDependencies): 
     return deps.externalModelFormatEl.value === 'anthropic' ? 'anthropic' : 'openai'
   }
 
-  return { closeExternalModels, registerExternalModelsEvents, renderExternalModels }
+  return { openExternalModels, closeExternalModels, registerExternalModelsEvents, renderExternalModels }
 }

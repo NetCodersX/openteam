@@ -74,6 +74,7 @@ interface Harness {
   sendRuntimeMessage: Mock<[string, Record<string, unknown>?], Promise<{ ok?: boolean; store?: OpenTeamStore; flow?: OrchestrationFlow; roles?: GroupRole[]; createdRoleIds?: string[]; reusedRoleIds?: string[] }>>
   runCommand: Mock<[string, Record<string, unknown>?], Promise<void>>
   reconnectRolesForSend: Mock<[GroupChat, GroupRole[]], Promise<void>>
+  openExternalModels: Mock<[], void>
   errors: string[]
   successes: string[]
 }
@@ -150,6 +151,7 @@ function createHarness(): Harness {
     sendRuntimeMessage: vi.fn<[string, Record<string, unknown>?], Promise<{ ok?: boolean; store?: OpenTeamStore; flow?: OrchestrationFlow; roles?: GroupRole[]; createdRoleIds?: string[]; reusedRoleIds?: string[] }>>(async () => ({ ok: true })),
     runCommand: vi.fn<[string, Record<string, unknown>?], Promise<void>>(async () => undefined),
     reconnectRolesForSend: vi.fn<[GroupChat, GroupRole[]], Promise<void>>(async () => undefined),
+    openExternalModels: vi.fn(),
     errors: [],
     successes: [],
   }
@@ -167,6 +169,7 @@ function createView(harness: Harness): ReturnType<typeof createOrchestrationModa
     reconnectRolesForSend: harness.reconnectRolesForSend,
     sendRuntimeMessage: harness.sendRuntimeMessage,
     runCommand: harness.runCommand,
+    openExternalModels: harness.openExternalModels,
     showError: message => harness.errors.push(message),
     showSuccess: message => harness.successes.push(message),
     loadX6: async () => ({ Graph: MockGraph }),
@@ -205,6 +208,38 @@ describe('orchestration modal view', () => {
     const runPayload = harness.runCommand.mock.calls.find(call => call[0] === 'GROUP_ORCHESTRATION_RUN')?.[1] as { flow?: OrchestrationFlow }
     expect(runPayload.flow?.stages.map(stage => stage.roleIds)).toEqual([['role-1'], ['role-2']])
     expect(runPayload.flow?.graph?.edges).toEqual([])
+  })
+
+  it('prompts users to configure an external API before opening orchestration', () => {
+    const harness = createHarness()
+    harness.store.settings.externalModelOrder = []
+    harness.store.settings.externalModelsById = {}
+    const view = createView(harness)
+    view.registerOrchestrationEvents()
+
+    harness.refs.openOrchestrationEl.click()
+
+    expect(harness.errors).toContain('编排依赖外部模型 API，请先配置一个外部模型。')
+    expect(harness.openExternalModels).toHaveBeenCalledTimes(1)
+    expect(harness.refs.orchestrationModalEl.hidden).toBe(true)
+  })
+
+  it('prompts users to configure an external API before running an already-open draft', async () => {
+    const harness = createHarness()
+    const view = createView(harness)
+    view.registerOrchestrationEvents()
+    harness.refs.openOrchestrationEl.click()
+    dropRole(harness, 'role-1')
+    harness.refs.orchestrationTaskEl.value = '完成方案评审'
+
+    harness.store.settings.externalModelOrder = []
+    harness.store.settings.externalModelsById = {}
+    harness.refs.runOrchestrationEl.click()
+    await flushAsync()
+
+    expect(harness.errors).toContain('编排依赖外部模型 API，请先配置一个外部模型。')
+    expect(harness.openExternalModels).toHaveBeenCalledTimes(1)
+    expect(harness.runCommand).not.toHaveBeenCalledWith('GROUP_ORCHESTRATION_RUN', expect.anything())
   })
 
   it('opens built-in orchestration templates from a compact picker button', () => {

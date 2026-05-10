@@ -33,6 +33,7 @@ export interface OrchestrationModalDependencies {
   reconnectRolesForSend(chat: GroupChat, roles: GroupRole[]): Promise<void>
   sendRuntimeMessage<T>(type: string, payload?: Record<string, unknown>): Promise<{ ok?: boolean; error?: string; store?: OpenTeamStore; flow?: OrchestrationFlow; roles?: GroupRole[]; createdRoleIds?: string[]; reusedRoleIds?: string[]; data?: T }>
   runCommand(type: string, payload?: Record<string, unknown>): Promise<void>
+  openExternalModels(): void
   showError(message: string): void
   showSuccess(message: string): void
   loadX6?: LoadX6
@@ -65,6 +66,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
   let autoPanelOpen = false
   let autoInstruction = ''
   const templateManagedRoleIds = new Set<string>()
+  const externalApiRequiredMessage = '编排依赖外部模型 API，请先配置一个外部模型。'
 
   function emptyDraft(): FlowDraft {
     return { task: '', stages: [], graphEdges: [], autoPlanHistory: [], maxNodeExecutions: DEFAULT_ORCHESTRATION_MAX_NODE_EXECUTIONS }
@@ -76,6 +78,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
       deps.showError('请选择群聊后再编排任务')
       return
     }
+    if (!ensureExternalApiConfigured()) return
     loadDraft(chat)
     deps.orchestrationModalEl.hidden = false
     deps.openOrchestrationTemplateEl.textContent = '模板'
@@ -519,6 +522,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
   }
 
   function openAutoPanel(): void {
+    if (!ensureExternalApiConfigured()) return
     autoPanelOpen = true
     renderAutoPanel()
     updateActionButtons()
@@ -789,6 +793,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
     if (running || saving) return
     const chat = deps.getCurrentChat()
     const task = deps.orchestrationTaskEl.value.trim()
+    if (chat && !ensureExternalApiConfigured()) return
     if (!chat || !validateDraft(true)) return
     if (!task) {
       deps.showError('请输入编排任务')
@@ -813,6 +818,7 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
     const chat = deps.getCurrentChat()
     const task = deps.orchestrationTaskEl.value.trim()
     if (!chat) return
+    if (!ensureExternalApiConfigured()) return
     if (!task) {
       deps.showError('请输入编排任务')
       return
@@ -952,6 +958,21 @@ export function createOrchestrationModalView(deps: OrchestrationModalDependencie
       }
     }
     return [...roleIds].map(roleId => rolesById.get(roleId)).filter((role): role is GroupRole => Boolean(role))
+  }
+
+  function ensureExternalApiConfigured(): boolean {
+    if (hasExternalApiConfigured()) return true
+    deps.showError(externalApiRequiredMessage)
+    deps.openExternalModels()
+    return false
+  }
+
+  function hasExternalApiConfigured(): boolean {
+    const store = deps.getStore()
+    return store.settings.externalModelOrder.some(modelId => {
+      const model = store.settings.externalModelsById[modelId]
+      return Boolean(model?.name.trim() && model.baseUrl.trim() && model.apiKey.trim() && model.modelName.trim())
+    })
   }
 
   function registerOrchestrationEvents(): void {

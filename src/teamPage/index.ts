@@ -322,6 +322,7 @@ const externalModelsView = createExternalModelsView({
   showError,
 })
 const renderExternalModels = externalModelsView.renderExternalModels
+const openExternalModels = externalModelsView.openExternalModels
 const closeExternalModels = externalModelsView.closeExternalModels
 const registerExternalModelsEvents = externalModelsView.registerExternalModelsEvents
 const orchestrationModalView = createOrchestrationModalView({
@@ -353,6 +354,7 @@ const orchestrationModalView = createOrchestrationModalView({
   reconnectRolesForSend,
   sendRuntimeMessage,
   runCommand,
+  openExternalModels,
   showError,
   showSuccess,
 })
