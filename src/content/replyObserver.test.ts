@@ -115,14 +115,15 @@ describe('createReplyObserver', () => {
     vi.useRealTimers()
   })
 
-  it('does not use timeout compensation while the page is still generating', async () => {
+  it('extends the reply timeout while the page is still generating', async () => {
     vi.useFakeTimers()
     document.body.innerHTML = '<message-content id="new">先输出的一段内容，仍在思考后续。</message-content>'
 
     const sentMessages: RoleToBackgroundMessage[] = []
     const roleSession = createFakeRoleSession()
     const reportRoleError = vi.fn()
-    const adapter = createFakeAdapter({ isGenerating: () => true })
+    let generating = true
+    const adapter = createFakeAdapter({ isGenerating: () => generating })
     const observer = createReplyObserver({
       siteAdapter: adapter,
       roleSession,
@@ -140,8 +141,21 @@ describe('createReplyObserver', () => {
     await vi.advanceTimersByTimeAsync(120_000)
 
     expect(sentMessages).not.toContainEqual(expect.objectContaining({ type: 'TEAM_ROLE_REPLY' }))
-    expect(sentMessages).toContainEqual(expect.objectContaining({ type: 'TEAM_ROLE_STATUS', status: 'error' }))
-    expect(reportRoleError).toHaveBeenCalled()
+    expect(sentMessages).toContainEqual(expect.objectContaining({ type: 'TEAM_ROLE_STATUS', status: 'generating' }))
+    expect(sentMessages).not.toContainEqual(expect.objectContaining({ type: 'TEAM_ROLE_STATUS', status: 'error' }))
+    expect(reportRoleError).not.toHaveBeenCalled()
+
+    document.querySelector('message-content')!.textContent = '先输出的一段内容，仍在思考后续。现在补充完成。'
+    generating = false
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(sentMessages).toContainEqual(expect.objectContaining({
+      type: 'TEAM_ROLE_REPLY',
+      messageId: 'msg-1',
+      content: '先输出的一段内容，仍在思考后续。现在补充完成。',
+    }))
+    expect(sentMessages).not.toContainEqual(expect.objectContaining({ type: 'TEAM_ROLE_STATUS', status: 'error' }))
+    expect(reportRoleError).not.toHaveBeenCalled()
 
     vi.useRealTimers()
   })

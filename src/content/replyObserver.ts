@@ -45,6 +45,19 @@ export function createReplyObserver(options: {
     log.warn('reply-timeout', { messageId, roleId: assignedRole?.roleId, roleName: assignedRole?.roleName })
 
     const replyAttemptId = roleSession.getActiveReplyAttemptId()
+    const activePrompt = roleSession.getActivePrompt()
+    if (activePrompt?.messageId === messageId && siteAdapter.isGenerating()) {
+      log.warn('reply-timeout:extended-generating', { messageId, roleId: assignedRole?.roleId, roleName: assignedRole?.roleName })
+      options
+        .sendRuntimeMessage({
+          type: 'TEAM_ROLE_STATUS',
+          status: 'generating',
+          ...statusIdentityPayload(),
+        })
+        .catch(error => log.warn('reply-timeout:heartbeat-failed', { messageId, error: error instanceof Error ? error.message : String(error) }))
+      replyTimeout.arm(messageId)
+      return
+    }
     if (!siteAdapter.isGenerating() && tryReportLatestReply(messageId, 'timeout-compensation')) return
 
     roleSession.clearActivePrompt(messageId)
