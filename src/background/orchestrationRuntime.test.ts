@@ -571,13 +571,23 @@ describe('orchestration runtime', () => {
     const erroredStore = await harness.getStore()
     expect(erroredStore.orchestrationRunsById[started.run.id].stageRuns.map(stageRun => `${stageRun.status}:${stageRun.stageId}`)).toEqual(['completed:stage-a', 'error:stage-b'])
 
-    await harness.invoke({ type: 'GROUP_ORCHESTRATION_RETRY_STAGE', chatId: 'chat-1', stageId: 'stage-b' })
+    const retried = await harness.invoke({ type: 'GROUP_ORCHESTRATION_RETRY_STAGE', chatId: 'chat-1', stageId: 'stage-b' }) as { ok: boolean; store: OpenTeamStore }
 
     const calls = promptCalls(harness.tabsSendMessage)
     expect(calls).toHaveLength(3)
     expect(calls[0][0]).toBe(101)
     expect(calls[1][0]).toBe(102)
     expect(calls[2][0]).toBe(102)
+    expect(retried.store.orchestrationRunsById[started.run.id].stageRuns.map(stageRun => `${stageRun.status}:${stageRun.stageId}`)).toEqual(['completed:stage-a', 'running:stage-b'])
+    const retriedMessage = latestUserMessage(retried.store, 'chat-1')
+    expect(retriedMessage).toMatchObject({
+      type: 'user',
+      status: 'pending',
+      orchestrationRunId: started.run.id,
+      orchestrationStageId: 'stage-b',
+      orchestrationStageIndex: 1,
+      deliveryStatus: { 'role-b': 'pending' },
+    })
     const retriedStore = await harness.getStore()
     expect(retriedStore.orchestrationRunsById[started.run.id].stageRuns.map(stageRun => `${stageRun.status}:${stageRun.stageId}`)).toEqual(['completed:stage-a', 'running:stage-b'])
   })

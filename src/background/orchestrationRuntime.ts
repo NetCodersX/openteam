@@ -314,8 +314,8 @@ export async function retryOrchestrationStage(deps: OrchestrationRuntimeDependen
     return { runId: run.id, stageIndex: stageRun.stageIndex }
   })
   await deps.broadcastStoreUpdated(prepared.store)
-  await startStage(deps, prepared.result.runId, prepared.result.stageIndex)
-  return { store: prepared.store }
+  const started = await startStage(deps, prepared.result.runId, prepared.result.stageIndex)
+  return { store: started.store }
 }
 
 export async function skipOrchestrationStage(deps: OrchestrationRuntimeDependencies, chatId: string, stageId?: string): Promise<{ store: OpenTeamStore }> {
