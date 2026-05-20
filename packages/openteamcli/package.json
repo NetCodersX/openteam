@@ -9,6 +9,7 @@
     "openteamcli": "./openteamcli.mjs"
   },
   "files": [
+    "README.zh-CN.md",
     "openteamcli.mjs",
     "openteam-daemon.mjs",
     "skills"

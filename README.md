@@ -14,8 +14,6 @@ OpenTeam is a sister project to [OpenLink](https://github.com/afumu/openlink), a
 
 The idea became concrete after I met Lu ([YUANLU007](https://github.com/YUANLU007)), a news editor. In her writing workflow, she often needs to compare several AI systems, inspect how different models answer the same question, and use multiple perspectives for factual checks. That matched the original OpenLink idea closely, so OpenTeam became its sister project: a local browser workspace for sending one task to multiple AI web sessions and gathering their responses in one discussion room.
 
-If you write, edit, research, review facts, compare models, compare role perspectives, or want browser-based workflow-style AI collaboration, OpenTeam is built for that kind of work.
-
 ![OpenTeam group chat preview](docs/assets/group-chat-ui-concept.png)
 
 ## ✨ Highlights
@@ -87,6 +85,67 @@ Load it in Chrome:
 
 If you change `public/manifest.json`, `public/openteam-frame-rules.json`, or content scripts, reload the extension from `chrome://extensions/`.
 
+## 🧑‍💻 Developer Usage
+
+For day-to-day development or agent-assisted use, start from the release package when one is available:
+
+1. Download the latest extension ZIP from [GitHub Releases](https://github.com/afumu/openteam/releases/latest), unzip it, and load the extracted directory in `chrome://extensions/` with Developer mode enabled.
+2. Install the CLI from npm:
+
+```bash
+npm install -g @openteam/cli
+```
+
+If the Release includes a CLI tarball instead, install that local file:
+
+```bash
+npm install -g ./openteam-cli-*.tgz
+```
+
+3. Install the bundled agent skill with the standard skills installer:
+
+```bash
+npx skills add afumu/openteam --skill openteam-control
+```
+
+For a local checkout or an unzipped source package, install from the current directory:
+
+```bash
+npx skills add . --skill openteam-control
+```
+
+The skills installer will ask which agent, scope, and install method to use.
+
+4. Restart Codex or your local agent, open the OpenTeam extension page, enable local agent control in settings, then verify the bridge:
+
+```bash
+openteamcli daemon start
+openteamcli doctor
+```
+
+### Agent-Assisted Install
+
+Copy this prompt into Codex, Claude Code, or another local coding agent if you want it to install the CLI and skill for you:
+
+```text
+Please install OpenTeam local agent control for me.
+
+1. Install the CLI:
+   npm install -g @openteam/cli
+
+2. Install the OpenTeam agent skill:
+   npx skills add afumu/openteam --skill openteam-control
+
+   If this repository is not public yet, or if you are already inside a local OpenTeam checkout, use:
+   npx skills add . --skill openteam-control
+
+3. Start and verify the local bridge:
+   openteamcli daemon start
+   openteamcli doctor
+
+If the skills installer asks which agent, scope, or install method to use, let me choose. If doctor says the extension is not connected, ask me to open the OpenTeam extension page and enable local agent control in settings.
+```
+
 ## 🛠️ Development
 
 ```bash
@@ -99,12 +158,11 @@ Useful checks:
 ```bash
 npm run typecheck
 npm test
-npm run test:e2e
 npm run build
 npm run verify
 ```
 
-`npm run verify` runs type checking, unit tests, E2E harness tests, and a production build.
+`npm run verify` runs type checking, unit tests, and a production build.
 
 ## 🤖 CLI
 
@@ -116,7 +174,19 @@ npm run openteamcli -- daemon start
 npm run openteamcli -- chat list
 ```
 
-See [packages/openteamcli/README.md](packages/openteamcli/README.md) for CLI install and publishing notes.
+Install the bundled agent skill:
+
+```bash
+npx skills add afumu/openteam --skill openteam-control
+```
+
+Before the repository is public, or when working from a local checkout, install the same skill from the current directory:
+
+```bash
+npx skills add . --skill openteam-control
+```
+
+For release package setup, CLI installation, agent skill installation, and the copyable agent install prompt, see the Developer Usage section above. See [packages/openteamcli/README.md](packages/openteamcli/README.md) for more CLI notes.
 
 ## 🔐 Permissions and Privacy
 

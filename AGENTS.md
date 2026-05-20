@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-OpenTeam is a Manifest V3 Chrome extension built with Vite and TypeScript. Core source lives in `src/`: `background/` contains the service worker, routing, runtime, and control handlers; `content/` contains AI-site content scripts and adapters; `group/` contains group state, prompts, roles, and mention parsing; `teamPage/` contains the workspace UI. Shared utilities are in `src/shared/`, protocol types in `src/control/`, and E2E harness tests in `src/e2e/`.
+OpenTeam is a Manifest V3 Chrome extension built with Vite and TypeScript. Core source lives in `src/`: `background/` contains the service worker, routing, runtime, and control handlers; `content/` contains AI-site content scripts and adapters; `group/` contains group state, prompts, roles, and mention parsing; `teamPage/` contains the workspace UI. Shared utilities are in `src/shared/`, and protocol types are in `src/control/`.
 
 Static extension files are in `public/`. Design docs and images are in `docs/`. The local agent CLI package is in `packages/openteamcli/`. `dist/` is generated build output; do not edit it directly.
 
@@ -13,18 +13,16 @@ Static extension files are in `public/`. Design docs and images are in `docs/`. 
 - `npm run build`: create a production extension build in `dist/`.
 - `npm run typecheck`: run strict TypeScript checks.
 - `npm test`: run Vitest unit tests across `src/` and package tests.
-- `npm run test:e2e`: run `src/e2e/**/*.e2e.ts`.
-- `npm run e2e`: run E2E tests and the extension smoke script.
-- `npm run verify`: run typecheck, unit tests, E2E tests, and build before a PR.
+- `npm run verify`: run typecheck, unit tests, and build before a PR.
 - `npm run openteamcli -- doctor`: run the local CLI.
 
 ## Coding Style & Naming Conventions
 
-Use TypeScript ES modules, 2-space indentation, single quotes, and no semicolons, matching existing files. Prefer explicit exported interfaces/types for shared contracts. Keep filenames camelCase for source and tests, with tests named beside code as `*.test.ts` or `*.e2e.ts`. The project has no separate lint or formatting script; `tsconfig.json` enforces `strict`, `noUnusedLocals`, and `noUnusedParameters`.
+Use TypeScript ES modules, 2-space indentation, single quotes, and no semicolons, matching existing files. Prefer explicit exported interfaces/types for shared contracts. Keep filenames camelCase for source and tests, with tests named beside code as `*.test.ts`. The project has no separate lint or formatting script; `tsconfig.json` enforces `strict`, `noUnusedLocals`, and `noUnusedParameters`.
 
 ## Testing Guidelines
 
-Vitest is the test framework. Add focused unit tests beside changed modules, especially for routing, prompt construction, storage, UI state, and site adapters. Put workflow coverage under `src/e2e/` with `*.e2e.ts`. Run `npm run verify` before changes that affect runtime behavior or packaging.
+Vitest is the test framework. Add focused unit tests beside changed modules, especially for routing, prompt construction, storage, UI state, and site adapters. Run `npm run verify` before changes that affect runtime behavior or packaging.
 
 ## Commit & Pull Request Guidelines
 

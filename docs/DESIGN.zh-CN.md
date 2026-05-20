@@ -193,12 +193,10 @@ daemon 会把认证 token 存在 `~/.openteam/control-token`，并提供 `/statu
 
 ### 测试
 
-测试通常和实现文件放在同一目录，命名为 `*.test.ts`；集成风格的运行时测试在 [src/e2e](../src/e2e)。主要命令：
+测试通常和实现文件放在同一目录，命名为 `*.test.ts`。主要命令：
 
 - `npm test`：Vitest 单元测试。
-- `npm run test:e2e`：使用 `vitest.e2e.config.ts` 的 E2E harness 测试。
-- `npm run e2e:extension`：构建扩展并运行 [scripts/e2e-extension-smoke.mjs](../scripts/e2e-extension-smoke.mjs)。
-- `npm run verify`：类型检查、单元测试、E2E harness 测试和构建。
+- `npm run verify`：类型检查、单元测试和构建。
 
 ## 关键数据流
 

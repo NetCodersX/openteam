@@ -193,12 +193,10 @@ The daemon stores an auth token at `~/.openteam/control-token`, exposes `/status
 
 ### Tests
 
-Tests live next to the implementation files as `*.test.ts`; integration-style runtime tests are under [src/e2e](../src/e2e). The main commands are:
+Tests live next to the implementation files as `*.test.ts`. The main commands are:
 
 - `npm test`: Vitest unit tests.
-- `npm run test:e2e`: E2E harness tests with `vitest.e2e.config.ts`.
-- `npm run e2e:extension`: builds the extension and runs [scripts/e2e-extension-smoke.mjs](../scripts/e2e-extension-smoke.mjs).
-- `npm run verify`: typecheck, unit tests, E2E harness tests, and build.
+- `npm run verify`: typecheck, unit tests, and build.
 
 ## Key Data Flows
 
