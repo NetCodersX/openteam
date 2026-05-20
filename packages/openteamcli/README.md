@@ -77,11 +77,13 @@ npx skills add . --skill openteam-control
 
 ## Publish Checklist
 
+Before publishing a new CLI release, bump `packages/openteamcli/package.json`; npm does not allow republishing an existing version.
+
 ```bash
 cd packages/openteamcli
+npm version patch --no-git-tag-version
 npm pack --dry-run
 npm publish --dry-run --access public
-npm pack
 npm login
 npm whoami
 npm publish --access public

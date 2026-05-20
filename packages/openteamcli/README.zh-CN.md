@@ -77,11 +77,13 @@ npx skills add . --skill openteam-control
 
 ## 发布检查
 
+发布新的 CLI 版本前，先更新 `packages/openteamcli/package.json` 里的版本号；npm 不允许重复发布已经存在的版本。
+
 ```bash
 cd packages/openteamcli
+npm version patch --no-git-tag-version
 npm pack --dry-run
 npm publish --dry-run --access public
-npm pack
 npm login
 npm whoami
 npm publish --access public
