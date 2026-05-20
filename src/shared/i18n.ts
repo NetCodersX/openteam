@@ -784,6 +784,12 @@ function translateUiPattern(source: string): string | undefined {
   if (agentControlPort) {
     return `Port ${agentControlPort[1]}; local connections only.${source.includes('开启后') ? ' When enabled, local tools can create chats and send tasks.' : ''}`
   }
+  const agentControlConnected = source.match(/^已连接 OpenTeam CLI daemon（端口 (\d+)）。本机工具可以创建群聊并发送任务。$/)
+  if (agentControlConnected) return `Connected to OpenTeam CLI daemon (port ${agentControlConnected[1]}). Local tools can create chats and send tasks.`
+  const agentControlConnecting = source.match(/^正在连接 OpenTeam CLI daemon（端口 (\d+)）。$/)
+  if (agentControlConnecting) return `Connecting to OpenTeam CLI daemon (port ${agentControlConnecting[1]}).`
+  const agentControlDisconnected = source.match(/^未连接 OpenTeam CLI daemon（端口 (\d+)）。请安装 OpenTeam CLI，或运行 openteamcli daemon start 启动守护进程。$/)
+  if (agentControlDisconnected) return `Not connected to OpenTeam CLI daemon (port ${agentControlDisconnected[1]}). Install OpenTeam CLI, or run openteamcli daemon start to start the daemon.`
   const currentPerson = source.match(/^(\d+) 人员 · 当前：(.+)$/)
   if (currentPerson) return `${currentPerson[1]} people · Current: ${currentPerson[2]}`
   const memberCount = source.match(/^成员 (\d+)$/)

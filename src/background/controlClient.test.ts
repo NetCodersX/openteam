@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { OPENTEAM_CONTROL_DEFAULT_PORT, OPENTEAM_CONTROL_PROTOCOL_VERSION } from '../control/protocol'
+import { OPENTEAM_CONTROL_DEFAULT_PORT, OPENTEAM_CONTROL_PROTOCOL_VERSION } from '../shared/localControlProtocol'
+import type { OpenTeamControlConnectionStatus } from '../shared/localControlProtocol'
 import { createDefaultStore } from '../group/store'
 import { createControlClient } from './controlClient'
 
@@ -117,6 +118,73 @@ describe('background control client', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:19999/ping', expect.objectContaining({ method: 'GET' }))
     expect(sockets).toHaveLength(0)
     expect(reconnectTimers.map(timer => timer.ms)).toEqual([2_000])
+  })
+
+  it('reports local control connection status transitions', async () => {
+    const sockets: FakeWebSocket[] = []
+    const fetchMock = vi.fn(async () => ({ ok: true }))
+    const statusUpdates: OpenTeamControlConnectionStatus[] = []
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('WebSocket', fakeWebSocketClass(sockets))
+    const store = createDefaultStore()
+    store.settings.agentControlEnabled = true
+    const client = createControlClient({
+      loadStore: async () => store,
+      executeCommand: vi.fn(),
+      getExtensionVersion: () => '1.0.0',
+      getProfileId: () => 'profile-test',
+      log: testLog(),
+      setTimer: vi.fn(),
+      clearTimer: vi.fn(),
+      onStatusChange: status => {
+        statusUpdates.push(status)
+      },
+    })
+
+    await client.sync()
+
+    expect(client.status()).toMatchObject({
+      state: 'connecting',
+      port: OPENTEAM_CONTROL_DEFAULT_PORT,
+      url: `ws://127.0.0.1:${OPENTEAM_CONTROL_DEFAULT_PORT}/ext?profileId=profile-test`,
+    })
+
+    sockets[0].open()
+
+    expect(client.status()).toMatchObject({
+      state: 'connected',
+      port: OPENTEAM_CONTROL_DEFAULT_PORT,
+    })
+    expect(statusUpdates.map(status => (status as { state?: string }).state)).toEqual(['connecting', 'connected'])
+  })
+
+  it('reports a disconnected status when the daemon is unavailable', async () => {
+    const reconnectTimers: Array<{ handler: () => void; ms: number }> = []
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('daemon unavailable')
+    }))
+    const store = createDefaultStore()
+    store.settings.agentControlEnabled = true
+    const client = createControlClient({
+      loadStore: async () => store,
+      executeCommand: vi.fn(),
+      getExtensionVersion: () => '1.0.0',
+      getProfileId: () => 'profile-test',
+      log: testLog(),
+      setTimer: vi.fn((handler, ms) => {
+        reconnectTimers.push({ handler, ms })
+        return reconnectTimers.length as unknown as ReturnType<typeof setTimeout>
+      }),
+      clearTimer: vi.fn(),
+    })
+
+    await client.sync()
+
+    expect(client.status()).toMatchObject({
+      state: 'disconnected',
+      port: OPENTEAM_CONTROL_DEFAULT_PORT,
+      lastError: 'OpenTeam CLI daemon is not reachable.',
+    })
   })
 
   it('does not let an older daemon ping race override a newer port sync', async () => {

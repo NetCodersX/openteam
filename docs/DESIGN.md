@@ -182,7 +182,7 @@ The `src/group` directory is the pure domain layer shared by background and UI c
 
 The local control path is optional and disabled unless the user enables it in settings.
 
-- [src/control/protocol.ts](../src/control/protocol.ts): protocol version, capabilities, command/result payloads, and common helpers.
+- [src/shared/localControlProtocol.ts](../src/shared/localControlProtocol.ts): protocol version, capabilities, command/result payloads, and common helpers.
 - [src/background/controlClient.ts](../src/background/controlClient.ts): service worker client that connects to the local daemon.
 - [src/background/controlHandlers.ts](../src/background/controlHandlers.ts): command executor for `chat.*`, `roles.batchAdd`, `task.*`, and `run.createAndPost`.
 - [packages/openteamcli/openteam-daemon.mjs](../packages/openteamcli/openteam-daemon.mjs): local HTTP/WebSocket daemon on `127.0.0.1`.

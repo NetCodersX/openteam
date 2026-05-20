@@ -25,6 +25,7 @@ import { createErrorPresenter, createSuccessPresenter, teamPageLog } from './tea
 import { createThemeController } from './themeController'
 import { createTeamUiController } from './teamUiController'
 import { emptyCard, getChatRecentSummary as getStoreChatRecentSummary, messageTitle, roleAvatarLabel, roleToneClass } from './viewHelpers'
+import { agentControlStatusState, agentControlStatusText } from './agentControlStatusView'
 
 const appState = createTeamPageState()
 
@@ -459,6 +460,7 @@ async function refreshStore(showFailure = true): Promise<void> {
   try {
     const response = await sendRuntimeMessage('GROUP_STORE_GET')
     if (response.ok === false) throw new Error(response.error || '读取群聊数据失败')
+    if (response.controlStatus) appState.controlStatus = response.controlStatus
     applyStore(response.store ?? createDefaultStore())
   } catch (error) {
     applyStore(createDefaultStore())
@@ -545,10 +547,10 @@ function render(): void {
 
 function renderAgentControlSettings(): void {
   const enabled = store.settings.agentControlEnabled
-  const port = store.settings.agentControlPort
   agentControlToggleEl.setAttribute('aria-pressed', String(enabled))
   agentControlToggleEl.textContent = `本机智能体控制：${enabled ? '开启' : '关闭'}`
-  agentControlStatusEl.textContent = `端口 ${port}，仅允许本机连接。开启后本机工具可创建群聊并发送任务。`
+  agentControlStatusEl.dataset.controlState = agentControlStatusState(store, appState.controlStatus)
+  agentControlStatusEl.textContent = agentControlStatusText(store, appState.controlStatus)
 }
 
 function registerAgentControlSettings(): void {
@@ -574,6 +576,12 @@ function registerRuntimePush(): void {
     if (message.type === 'GROUP_ROLE_RECOVERY_REQUEST') {
       handleRoleRecoveryRequest(message, sendResponse)
       return true
+    }
+    if (message.type === 'GROUP_CONTROL_STATUS_UPDATED') {
+      appState.controlStatus = message.controlStatus
+      renderAgentControlSettings()
+      languageSettingsController.render()
+      return false
     }
     if (orchestrationModalView.handleRuntimeMessage(message)) return false
     if (message.type === 'TEAM_FRAME_ROLE_READY') iframeHost.markRoleReady(message.chatId, message.roleId)

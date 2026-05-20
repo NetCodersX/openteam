@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { connect } from 'node:net'
-import { createControlDaemon } from './openteam-daemon.mjs'
+import { DEFAULT_PORT, createControlDaemon } from './openteam-daemon.mjs'
 
 describe('openteam local daemon', () => {
   const daemons = []
@@ -8,6 +8,10 @@ describe('openteam local daemon', () => {
   afterEach(async () => {
     await Promise.all(daemons.map(daemon => daemon.close()))
     daemons.length = 0
+  })
+
+  it('uses the shared OpenTeam control default port', () => {
+    expect(DEFAULT_PORT).toBe(19305)
   })
 
   it('forwards authenticated HTTP commands to the connected extension WebSocket', async () => {

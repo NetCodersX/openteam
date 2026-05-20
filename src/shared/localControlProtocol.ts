@@ -1,5 +1,15 @@
 export const OPENTEAM_CONTROL_PROTOCOL_VERSION = 1
-export const OPENTEAM_CONTROL_DEFAULT_PORT = 19826
+export const OPENTEAM_CONTROL_DEFAULT_PORT = 19305
+export const OPENTEAM_CONTROL_LEGACY_DEFAULT_PORT = 19826
+
+export type OpenTeamControlConnectionState = 'disabled' | 'connecting' | 'connected' | 'disconnected'
+
+export interface OpenTeamControlConnectionStatus {
+  state: OpenTeamControlConnectionState
+  port: number
+  url?: string
+  lastError?: string
+}
 
 export const OPENTEAM_CONTROL_CAPABILITIES = [
   'store.get',
@@ -73,4 +83,3 @@ export function controlFailure(id: string, code: string, message: string, option
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
-

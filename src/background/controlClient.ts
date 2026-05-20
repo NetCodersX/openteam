@@ -8,7 +8,8 @@ import {
   type ControlHttpResult,
   type DaemonControlMessage,
   type ExtensionControlMessage,
-} from '../control/protocol'
+  type OpenTeamControlConnectionStatus,
+} from '../shared/localControlProtocol'
 import type { OpenTeamStore } from '../group/types'
 
 export interface ControlClientDependencies {
@@ -23,11 +24,13 @@ export interface ControlClientDependencies {
   }
   setTimer(handler: () => void, ms: number): ReturnType<typeof globalThis.setTimeout>
   clearTimer(timerId: ReturnType<typeof globalThis.setTimeout>): void
+  onStatusChange?(status: OpenTeamControlConnectionStatus): void | Promise<void>
 }
 
 export interface ControlClient {
   sync(): Promise<void>
   stop(): void
+  status(): OpenTeamControlConnectionStatus
 }
 
 const DAEMON_PING_TIMEOUT_MS = 1_000
@@ -41,6 +44,10 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
   let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | undefined
   let reconnectAttempts = 0
   let shouldReconnect = false
+  let currentStatus: OpenTeamControlConnectionStatus = {
+    state: 'disabled',
+    port: OPENTEAM_CONTROL_DEFAULT_PORT,
+  }
 
   diagnostic('info', 'createControlClient:created', {
     profileId: safeCall(deps.getProfileId),
@@ -55,6 +62,7 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
       shouldReconnect,
     })
     const store = await deps.loadStore()
+    const port = controlDaemonPort(store)
     diagnostic('info', 'sync:store-loaded', {
       agentControlEnabled: store.settings.agentControlEnabled,
       agentControlPort: store.settings.agentControlPort,
@@ -64,6 +72,7 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
       shouldReconnect = false
       clearReconnect()
       closeSocket()
+      updateStatus({ state: 'disabled', port })
       diagnostic('info', 'sync:disabled', {
         reason: 'store.settings.agentControlEnabled is false',
       })
@@ -71,10 +80,14 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
     }
 
     shouldReconnect = true
-    const url = controlDaemonUrl(store, deps.getProfileId())
+    const url = controlDaemonUrl(port, deps.getProfileId())
+    updateStatus({ state: 'connecting', port, url })
     diagnostic('info', 'sync:enabled', { url })
     if (socket && activeUrl === url && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
       diagnostic('info', 'sync:reuse-existing-socket', { url, readyState: socket.readyState })
+      updateStatus(socket.readyState === WebSocket.OPEN
+        ? { state: 'connected', port, url }
+        : { state: 'connecting', port, url })
       return
     }
     closeSocket()
@@ -87,6 +100,11 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
     reconnectAttempts = 0
     clearReconnect()
     closeSocket()
+    updateStatus({ state: 'disabled', port: currentStatus.port })
+  }
+
+  function status(): OpenTeamControlConnectionStatus {
+    return currentStatus
   }
 
   function connect(url: string): Promise<void> {
@@ -107,6 +125,7 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
     const daemonReachable = await probeDaemon(url)
     if (!daemonReachable) {
       diagnostic('warn', 'connect:ping-unavailable', { url })
+      updateStatus({ state: 'disconnected', port: portFromControlUrl(url), url, lastError: 'OpenTeam CLI daemon is not reachable.' })
       scheduleReconnect()
       return
     }
@@ -122,6 +141,7 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
         error: error instanceof Error ? error.message : String(error),
       })
       deps.log.warn('control-client:constructor-failed', { url, error: error instanceof Error ? error.message : String(error) })
+      updateStatus({ state: 'disconnected', port: portFromControlUrl(url), url, lastError: error instanceof Error ? error.message : String(error) })
       scheduleReconnect()
       return
     }
@@ -132,6 +152,7 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
       deps.log.info('control-client:connected', { url })
       reconnectAttempts = 0
       diagnostic('info', 'socket:open', { url, readyState: socket?.readyState })
+      updateStatus({ state: 'connected', port: portFromControlUrl(url), url })
       send({
         type: 'hello',
         extensionVersion: deps.getExtensionVersion(),
@@ -161,6 +182,7 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
         eventType: event.type,
       })
       deps.log.warn('control-client:error', { url })
+      updateStatus({ state: 'disconnected', port: portFromControlUrl(url), url, lastError: 'OpenTeam CLI daemon connection failed.' })
     }
     socket.onclose = event => {
       diagnostic('warn', 'socket:close', {
@@ -172,7 +194,10 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
       })
       deps.log.warn('control-client:closed', { url })
       socket = undefined
-      if (shouldReconnect) scheduleReconnect()
+      if (shouldReconnect) {
+        updateStatus({ state: 'disconnected', port: portFromControlUrl(url), url, lastError: 'OpenTeam CLI daemon connection closed.' })
+        scheduleReconnect()
+      }
     }
   }
 
@@ -272,14 +297,31 @@ export function createControlClient(deps: ControlClientDependencies): ControlCli
     socket.send(JSON.stringify(message))
   }
 
-  return { sync, stop }
+  function updateStatus(nextStatus: OpenTeamControlConnectionStatus): void {
+    if (sameStatus(currentStatus, nextStatus)) return
+    currentStatus = nextStatus
+    diagnostic(currentStatus.state === 'disconnected' ? 'warn' : 'info', 'status:update', { ...currentStatus })
+    Promise.resolve(deps.onStatusChange?.(currentStatus)).catch(error => {
+      deps.log.warn('control-client:status-broadcast-failed', { error: error instanceof Error ? error.message : String(error) })
+    })
+  }
+
+  return { sync, stop, status }
 }
 
-function controlDaemonUrl(store: OpenTeamStore, profileId: string): string {
-  const port = typeof store.settings.agentControlPort === 'number' && Number.isFinite(store.settings.agentControlPort)
+function controlDaemonPort(store: OpenTeamStore): number {
+  return typeof store.settings.agentControlPort === 'number' && Number.isFinite(store.settings.agentControlPort)
     ? store.settings.agentControlPort
     : OPENTEAM_CONTROL_DEFAULT_PORT
+}
+
+function controlDaemonUrl(port: number, profileId: string): string {
   return `ws://127.0.0.1:${port}/ext?profileId=${encodeURIComponent(profileId)}`
+}
+
+function portFromControlUrl(socketUrl: string): number {
+  const parsed = Number(new URL(socketUrl).port)
+  return Number.isInteger(parsed) ? parsed : OPENTEAM_CONTROL_DEFAULT_PORT
 }
 
 function controlDaemonPingUrl(socketUrl: string): string {
@@ -331,4 +373,11 @@ function safeCall(read: () => string): string {
   } catch (error) {
     return `unavailable:${error instanceof Error ? error.message : String(error)}`
   }
+}
+
+function sameStatus(left: OpenTeamControlConnectionStatus, right: OpenTeamControlConnectionStatus): boolean {
+  return left.state === right.state &&
+    left.port === right.port &&
+    left.url === right.url &&
+    left.lastError === right.lastError
 }

@@ -5,7 +5,7 @@ import {
   MAX_ORCHESTRATION_MAX_NODE_EXECUTIONS,
   MAX_ORCHESTRATION_MAX_ROUNDS,
 } from './types'
-import { OPENTEAM_CONTROL_DEFAULT_PORT } from '../control/protocol'
+import { OPENTEAM_CONTROL_DEFAULT_PORT, OPENTEAM_CONTROL_LEGACY_DEFAULT_PORT } from '../shared/localControlProtocol'
 import { defaultLanguageForEnvironment, normalizeLanguage } from '../shared/i18n'
 import type { ExternalModelConfig, GroupChat, GroupMessage, GroupRole, MessageHighlight, OpenTeamSettings, OpenTeamStore, OpenTeamViewState, OrchestrationFlow, OrchestrationRun, RichNoteDocument, RoleTemplate } from './types'
 import { normalizeMessageHighlightColor } from './highlightColors'
@@ -15,7 +15,7 @@ export const STORE_KEY = 'openteam.groupStore'
 export const META_STORE_KEY = 'openteam.meta.v2'
 export const CHAT_KEY_PREFIX = 'openteam.chat.'
 export const MESSAGE_CHUNK_KEY_PREFIX = 'openteam.messages.'
-export const CURRENT_STORE_VERSION = 6
+export const CURRENT_STORE_VERSION = 7
 export const MESSAGE_CHUNK_SIZE = 100
 
 interface OpenTeamMetaStore {
@@ -618,7 +618,7 @@ function normalizeSettings(raw: unknown, storedVersion = CURRENT_STORE_VERSION):
     externalModelOrder: normalizeExternalModelOrder(raw.externalModelOrder, externalModelsById),
     externalModelsById,
     agentControlEnabled: raw.agentControlEnabled === true,
-    agentControlPort: readAgentControlPort(raw.agentControlPort),
+    agentControlPort: readAgentControlPort(raw.agentControlPort, storedVersion),
     language: readSettingsLanguage(raw.language),
   }
 }
@@ -628,9 +628,10 @@ function readSettingsLanguage(raw: unknown): OpenTeamSettings['language'] {
   return normalizeLanguage(raw)
 }
 
-function readAgentControlPort(raw: unknown): number {
+function readAgentControlPort(raw: unknown, storedVersion: number): number {
   if (typeof raw !== 'number' || !Number.isInteger(raw)) return DEFAULT_SETTINGS.agentControlPort
   if (raw < 1024 || raw > 65535) return DEFAULT_SETTINGS.agentControlPort
+  if (storedVersion < 7 && raw === OPENTEAM_CONTROL_LEGACY_DEFAULT_PORT) return OPENTEAM_CONTROL_DEFAULT_PORT
   return raw
 }
 

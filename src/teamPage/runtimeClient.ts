@@ -1,14 +1,17 @@
 import type { OpenTeamStore } from '../group/types'
+import type { OpenTeamControlConnectionStatus } from '../shared/localControlProtocol'
 
 export interface RuntimeResponse<T = unknown> {
   ok?: boolean
   error?: string
   store?: OpenTeamStore
+  controlStatus?: OpenTeamControlConnectionStatus
   data?: T
 }
 
 export type StorePushMessage =
   | { type: 'GROUP_STORE_UPDATED'; store: OpenTeamStore }
+  | { type: 'GROUP_CONTROL_STATUS_UPDATED'; controlStatus: OpenTeamControlConnectionStatus }
   | { type: 'GROUP_ORCHESTRATION_AUTO_STREAM_CHUNK'; streamId: string; chunk?: string; content?: string }
   | { type: 'GROUP_ROLE_STATUS_UPDATED'; store?: OpenTeamStore }
   | { type: 'GROUP_MESSAGE_DELIVERED'; store?: OpenTeamStore }

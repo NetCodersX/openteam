@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { createServer } from 'node:http'
 
-export const DEFAULT_PORT = 19826
+export const DEFAULT_PORT = 19305
 export const DEFAULT_TOKEN_PATH = resolve(homedir(), '.openteam/control-token')
 const DEFAULT_COMMAND_TIMEOUT_MS = 300_000
 const MAX_BODY_BYTES = 1024 * 1024

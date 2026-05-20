@@ -8,7 +8,7 @@ describe('team page language controller', () => {
     document.body.innerHTML = `
       <button id="settings-button" aria-label="设置" data-tooltip="设置">⚙</button>
       <button id="agent-control-toggle">本机智能体控制：关闭</button>
-      <p id="agent-control-status">端口 19826，仅允许本机连接。开启后本机工具可创建群聊并发送任务。</p>
+      <p id="agent-control-status">端口 19305，仅允许本机连接。开启后本机工具可创建群聊并发送任务。</p>
       <textarea id="message-input" placeholder="输入消息，@成员可指定回复；不 @ 仅记录到群聊。"></textarea>
     `
 

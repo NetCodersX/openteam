@@ -182,7 +182,7 @@ flowchart LR
 
 本地控制链路是可选能力，只有用户在设置里开启后才会使用。
 
-- [src/control/protocol.ts](../src/control/protocol.ts)：协议版本、能力列表、命令/结果 payload 和通用 helper。
+- [src/shared/localControlProtocol.ts](../src/shared/localControlProtocol.ts)：协议版本、能力列表、命令/结果 payload 和通用 helper。
 - [src/background/controlClient.ts](../src/background/controlClient.ts)：service worker 侧连接本地 daemon 的客户端。
 - [src/background/controlHandlers.ts](../src/background/controlHandlers.ts)：`chat.*`、`roles.batchAdd`、`task.*`、`run.createAndPost` 的命令执行器。
 - [packages/openteamcli/openteam-daemon.mjs](../packages/openteamcli/openteam-daemon.mjs)：运行在 `127.0.0.1` 的本地 HTTP/WebSocket daemon。

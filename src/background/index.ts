@@ -3,6 +3,7 @@ import type { GroupChat, OpenTeamStore } from '../group/types'
 import { createChatHandlers } from './chatHandlers'
 import { createMessageHandlers } from './messageHandlers'
 import {
+  broadcastControlStatusUpdated as broadcastRuntimeControlStatusUpdated,
   broadcastStoreUpdated as broadcastRuntimeStoreUpdated,
   forgetHostTab,
   rememberHost,
@@ -69,7 +70,7 @@ function getChatStatusFromRoles(store: OpenTeamStore, chat: GroupChat): GroupCha
 async function handleStoreGet(message: RuntimeMessage, sender: chrome.runtime.MessageSender) {
   rememberHost(sender, message.hostTabId)
   const store = await loadStore()
-  return { ok: true, store, bindings: runtimeFrames.list() }
+  return { ok: true, store, bindings: runtimeFrames.list(), controlStatus: controlClient.status() }
 }
 
 async function handleSettingsUpdate(message: RuntimeMessage) {
@@ -159,6 +160,9 @@ const controlClient = createControlClient({
   },
   clearTimer(timerId) {
     globalThis.clearTimeout(timerId)
+  },
+  onStatusChange(status) {
+    return broadcastRuntimeControlStatusUpdated(status)
   },
 })
 let controlClientInitialized = false

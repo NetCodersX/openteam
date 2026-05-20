@@ -1,4 +1,5 @@
 import type { OpenTeamStore } from '../group/types'
+import type { OpenTeamControlConnectionStatus } from '../shared/localControlProtocol'
 import { createLogger } from '../shared/logger'
 
 export type RuntimeMessage = { type?: string; [key: string]: unknown }
@@ -59,6 +60,25 @@ export async function broadcastStoreUpdated(store: OpenTeamStore, options: Broad
     await chrome.runtime.sendMessage({ type: GROUP_PUSH_TYPE, payload: message })
   } catch (error) {
     log.debug('group-store-updated:runtime-failed', { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+export async function broadcastControlStatusUpdated(controlStatus: OpenTeamControlConnectionStatus): Promise<void> {
+  const message = { type: 'GROUP_CONTROL_STATUS_UPDATED', controlStatus }
+
+  for (const tabId of listHostTabIds()) {
+    try {
+      await chrome.tabs.sendMessage(tabId, message)
+    } catch (error) {
+      log.debug('control-status-updated:tab-failed', { tabId, error: error instanceof Error ? error.message : String(error) })
+      forgetHostTab(tabId)
+    }
+  }
+
+  try {
+    await chrome.runtime.sendMessage({ type: GROUP_PUSH_TYPE, payload: message })
+  } catch (error) {
+    log.debug('control-status-updated:runtime-failed', { error: error instanceof Error ? error.message : String(error) })
   }
 }
 

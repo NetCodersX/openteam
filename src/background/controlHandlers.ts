@@ -1,4 +1,4 @@
-import { OPENTEAM_CONTROL_CAPABILITIES, controlFailure, controlSuccess, isRecord, type ControlHttpCommand, type ControlHttpResult } from '../control/protocol'
+import { OPENTEAM_CONTROL_CAPABILITIES, controlFailure, controlSuccess, isRecord, type ControlHttpCommand, type ControlHttpResult } from '../shared/localControlProtocol'
 import type { GroupChat, GroupMessage, GroupRole, OpenTeamStore, RoomMode, RuntimeFrameBinding } from '../group/types'
 import type { RuntimeMessage } from './runtimeClient'
 
@@ -414,4 +414,3 @@ function errorCode(error: unknown): string {
   if (message.includes('不支持')) return 'invalid_request'
   return 'internal_error'
 }
-

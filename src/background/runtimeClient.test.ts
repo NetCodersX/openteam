@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultStore } from '../group/store'
+import type { OpenTeamControlConnectionStatus } from '../shared/localControlProtocol'
 
 describe('background runtime client', () => {
   it('tracks host tabs and resolves sender/message tab identity', async () => {
@@ -42,5 +43,23 @@ describe('background runtime client', () => {
     expect(tabsSendMessage).toHaveBeenNthCalledWith(2, 202, { type: 'GROUP_STORE_UPDATED', store })
     expect(runtimeSendMessage).toHaveBeenCalledWith({ type: 'OPENTEAM_GROUP_PUSH', payload: { type: 'GROUP_STORE_UPDATED', store } })
     expect(listHostTabIds()).toEqual([101])
+  })
+
+  it('broadcasts local control status updates to known hosts and runtime listeners', async () => {
+    vi.resetModules()
+    const tabsSendMessage = vi.fn().mockResolvedValue({ ok: true })
+    const runtimeSendMessage = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('chrome', {
+      tabs: { sendMessage: tabsSendMessage },
+      runtime: { sendMessage: runtimeSendMessage },
+    })
+    const { broadcastControlStatusUpdated, rememberHost } = await import('./runtimeClient')
+    const controlStatus: OpenTeamControlConnectionStatus = { state: 'disconnected', port: 19305, lastError: 'OpenTeam CLI daemon is not reachable.' }
+
+    rememberHost({}, 101)
+    await broadcastControlStatusUpdated(controlStatus)
+
+    expect(tabsSendMessage).toHaveBeenCalledWith(101, { type: 'GROUP_CONTROL_STATUS_UPDATED', controlStatus })
+    expect(runtimeSendMessage).toHaveBeenCalledWith({ type: 'OPENTEAM_GROUP_PUSH', payload: { type: 'GROUP_CONTROL_STATUS_UPDATED', controlStatus } })
   })
 })

@@ -717,6 +717,34 @@ h3 {
   line-height: 1.45;
 }
 
+.settings-hint[data-control-state] {
+  position: relative;
+  padding-left: 13px;
+}
+
+.settings-hint[data-control-state]::before {
+  content: "";
+  position: absolute;
+  top: 0.55em;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(132, 153, 171, 0.72);
+}
+
+.settings-hint[data-control-state="connected"]::before {
+  background: #28c840;
+}
+
+.settings-hint[data-control-state="connecting"]::before {
+  background: #febc2e;
+}
+
+.settings-hint[data-control-state="disconnected"]::before {
+  background: #ff5f57;
+}
+
 .chat-create {
   position: absolute;
   top: 74px;

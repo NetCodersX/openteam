@@ -74,7 +74,7 @@ describe('group store', () => {
         externalModelOrder: [],
         externalModelsById: {},
         agentControlEnabled: false,
-        agentControlPort: 19826,
+        agentControlPort: 19305,
         language: defaultLanguageForEnvironment(),
       },
       viewState: {
@@ -134,8 +134,49 @@ describe('group store', () => {
         externalModelOrder: [],
         externalModelsById: {},
         agentControlEnabled: false,
-        agentControlPort: 19826,
+        agentControlPort: 19305,
         language: defaultLanguageForEnvironment(),
+      },
+    })
+  })
+
+  it('migrates the previous local control default port to the current default', async () => {
+    stored[META_STORE_KEY] = {
+      version: 6,
+      chatOrder: [],
+      roleTemplateOrder: [],
+      roleTemplatesById: {},
+      settings: {
+        defaultMode: 'independent',
+        defaultChatSite: 'deepseek',
+        agentControlPort: 19826,
+      },
+    }
+
+    await expect(loadStore()).resolves.toMatchObject({
+      version: CURRENT_STORE_VERSION,
+      settings: {
+        agentControlPort: 19305,
+      },
+    })
+  })
+
+  it('preserves custom local control ports when migrating old stores', async () => {
+    stored[META_STORE_KEY] = {
+      version: 6,
+      chatOrder: [],
+      roleTemplateOrder: [],
+      roleTemplatesById: {},
+      settings: {
+        defaultMode: 'independent',
+        defaultChatSite: 'deepseek',
+        agentControlPort: 19999,
+      },
+    }
+
+    await expect(loadStore()).resolves.toMatchObject({
+      settings: {
+        agentControlPort: 19999,
       },
     })
   })
@@ -251,7 +292,7 @@ describe('group store', () => {
 
   it('migrates legacy default custom role template sites to DeepSeek', async () => {
     stored[META_STORE_KEY] = {
-      version: CURRENT_STORE_VERSION - 1,
+      version: 5,
       chatOrder: [],
       roleTemplateOrder: DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => template.id),
       roleTemplatesById: Object.fromEntries(DEFAULT_CUSTOM_ROLE_TEMPLATES.map(template => [template.id, { ...template, defaultChatSite: 'gemini' }])),

@@ -1,5 +1,6 @@
 import type { ChatSite, MessageReference, OpenTeamStore, RoleTemplate } from '../group/types'
 import { createDefaultStore } from '../group/store'
+import { OPENTEAM_CONTROL_DEFAULT_PORT, type OpenTeamControlConnectionStatus } from '../shared/localControlProtocol'
 
 export type CachedMessageNode = { signature: string; node: HTMLElement; streamingSignature?: string }
 export type TemporaryPersonDraft = Pick<RoleTemplate, 'name' | 'description' | 'systemPrompt'> & { id: string; chatSite: ChatSite }
@@ -15,6 +16,7 @@ export interface RoleReadyWaiter {
 
 export interface TeamPageState {
   store: OpenTeamStore
+  controlStatus: OpenTeamControlConnectionStatus
   selectedChatId?: string
   selectedRoleId?: string
   selectedTemplateId?: string
@@ -51,6 +53,7 @@ export interface TeamPageState {
 export function createTeamPageState(): TeamPageState {
   return {
     store: createDefaultStore(),
+    controlStatus: { state: 'disabled', port: OPENTEAM_CONTROL_DEFAULT_PORT },
     mentionIndex: 0,
     peopleDrawerOpen: false,
     thinkingTimeoutTimers: [],
