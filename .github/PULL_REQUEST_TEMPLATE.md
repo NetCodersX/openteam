@@ -22,7 +22,7 @@ npm run verify
 
 <!-- What could break? How confident are you? -->
 
-Low / Medium / High — 
+Low / Medium / High —
 
 ## Checklist
 
