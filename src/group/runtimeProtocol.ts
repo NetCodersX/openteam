@@ -10,6 +10,8 @@ export type RuntimeRoleStatus =
   | 'offline'
   | 'error'
 
+export type SiteStatus = 'ready' | 'generating' | 'error' | 'blocked' | 'unauthorized'
+
 export type SendPromptMessage = {
   type: 'TEAM_SEND_PROMPT'
   chatId: string
@@ -66,6 +68,7 @@ export type RoleToBackgroundMessage =
       conversationId?: string
       conversationUrl?: string
     }
+  | { type: 'TEAM_SITE_STATUS_UPDATE'; siteId: string; status: SiteStatus; detail?: string }
 
 export interface FrameRoleReadyResponse {
   ok: boolean
