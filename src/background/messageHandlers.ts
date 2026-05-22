@@ -81,9 +81,14 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       const roles = getChatRoles(store, chat)
       const parsed = parseGroupMentions(raw, roles, { ...roleMentionLabelOptionsFromSettings(store.settings), defaultTarget: 'none' })
       if (!parsed.ok) throw new Error(parsed.error)
-      deps.log.debug('message-send:parsed-targets', { chatId: chat.id, targetRoleIds: parsed.targetRoleIds })
 
-      const targetRoles = parsed.targetRoleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
+      let finalTargetRoleIds = parsed.targetRoleIds
+      if (chat.requireManualMention && parsed.mentionedRoleIds.length === 0 && !parsed.orchestrationTarget) {
+        finalTargetRoleIds = []
+      }
+      deps.log.debug('message-send:parsed-targets', { chatId: chat.id, targetRoleIds: finalTargetRoleIds })
+
+      const targetRoles = finalTargetRoleIds.map(roleId => store.rolesById[roleId]).filter((role): role is GroupRole => Boolean(role))
       const unavailable = targetRoles.filter(role => {
         if (isExternalModelRole(role)) return !getExternalModelForRole(store, role)
         return !isRoleDeliverable(role, deps.runtimeFrames.getByRole(chat.id, role.id), timestamp)
@@ -128,13 +133,13 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
         seq: chat.nextMessageSeq,
         type: 'user',
         content: parsed.content,
-        targetRoleIds: parsed.targetRoleIds,
+        targetRoleIds: finalTargetRoleIds,
         mentionedRoleIds: parsed.mentionedRoleIds,
         mentionsAll: parsed.mentionsAll,
         references: reference ? [reference] : undefined,
         createdAt: timestamp,
-        status: parsed.targetRoleIds.length > 0 ? 'pending' : 'received',
-        deliveryStatus: Object.fromEntries(parsed.targetRoleIds.map(roleId => [roleId, unavailable.some(role => role.id === roleId) ? 'error' : 'pending'])),
+        status: finalTargetRoleIds.length > 0 ? 'pending' : 'received',
+        deliveryStatus: Object.fromEntries(finalTargetRoleIds.map(roleId => [roleId, unavailable.some(role => role.id === roleId) ? 'error' : 'pending'])),
       }
       updateUserMessageDeliveryStatus(userMessage)
 
@@ -143,7 +148,7 @@ export function createMessageHandlers(deps: MessageHandlersDependencies): Backgr
       chat.nextMessageSeq += 1
       deps.log.info('message-send:stored', { chatId: chat.id, messageId: userMessage.id, targetCount: parsed.targetRoleIds.length })
       chat.updatedAt = timestamp
-      if (parsed.targetRoleIds.length === 0) {
+      if (finalTargetRoleIds.length === 0) {
         return { message: userMessage, deliveries: [], externalDeliveries: [] }
       }
 

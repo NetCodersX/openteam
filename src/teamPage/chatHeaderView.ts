@@ -20,6 +20,8 @@ export interface ChatHeaderView {
 }
 
 export function createChatHeaderView(deps: ChatHeaderViewDependencies): ChatHeaderView {
+  let manualMentionToggle: HTMLInputElement | undefined
+
   function renderChatHeader(): void {
     const chat = deps.getCurrentChat()
     const roles = deps.getCurrentRoles()
@@ -32,6 +34,7 @@ export function createChatHeaderView(deps: ChatHeaderViewDependencies): ChatHead
       deps.togglePeopleDrawerEl.textContent = ui('成员 0')
       deps.togglePeopleDrawerEl.disabled = true
       deps.openOrchestrationEl.hidden = true
+      if (manualMentionToggle) manualMentionToggle.hidden = true
       return
     }
 
@@ -44,6 +47,21 @@ export function createChatHeaderView(deps: ChatHeaderViewDependencies): ChatHead
     deps.togglePeopleDrawerEl.setAttribute('aria-label', ui(deps.state.peopleDrawerOpen ? '收起成员面板' : '打开成员面板'))
     deps.togglePeopleDrawerEl.setAttribute('aria-expanded', String(deps.state.peopleDrawerOpen))
     deps.openOrchestrationEl.hidden = chat.mode !== 'collaborative'
+
+    // Manual Mention Toggle
+    if (!manualMentionToggle) {
+      manualMentionToggle = document.createElement('input')
+      manualMentionToggle.type = 'checkbox'
+      manualMentionToggle.className = 'chat-header-toggle'
+      manualMentionToggle.title = ui('开启后，只有被 @ 的成员才会回复')
+      manualMentionToggle.addEventListener('change', async () => {
+        await deps.runCommand('GROUP_CHAT_UPDATE', { requireManualMention: manualMentionToggle?.checked })
+      })
+      // Insert before the people drawer button for better layout
+      deps.togglePeopleDrawerEl.parentElement?.insertBefore(manualMentionToggle, deps.togglePeopleDrawerEl)
+    }
+    manualMentionToggle.hidden = chat.mode !== 'collaborative'
+    manualMentionToggle.checked = !!chat.requireManualMention
   }
 
   function ui(source: string): string {

@@ -210,6 +210,7 @@ export interface GroupChat {
   messageIds: string[]
   nextMessageSeq: number
   status: ChatStatus
+  requireManualMention?: boolean
   createdAt: number
   updatedAt: number
 }
