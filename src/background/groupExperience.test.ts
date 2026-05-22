@@ -782,6 +782,7 @@ describe('background group chat experience handlers', () => {
       mode: 'collaborative',
       messageIds: ['msg-1'],
       nextMessageSeq: 2,
+      requireManualMention: true,
     }
     store.chatOrder = ['chat-1']
     store.rolesById['role-1'] = makeRole('chat-1', 'role-1', '调查记者', {
@@ -816,6 +817,7 @@ describe('background group chat experience handlers', () => {
       messageIds: [],
       nextMessageSeq: 1,
       status: 'initializing',
+      requireManualMention: true,
     })
     expect(duplicated.chat.id).not.toBe('chat-1')
     expect(duplicated.store.currentChatId).toBe(duplicated.chat.id)
