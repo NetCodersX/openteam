@@ -7,6 +7,7 @@ export type ParsedGroupMention =
       targetRoleIds: string[]
       mentionedRoleIds: string[]
       mentionsAll?: true
+      orchestrationTarget?: 'default' | { name: string }
     }
   | {
       ok: false
@@ -37,6 +38,7 @@ export function parseGroupMentions(raw: string, roles: GroupRole[], options: Par
   ]).sort((left, right) => right.label.length - left.label.length)
   const targetRoleIds = new Set<string>()
   let targetsAll = false
+  let orchestrationTarget: 'default' | { name: string } | undefined = undefined
   let content = ''
   let index = 0
 
@@ -45,6 +47,25 @@ export function parseGroupMentions(raw: string, roles: GroupRole[], options: Par
       content += trimmed[index]
       index += 1
       continue
+    }
+
+    // 1. Check for Orchestration triggers (@编排 or @编排:name)
+    if (trimmed.startsWith('@编排', index)) {
+      const afterPrefix = trimmed.slice(index + 3) // length of '@编排' is 3
+      if (afterPrefix.startsWith(':')) {
+        // Named orchestration: @编排:name
+        const match = afterPrefix.slice(1).match(/^([^\s，。！？,.!?;；:：]+)/)
+        if (match) {
+          orchestrationTarget = { name: match[1] }
+          index += 3 + 1 + match[1].length
+          continue
+        }
+      } else if (afterPrefix.length === 0 || /\s|[，。！？,.!?;；:：]/.test(afterPrefix[0])) {
+        // Default orchestration: @编排
+        orchestrationTarget = 'default'
+        index += 3
+        continue
+      }
     }
 
     const allMentionLabel = ['all', '所有人'].find(label => mentionMatches(trimmed, index, label))
@@ -74,6 +95,7 @@ export function parseGroupMentions(raw: string, roles: GroupRole[], options: Par
     targetRoleIds: targetsAll ? allRoleIds : targetRoleIds.size > 0 ? [...targetRoleIds] : defaultTargetRoleIds(allRoleIds, options),
     mentionedRoleIds: [...targetRoleIds],
     ...(targetsAll ? { mentionsAll: true as const } : {}),
+    ...(orchestrationTarget ? { orchestrationTarget } : {}),
   }
 }
 
