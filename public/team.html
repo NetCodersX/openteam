@@ -9,8 +9,7 @@
   <body>
     <div id="app" class="app-shell">
       <div id="floating-toolbar" class="floating-toolbar">
-        <button id="close-window" class="icon-btn window-dot window-dot-close" type="button" aria-label="缩小窗口" title="缩小窗口">×</button>
-        <button id="toggle-window-size" class="icon-btn window-dot window-dot-minimize" type="button" aria-expanded="true" aria-label="缩小窗口" title="缩小窗口">−</button>
+        <button id="toggle-window-size" class="icon-btn window-dot window-dot-minimize" type="button" aria-expanded="true" aria-label="最小化窗口" title="最小化窗口">−</button>
         <button id="toggle-fullscreen" class="icon-btn window-dot window-dot-fullscreen" type="button" aria-pressed="false" aria-label="全屏窗口" title="全屏窗口">⛶</button>
       </div>
       <button id="window-resize-handle" class="window-resize-handle" type="button" aria-label="调整窗口大小" title="调整窗口大小"></button>
@@ -552,6 +551,7 @@
           <p class="tiny">默认 50 个，最多 200 个；用于防止循环流程无限执行，执行节点和审核节点都会计数。</p>
           <div class="template-actions orchestration-actions">
             <button id="save-orchestration" class="btn" type="button">保存</button>
+            <button id="test-run-orchestration" class="btn btn-ghost" type="button">测试运行</button>
             <button id="run-orchestration" class="btn btn-primary" type="button">运行</button>
           </div>
         </div>
