@@ -227,6 +227,7 @@ function handleStopGenerationMessage(message: Extract<BackgroundToRoleMessage, {
 function handleSendPromptMessage(message: Extract<BackgroundToRoleMessage, { type: 'TEAM_SEND_PROMPT' }>, sendResponse: (response?: unknown) => void): void {
   const promptChatId = message.chatId || roleSession.getAssignedChatId()
   const promptRoleId = message.roleId || roleSession.getAssignedRole()?.roleId || ''
+  const isRetry = message.isRetry ?? false
   log.warn('orchestration-diagnostic:content-send-prompt:received', {
     chatId: promptChatId,
     roleId: promptRoleId,
@@ -236,10 +237,29 @@ function handleSendPromptMessage(message: Extract<BackgroundToRoleMessage, { typ
     replyAttemptId: message.replyAttemptId,
     contentLength: message.content.length,
     autoSend: message.autoSend,
+    isRetry,
     assignedRole: roleSession.getAssignedRole(),
     assignedChatId: roleSession.getAssignedChatId(),
     diagnostics: collectPromptDiagnostics(),
   })
+
+  // Bug 3 fix: When this is a retry, check if the prompt was already delivered to the page.
+  // If the active prompt already matches this messageId, the prompt was already sent —
+  // skip re-sending and just wait for the reply.
+  if (isRetry) {
+    const activePrompt = roleSession.getActivePrompt()
+    if (activePrompt?.messageId === message.messageId) {
+      log.warn('retry:prompt-already-delivered', {
+        messageId: message.messageId,
+        chatId: promptChatId,
+        roleId: promptRoleId,
+      })
+      // Prompt already delivered, just ensure polling is running
+      replyObserver?.startReplyPolling(message.messageId, message.replyAttemptId)
+      sendResponse({ ok: true, messageId: message.messageId, skipped: true })
+      return
+    }
+  }
 
   replyObserver?.capturePromptReplyBaseline(message.messageId)
   roleSession.startPrompt(message.messageId, message.replyAttemptId)

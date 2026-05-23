@@ -37,3 +37,67 @@ describe('createReplyTracker', () => {
     expect(tracker.consumeIfNewForMessage('conv-a', 'late answer without message id', undefined)).toBe(false)
   })
 })
+
+describe('Bug 2: same text in different rounds should not be hash-deduplicated', () => {
+  it('allows the same short text reply in different rounds when messageId differs', () => {
+    const tracker = createReplyTracker()
+
+    // Round 1: AI says "好的" with messageId msg-1
+    expect(tracker.consumeIfNew('conv-a', '好的', 'msg-1')).toBe(true)
+
+    // Round 2: AI says "好的" again with a different messageId msg-2
+    // This should NOT be blocked by hash dedup — it's a different round
+    expect(tracker.consumeIfNew('conv-a', '好的', 'msg-2')).toBe(true)
+  })
+
+  it('prevents the same messageId from being consumed twice', () => {
+    const tracker = createReplyTracker()
+
+    expect(tracker.consumeIfNew('conv-a', 'some reply', 'msg-1')).toBe(true)
+    expect(tracker.consumeIfNew('conv-a', 'different reply', 'msg-1')).toBe(false)
+  })
+
+  it('falls back to text hash dedup when no messageId is provided', () => {
+    const tracker = createReplyTracker()
+
+    // First consumption without messageId succeeds
+    expect(tracker.consumeIfNew('conv-a', '好的')).toBe(true)
+
+    // Same text without messageId is blocked by hash
+    expect(tracker.consumeIfNew('conv-a', '好的')).toBe(false)
+
+    // But with a messageId it should still pass (messageId takes priority)
+    expect(tracker.consumeIfNew('conv-a', '好的', 'msg-new')).toBe(true)
+  })
+
+  it('consumeIfNewForMessage allows same text with different messageIds', () => {
+    const tracker = createReplyTracker()
+
+    // Round 1
+    expect(tracker.consumeIfNewForMessage('conv-a', '好的', 'msg-1')).toBe(true)
+    // Round 2 with same text but different messageId
+    expect(tracker.consumeIfNewForMessage('conv-a', '好的', 'msg-2')).toBe(true)
+    // Round 2 duplicate attempt with same messageId
+    expect(tracker.consumeIfNewForMessage('conv-a', '好的', 'msg-2')).toBe(false)
+  })
+
+  it('globally seeded replies are still blocked even with messageId (cross-session protection)', () => {
+    const tracker = createReplyTracker()
+    tracker.seedGlobal(['初始化时的旧回复'])
+
+    // globallySeenReplyHashes is a hard barrier — always blocks
+    expect(tracker.consumeIfNew('conv-a', '初始化时的旧回复')).toBe(false)
+    expect(tracker.consumeIfNew('conv-a', '初始化时的旧回复', 'msg-new')).toBe(false)
+  })
+
+  it('same text in different rounds is allowed when seeded via per-conversation seed (not global)', () => {
+    const tracker = createReplyTracker()
+    // Per-conversation seed: "好的" was seen in conv-a, but a new messageId means a new round
+    tracker.seed('conv-a', ['好的'])
+
+    // Without messageId: blocked by per-conversation hash
+    expect(tracker.consumeIfNew('conv-a', '好的')).toBe(false)
+    // With a new messageId: allowed (Bug 2 fix — different round)
+    expect(tracker.consumeIfNew('conv-a', '好的', 'msg-round-2')).toBe(true)
+  })
+})

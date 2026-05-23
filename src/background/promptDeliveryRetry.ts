@@ -2,6 +2,12 @@ import type { PromptDelivery, PromptSender } from './promptDelivery'
 
 export const DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS = [2_000, 2_000, 4_000, 8_000, 15_000] as const
 
+export const RETRY_BUDGET = {
+  promptDeliveryRetry: 3,
+  replyWaitTimeout: 30000,
+  baselineCaptureDelay: 500,
+} as const
+
 export interface LatestPromptBinding {
   ready?: boolean
   tabId: number
@@ -20,6 +26,35 @@ export interface PromptDeliveryRetryDependencies {
   waitForRetry?(ms: number): Promise<void>
 }
 
+/**
+ * Classify a retry scenario to determine the correct handling strategy.
+ *
+ * - 'skip-send-wait-reply': Connection broke but prompt was already delivered;
+ *   skip sending, just wait for the reply.
+ * - 'resend': Connection broke and prompt was not delivered; resend the prompt.
+ * - 'collect-existing': Reply content already appeared on page; collect without resending.
+ * - 'budget-exhausted': Exceeded retry budget; stop and report error.
+ */
+export type RetryClassification = 'skip-send-wait-reply' | 'resend' | 'collect-existing' | 'budget-exhausted'
+
+export function classifyRetryScenario(options: {
+  isRetry: boolean
+  attemptIndex: number
+  maxAttempts: number
+  promptAlreadyDelivered: boolean
+  replyContentAppeared: boolean
+}): RetryClassification {
+  if (!options.isRetry) return 'resend'
+
+  if (options.attemptIndex >= options.maxAttempts) return 'budget-exhausted'
+
+  if (options.replyContentAppeared) return 'collect-existing'
+
+  if (options.promptAlreadyDelivered) return 'skip-send-wait-reply'
+
+  return 'resend'
+}
+
 export async function sendPromptDeliveryWithRetry(
   deps: PromptDeliveryRetryDependencies,
   input: {
@@ -27,9 +62,12 @@ export async function sendPromptDeliveryWithRetry(
     messageId: string
     delivery: PromptDelivery
     retryDelaysMs?: readonly number[]
+    isRetry?: boolean
   },
 ): Promise<boolean> {
   const retryDelays = input.retryDelaysMs ?? DEFAULT_PROMPT_DELIVERY_RETRY_DELAYS_MS
+  const maxRetryAttempts = RETRY_BUDGET.promptDeliveryRetry
+  const isRetry = input.isRetry ?? false
   let lastReason = '发送失败'
 
   for (let attemptIndex = 0; attemptIndex <= retryDelays.length; attemptIndex += 1) {
@@ -37,6 +75,12 @@ export async function sendPromptDeliveryWithRetry(
     const promptDelivery = latestBinding?.ready
       ? { ...input.delivery, tabId: latestBinding.tabId, frameId: latestBinding.frameId }
       : input.delivery
+
+    // Mark the message as retry on subsequent attempts
+    if (isRetry || attemptIndex > 0) {
+      promptDelivery.message = { ...promptDelivery.message, isRetry: true }
+    }
+
     deps.log.warn('orchestration-diagnostic:delivery-attempt', {
       chatId: input.chatId,
       roleId: input.delivery.roleId,
@@ -50,6 +94,7 @@ export async function sendPromptDeliveryWithRetry(
       payloadChatId: promptDelivery.message.chatId,
       payloadRoleId: promptDelivery.message.roleId,
       payloadReplyAttemptId: promptDelivery.message.replyAttemptId,
+      isRetry: promptDelivery.message.isRetry ?? false,
     })
     try {
       await deps.sendPrompt(promptDelivery)
@@ -62,6 +107,20 @@ export async function sendPromptDeliveryWithRetry(
         input.messageId,
         input.delivery.message.replyAttemptId,
       )
+
+      // Check retry budget for retry scenarios
+      if (isRetry && attemptIndex >= maxRetryAttempts) {
+        deps.log.warn('delivery:retry-budget-exhausted', {
+          chatId: input.chatId,
+          roleId: input.delivery.roleId,
+          messageId: input.messageId,
+          attemptIndex,
+          maxRetryAttempts,
+          reason: lastReason,
+        })
+        break
+      }
+
       if (!canRetry) break
 
       const delayMs = retryDelays[attemptIndex] ?? 0
