@@ -21,6 +21,7 @@ export type SendPromptMessage = {
   content: string
   autoSend?: boolean
   includesPersona?: boolean
+  isRetry?: boolean
 }
 
 export type StopGenerationMessage = {

@@ -50,6 +50,75 @@ describe('createReplyObserver', () => {
     vi.useRealTimers()
   })
 
+  it('reports a same-text reply after a DOM rebuild when it appears after the baseline', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = '<message-content>好的。</message-content>'
+
+    const sentMessages: RoleToBackgroundMessage[] = []
+    const roleSession = createFakeRoleSession()
+    const observer = createReplyObserver({
+      siteAdapter: createFakeAdapter({ isGenerating: () => false }),
+      roleSession,
+      log: createFakeLog(),
+      sendRuntimeMessage: async message => {
+        sentMessages.push(message)
+        return { ok: true } as never
+      },
+      reportRoleError: vi.fn(),
+    })
+
+    observer.capturePromptReplyBaseline('msg-2')
+    roleSession.startPrompt('msg-2', 'attempt-2')
+    document.body.innerHTML = `
+      <message-content>好的。</message-content>
+      <message-content>好的。</message-content>
+    `
+    observer.startReplyPolling('msg-2', 'attempt-2')
+
+    await vi.advanceTimersByTimeAsync(8_000)
+
+    expect(sentMessages).toContainEqual(expect.objectContaining({
+      type: 'TEAM_ROLE_REPLY',
+      messageId: 'msg-2',
+      content: '好的。',
+    }))
+
+    vi.useRealTimers()
+  })
+
+  it('reports structured timeout reasons when no reply appears', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = ''
+
+    const sentMessages: RoleToBackgroundMessage[] = []
+    const roleSession = createFakeRoleSession()
+    const reportRoleError = vi.fn()
+    const observer = createReplyObserver({
+      siteAdapter: createFakeAdapter({ isGenerating: () => false }),
+      roleSession,
+      log: createFakeLog(),
+      sendRuntimeMessage: async message => {
+        sentMessages.push(message)
+        return { ok: true } as never
+      },
+      reportRoleError,
+    })
+
+    roleSession.startPrompt('msg-1', 'attempt-1')
+    observer.startReplyPolling('msg-1', 'attempt-1')
+
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(sentMessages).toContainEqual(expect.objectContaining({
+      type: 'TEAM_ROLE_STATUS',
+      status: 'error',
+      error: 'RESPONSE_NOT_FOUND',
+    }))
+    expect(reportRoleError).toHaveBeenCalledWith('msg-1', 'RESPONSE_NOT_FOUND', undefined, undefined, 'attempt-1')
+
+    vi.useRealTimers()
+  })
+
   it('keeps polling a very short stable reply so a longer continuation can be collected', async () => {
     vi.useFakeTimers()
     document.body.innerHTML = '<message-content id="new">好的。</message-content>'
