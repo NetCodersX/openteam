@@ -1,4 +1,4 @@
-import type { GroupRole, OpenTeamSettings } from './types'
+import type { GroupChat, GroupRole, OpenTeamSettings } from './types'
 
 type OrchestrationMentionTarget = 'default' | { name: string }
 
@@ -23,6 +23,13 @@ export interface RoleMentionLabelOptions {
 
 export interface ParseGroupMentionsOptions extends RoleMentionLabelOptions {
   defaultTarget?: 'all' | 'none'
+}
+
+export function defaultMentionTargetForMessage(raw: string, chat: Pick<GroupChat, 'mode' | 'requireManualMention'>): 'all' | 'none' {
+  if (chat.mode !== 'collaborative') return 'none'
+  if (chat.requireManualMention !== false) return 'none'
+  if (raw.includes('@')) return 'none'
+  return 'all'
 }
 
 export function parseGroupMentions(raw: string, roles: GroupRole[], options: ParseGroupMentionsOptions = {}): ParsedGroupMention {

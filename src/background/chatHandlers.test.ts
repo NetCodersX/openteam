@@ -47,7 +47,7 @@ describe('background chat handlers', () => {
 
     expect(response).toMatchObject({
       ok: true,
-      chat: { id: 'chat-1', name: '架构评审', status: 'draft' },
+      chat: { id: 'chat-1', name: '架构评审', status: 'draft', requireManualMention: true },
     })
     expect(draftStore?.currentChatId).toBe('chat-1')
     expect(broadcastStoreUpdated).toHaveBeenCalledWith(expect.objectContaining({ currentChatId: 'chat-1' }))

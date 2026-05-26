@@ -1211,10 +1211,50 @@ select:focus {
   display: none;
 }
 
+.manual-mention-toggle {
+  position: relative;
+  justify-content: flex-start;
+  min-width: 72px;
+  padding-left: 42px;
+}
+
+.manual-mention-toggle::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  width: 22px;
+  height: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.manual-mention-toggle::after {
+  content: "";
+  position: absolute;
+  left: 15px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.84);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
 .manual-mention-toggle[aria-pressed="true"] {
   border-color: rgba(90, 198, 150, 0.45);
   background: rgba(90, 198, 150, 0.16);
   color: #c7f7df;
+}
+
+.manual-mention-toggle[aria-pressed="true"]::before {
+  border-color: rgba(90, 198, 150, 0.58);
+  background: rgba(90, 198, 150, 0.28);
+}
+
+.manual-mention-toggle[aria-pressed="true"]::after {
+  background: #c7f7df;
+  transform: translateX(10px);
 }
 
 .theme-switch {
@@ -4412,6 +4452,12 @@ select:focus {
   border-color: rgba(89, 111, 131, 0.2);
   background: #ffffff;
   color: var(--text);
+}
+
+:root[data-theme="light"] .manual-mention-toggle[aria-pressed="true"] {
+  border-color: rgba(20, 127, 143, 0.3);
+  background: rgba(20, 127, 143, 0.1);
+  color: #123642;
 }
 
 :root[data-theme="light"] .btn:hover:not(:disabled),

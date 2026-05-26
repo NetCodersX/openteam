@@ -56,19 +56,24 @@ export function createChatHeaderView(deps: ChatHeaderViewDependencies): ChatHead
       manualMentionToggle = document.createElement('button')
       manualMentionToggle.type = 'button'
       manualMentionToggle.className = 'btn drawer-summary manual-mention-toggle'
+      manualMentionToggle.setAttribute('role', 'switch')
       manualMentionToggle.addEventListener('click', async () => {
         const current = deps.getCurrentChat()
         if (!current) return
-        await deps.runCommand('GROUP_CHAT_UPDATE', { chatId: current.id, requireManualMention: !current.requireManualMention })
+        const plainMessagesReplyAll = current.requireManualMention === false
+        await deps.runCommand('GROUP_CHAT_UPDATE', { chatId: current.id, requireManualMention: plainMessagesReplyAll ? true : false })
       })
       deps.togglePeopleDrawerEl.parentElement?.insertBefore(manualMentionToggle, deps.togglePeopleDrawerEl)
     }
     manualMentionToggle.hidden = chat.mode !== 'collaborative'
     manualMentionToggle.disabled = false
-    manualMentionToggle.textContent = ui(chat.requireManualMention ? '仅 @ 回复' : '@ 触发回复')
-    manualMentionToggle.title = ui('开启后，只有被 @ 的成员才会回复')
-    manualMentionToggle.setAttribute('aria-label', ui('开启后，只有被 @ 的成员才会回复'))
-    manualMentionToggle.setAttribute('aria-pressed', String(!!chat.requireManualMention))
+    const plainMessagesReplyAll = chat.requireManualMention === false
+    const ruleHint = '开启后，普通消息也会触发所有成员回复；关闭后，只有 @ 成员或 @所有人才触发回复'
+    manualMentionToggle.textContent = ui('免@')
+    manualMentionToggle.title = ui(ruleHint)
+    manualMentionToggle.setAttribute('aria-label', ui(ruleHint))
+    manualMentionToggle.setAttribute('aria-pressed', String(plainMessagesReplyAll))
+    manualMentionToggle.setAttribute('aria-checked', String(plainMessagesReplyAll))
   }
 
   function ui(source: string): string {

@@ -95,7 +95,7 @@ describe('team page composer targeting', () => {
   })
 
   it('previews no-mention messages as chat records without requiring ready roles', () => {
-    const { view, deps } = createComposerHarness({ roleStatus: 'thinking' })
+    const { view, deps } = createComposerHarness({ roleStatus: 'thinking', requireManualMention: true })
     deps.messageInputEl.value = '先记录这个背景'
 
     view.renderComposerState()
@@ -104,8 +104,28 @@ describe('team page composer targeting', () => {
     expect(deps.sendButtonEl.disabled).toBe(false)
   })
 
+  it('previews no-mention collaborative messages as chat records by default', () => {
+    const { view, deps } = createComposerHarness({ mode: 'collaborative' })
+    deps.messageInputEl.value = '先记录这个背景'
+
+    view.renderComposerState()
+
+    expect(deps.targetPreviewEl.textContent).toBe('将作为群消息记录，不触发 AI；@ 人员可触发回复')
+    expect(deps.sendButtonEl.disabled).toBe(false)
+  })
+
+  it('previews no-mention collaborative messages as all-member replies when manual mention routing is off', () => {
+    const { view, deps } = createComposerHarness({ mode: 'collaborative', requireManualMention: false })
+    deps.messageInputEl.value = '请一起评估'
+
+    view.renderComposerState()
+
+    expect(deps.targetPreviewEl.textContent).toBe('将发送给：工程师（DeepSeek）')
+    expect(deps.sendButtonEl.disabled).toBe(false)
+  })
+
   it('submits no-mention messages without reconnecting or blocking on thinking roles', async () => {
-    const { view, deps, runCommand, reconnectRolesForSend, showError } = createComposerHarness({ roleStatus: 'thinking' })
+    const { view, deps, runCommand, reconnectRolesForSend, showError } = createComposerHarness({ roleStatus: 'thinking', requireManualMention: true })
     deps.messageInputEl.value = '先记录这个背景'
 
     await view.submitComposerMessage()
@@ -140,17 +160,18 @@ describe('team page composer targeting', () => {
   })
 })
 
-function createComposerHarness(options: { roleStatus?: GroupRole['status']; roles?: GroupRole[] } = {}) {
+function createComposerHarness(options: { roleStatus?: GroupRole['status']; roles?: GroupRole[]; mode?: GroupChat['mode']; requireManualMention?: boolean } = {}) {
   const store = createDefaultStore()
   const roles = options.roles ?? [makeRole('chat-1', 'role-1', '工程师', options.roleStatus ?? 'ready')]
   const chat: GroupChat = {
     id: 'chat-1',
     name: '讨论',
-    mode: 'independent',
+    mode: options.mode ?? 'independent',
     roleIds: roles.map(role => role.id),
     messageIds: [],
     nextMessageSeq: 1,
     status: 'ready',
+    requireManualMention: options.requireManualMention,
     createdAt: 0,
     updatedAt: 0,
   }

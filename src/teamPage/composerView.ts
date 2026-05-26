@@ -1,4 +1,4 @@
-import { parseGroupMentions, roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
+import { defaultMentionTargetForMessage, parseGroupMentions, roleMentionLabel, roleMentionLabelOptionsFromSettings, roleModelLabel } from '../group/mentionParser'
 import type { GroupChat, GroupMessage, GroupRole, MessageReference, OpenTeamStore } from '../group/types'
 import type { TeamPageState } from './appState'
 import { getVisibleThinkingRoles, shouldAutoReconnectRole, shouldConfirmMentionWithEnter, shouldSendMessageWithEnter } from './chatExperience'
@@ -51,7 +51,7 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
     const chat = deps.getCurrentChat()
     const roles = deps.getCurrentRoles()
     const raw = deps.messageInputEl.value.trim()
-    const parsed = parseGroupMentions(raw || 'x', roles, { ...mentionLabelOptions(), defaultTarget: 'none' })
+    const parsed = parseGroupMentions(raw || 'x', roles, { ...mentionLabelOptions(), defaultTarget: chat ? defaultMentionTargetForMessage(raw, chat) : 'none' })
     const targetRoleIds = raw && parsed.ok ? parsed.targetRoleIds : []
     const targets = roles.filter(role => targetRoleIds.includes(role.id))
     const unavailable = targets.filter(role => role.status !== 'ready')
@@ -65,7 +65,9 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
       deps.targetPreviewEl.textContent = '当前群聊还没有人员'
       deps.sendButtonEl.disabled = true
     } else if (!raw) {
-      deps.targetPreviewEl.textContent = '输入消息；不 @ 仅记录，@ 人员触发回复'
+      deps.targetPreviewEl.textContent = defaultMentionTargetForMessage('', chat) === 'all'
+        ? '输入消息；不 @ 会让所有成员回复，也可 @ 指定成员'
+        : '输入消息；不 @ 仅记录，@ 人员触发回复'
       deps.sendButtonEl.disabled = true
     } else if (!parsed.ok) {
       deps.targetPreviewEl.textContent = parsed.error
@@ -258,7 +260,8 @@ export function createComposerView(deps: ComposerViewDependencies): ComposerView
   }
 
   function resolveMessageTargets(raw: string, roles: GroupRole[]): { ok: true; roles: GroupRole[] } | { ok: false; error: string } {
-    const parsed = parseGroupMentions(raw, roles, { ...mentionLabelOptions(), defaultTarget: 'none' })
+    const chat = deps.getCurrentChat()
+    const parsed = parseGroupMentions(raw, roles, { ...mentionLabelOptions(), defaultTarget: chat ? defaultMentionTargetForMessage(raw, chat) : 'none' })
     if (!parsed.ok) return { ok: false, error: parsed.error }
     const targets = roles.filter(role => parsed.targetRoleIds.includes(role.id))
     return { ok: true, roles: targets }

@@ -207,7 +207,7 @@ function createChat(store: OpenTeamStore, message: RuntimeMessage, deps: ChatHan
     messageIds: [],
     nextMessageSeq: 1,
     status: 'initializing',
-    requireManualMention: false,
+    requireManualMention: true,
     createdAt: timestamp,
     updatedAt: timestamp,
   }

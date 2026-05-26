@@ -39,19 +39,23 @@ describe('chat header view', () => {
     const toggle = harness.headerActionsEl.querySelector<HTMLButtonElement>('.manual-mention-toggle')
     expect(toggle).not.toBeNull()
     expect(toggle?.hidden).toBe(false)
-    expect(toggle?.textContent).toBe('@ 触发回复')
+    expect(toggle?.textContent).toBe('免@')
+    expect(toggle?.title).toBe('开启后，普通消息也会触发所有成员回复；关闭后，只有 @ 成员或 @所有人才触发回复')
     expect(toggle?.getAttribute('aria-pressed')).toBe('false')
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
 
     toggle?.click()
     await Promise.resolve()
 
-    expect(harness.runCommand).toHaveBeenCalledWith('GROUP_CHAT_UPDATE', { chatId: 'chat-1', requireManualMention: true })
+    expect(harness.runCommand).toHaveBeenCalledWith('GROUP_CHAT_UPDATE', { chatId: 'chat-1', requireManualMention: false })
 
-    harness.chat.requireManualMention = true
+    harness.chat.requireManualMention = false
     harness.view.renderChatHeader()
 
-    expect(toggle?.textContent).toBe('仅 @ 回复')
+    expect(toggle?.textContent).toBe('免@')
+    expect(toggle?.title).toBe('开启后，普通消息也会触发所有成员回复；关闭后，只有 @ 成员或 @所有人才触发回复')
     expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+    expect(toggle?.getAttribute('aria-checked')).toBe('true')
 
     harness.chat.mode = 'independent'
     harness.view.renderChatHeader()
